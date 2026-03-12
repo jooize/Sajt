@@ -1,0 +1,239 @@
+use axum::body::Body;
+use axum::extract::{Path, State};
+use axum::http::{header, HeaderValue, StatusCode};
+use axum::response::{Html, IntoResponse, Response};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+use crate::content::ContentStore;
+use crate::entry::Entry;
+use crate::render::{render_entry, RenderedContent};
+use crate::templates;
+use crate::url::parse_url_path;
+
+pub type AppState = Arc<RwLock<ContentStore>>;
+
+/// GET / — timeline
+pub async fn index(State(store): State<AppState>) -> impl IntoResponse {
+    let store = store.read().await;
+    let all: Vec<&Entry> = store.entries.iter().collect();
+    Html(templates::timeline_page(&all, "", &all))
+}
+
+/// GET /{*path} — catch-all handler
+pub async fn catch_all(
+    State(store): State<AppState>,
+    Path(path): Path<String>,
+) -> Response {
+    let query = parse_url_path(&format!("/{}", path));
+    let store = store.read().await;
+
+    let all_entries: Vec<&Entry> = store.entries.iter().collect();
+
+    // Filter entries matching the query
+    let matching: Vec<&Entry> = store
+        .entries
+        .iter()
+        .filter(|e| query.matches(&e.timestamp, &e.label, &e.tags))
+        .collect();
+
+    // Raw file request (URL has extension like sunset.jpg)
+    if let Some(ref raw_ext) = query.raw_extension {
+        return serve_raw_file(&matching, raw_ext).await;
+    }
+
+    // Listing (trailing slash or date-only or tag-only filter)
+    if query.is_listing || (query.label.is_none() && (query.date_prefix.is_some() || !query.and_tags.is_empty() || !query.or_tags.is_empty())) {
+        let desc = build_filter_description(&query);
+        return Html(templates::timeline_page(&matching, &desc, &all_entries)).into_response();
+    }
+
+    // If date+label URL and a single match with a unique label, redirect to label-only URL
+    if query.date_prefix.is_some() && query.label.is_some() && matching.len() == 1 {
+        if let Some(ref label) = matching[0].label {
+            if is_label_unique_in(label, &all_entries) {
+                return redirect(&format!("/{}", label));
+            }
+        }
+    }
+
+    // Timestamp-only URL for an entry that has a unique label: redirect to label URL
+    if query.date_prefix.is_some() && query.label.is_none() && matching.len() == 1 {
+        if let Some(ref label) = matching[0].label {
+            if is_label_unique_in(label, &all_entries) {
+                return redirect(&format!("/{}", label));
+            }
+        }
+    }
+
+    // Single entry
+    if matching.len() == 1 {
+        let unique = matching[0]
+            .label
+            .as_ref()
+            .map_or(false, |l| is_label_unique_in(l, &all_entries));
+        return serve_entry(matching[0], &store, unique).await;
+    }
+
+    if matching.is_empty() {
+        return not_found();
+    }
+
+    // Multiple matches — show as listing
+    let desc = build_filter_description(&query);
+    Html(templates::timeline_page(&matching, &desc, &all_entries)).into_response()
+}
+
+/// POST /_rescan — re-scan content directory
+pub async fn rescan(State(store): State<AppState>) -> impl IntoResponse {
+    let mut store = store.write().await;
+    match store.rescan() {
+        Ok(()) => {
+            store.resolve_embeds().await;
+            (StatusCode::OK, format!("Rescanned. {} entries.", store.entries.len()))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Rescan failed: {}", e)),
+    }
+}
+
+/// Check if a label is unique across all entries.
+fn is_label_unique_in(label: &str, entries: &[&Entry]) -> bool {
+    let lower = label.to_lowercase();
+    entries
+        .iter()
+        .filter(|e| e.label.as_ref().map_or(false, |l| l.to_lowercase() == lower))
+        .count()
+        <= 1
+}
+
+/// Serve a single entry as a rendered HTML page.
+async fn serve_entry(entry: &Entry, store: &ContentStore, label_unique: bool) -> Response {
+    // Check if this entry has a cached embed
+    if let Some(embed_data) = store.embed_cache.get(&entry.path) {
+        if !embed_data.is_upstream_deleted() {
+            let cache_dir = crate::embed::cache_dir_for(&entry.path);
+            let card_html = crate::embed::render_embed_card(embed_data, &cache_dir);
+            return Html(templates::entry_page(entry, &card_html, label_unique)).into_response();
+        }
+    }
+
+    let content = match std::fs::read(&entry.path) {
+        Ok(c) => c,
+        Err(_) => return not_found(),
+    };
+
+    match render_entry(&entry.extension, &content).await {
+        Ok(RenderedContent::Html(html)) => {
+            // Expand inline social media URLs in rendered HTML
+            let html = crate::embed::expand_inline_embeds(&html, &store.embed_cache);
+            Html(templates::entry_page(entry, &html, label_unique)).into_response()
+        }
+        Ok(RenderedContent::Standalone(html)) => {
+            Html(html).into_response()
+        }
+        Ok(RenderedContent::PreformattedText(text)) => {
+            let pre = format!("<pre>{}</pre>", html_escape_content(&text));
+            Html(templates::entry_page(entry, &pre, label_unique)).into_response()
+        }
+        Ok(RenderedContent::Embed(card_html)) => {
+            Html(templates::entry_page(entry, &card_html, label_unique)).into_response()
+        }
+        Ok(RenderedContent::Image { mime }) => {
+            Html(templates::image_page(entry, &mime, label_unique)).into_response()
+        }
+        Ok(RenderedContent::Download { .. }) => {
+            serve_raw_bytes(entry).await
+        }
+        Err(e) => {
+            tracing::error!("Render error for {}: {}", entry.path.display(), e);
+            let body = format!("<p>Rendering error: {}</p>", html_escape_content(&e));
+            Html(templates::entry_page(entry, &body, label_unique)).into_response()
+        }
+    }
+}
+
+/// Serve raw file bytes with correct MIME type and Content-Disposition.
+async fn serve_raw_file(matching: &[&Entry], requested_ext: &str) -> Response {
+    let entry = matching
+        .iter()
+        .find(|e| e.extension.eq_ignore_ascii_case(requested_ext));
+
+    match entry {
+        Some(entry) => serve_raw_bytes(entry).await,
+        None => not_found(),
+    }
+}
+
+async fn serve_raw_bytes(entry: &Entry) -> Response {
+    let content = match std::fs::read(&entry.path) {
+        Ok(c) => c,
+        Err(_) => return not_found(),
+    };
+
+    let mime = mime_guess::from_ext(&entry.extension)
+        .first_or_octet_stream()
+        .to_string();
+
+    let filename = match &entry.label {
+        Some(label) => format!("{}.{}", sanitize_filename(label), entry.extension),
+        None => format!(
+            "{}.{}",
+            entry.timestamp.format("%Y-%m-%dT%H%M%S"),
+            entry.extension
+        ),
+    };
+
+    let disposition = format!(r#"inline; filename="{}""#, filename);
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap_or(HeaderValue::from_static("application/octet-stream")))
+        .header(header::CONTENT_DISPOSITION, HeaderValue::from_str(&disposition).unwrap_or(HeaderValue::from_static("inline")))
+        .body(Body::from(content))
+        .unwrap_or_else(|_| not_found())
+}
+
+fn redirect(location: &str) -> Response {
+    Response::builder()
+        .status(StatusCode::MOVED_PERMANENTLY)
+        .header(header::LOCATION, HeaderValue::from_str(location).unwrap())
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn not_found() -> Response {
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .body(Body::from(templates::not_found_page()))
+        .unwrap()
+}
+
+fn build_filter_description(query: &crate::url::ContentQuery) -> String {
+    let mut parts = Vec::new();
+    if let Some(ref dp) = query.date_prefix {
+        parts.push(dp.clone());
+    }
+    for tag in &query.and_tags {
+        parts.push(format!("+{}", tag));
+    }
+    for tag in &query.or_tags {
+        parts.push(format!("+{}", tag));
+    }
+    if let Some(ref label) = query.label {
+        parts.push(label.clone());
+    }
+    parts.join(" ")
+}
+
+fn sanitize_filename(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_control() && *c != '"' && *c != '\\')
+        .collect()
+}
+
+fn html_escape_content(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}

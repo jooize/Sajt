@@ -1,0 +1,22 @@
+[package]
+name = "esko-bar"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["set-header", "trace"] }
+chrono = "0.4"
+xattr = "1"
+plist = "1"
+clap = { version = "4", features = ["derive"] }
+mime_guess = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+json5 = "0.4"
+scraper = "0.22"
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
