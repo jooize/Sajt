@@ -11,9 +11,7 @@ const CSS: &str = r#"
   color-scheme: light;
 
   --color-bg: #fff;
-  --sunset-top: #e8e0f0;
-  --sunset-mid: #f5d5c8;
-  --sunset-bottom: #fce4b8;
+  --sunset-bg: linear-gradient(180deg, #e8e0f0, #f5d5c8 60%, #fce4b8) fixed;
   --color-fg: #313b3f;
   --color-muted: #555;
   --color-faint: #999;
@@ -53,9 +51,7 @@ const CSS: &str = r#"
 :root[data-theme="dark"] {
     color-scheme: dark;
     --color-bg: #151515;
-    --sunset-top: #1a1525;
-    --sunset-mid: #2a1a2e;
-    --sunset-bottom: #2d1f1a;
+    --sunset-bg: linear-gradient(180deg, #1a1525, #2a1a2e 60%, #2d1f1a) fixed;
     --color-fg: #d4d4d4;
     --color-muted: #999;
     --color-faint: #666;
@@ -106,9 +102,35 @@ const CSS: &str = r#"
   --glass-spec-lo: rgba(180, 120, 80, .05);
 }
 
-/* Variant 3: placeholder for next iteration */
-:root[data-variant="3"] { }
-:root[data-theme="dark"][data-variant="3"] { }
+/* Variant 3: full sky gradient */
+:root[data-variant="3"] {
+  --sunset-bg: linear-gradient(180deg in oklab, #4a6fa5, #b07aa8 25%, #d4a080 50%, #d4644a 75%, #c0392b) fixed;
+  --color-card-bg: rgba(245, 220, 200, .18);
+  --glass-border: rgba(200, 140, 80, .2);
+  --glass-highlight: rgba(245, 200, 150, .3);
+  --glass-spec-lo: rgba(200, 140, 80, .08);
+}
+:root[data-theme="dark"][data-variant="3"] {
+  --sunset-bg: linear-gradient(180deg, #0a0e1a, #1a1028 25%, #3a1a2e 50%, #3d1510 75%, #4a1a0a) fixed;
+  --color-card-bg: rgba(45, 30, 25, .2);
+  --glass-border: rgba(180, 120, 80, .18);
+  --glass-highlight: rgba(200, 150, 100, .22);
+  --glass-spec-lo: rgba(180, 120, 80, .05);
+}
+
+/* Variant 4: dynamic sun */
+:root[data-variant="4"] {
+  --color-card-bg: rgba(245, 220, 200, .18);
+  --glass-border: rgba(200, 140, 80, .2);
+  --glass-highlight: rgba(245, 200, 150, .3);
+  --glass-spec-lo: rgba(200, 140, 80, .08);
+}
+:root[data-theme="dark"][data-variant="4"] {
+  --color-card-bg: rgba(45, 30, 25, .2);
+  --glass-border: rgba(180, 120, 80, .18);
+  --glass-highlight: rgba(200, 150, 100, .22);
+  --glass-spec-lo: rgba(180, 120, 80, .05);
+}
 
 *, *::before, *::after {
   margin: 0;
@@ -127,7 +149,7 @@ body {
   font-size: 1.6rem;
   line-height: 1.6;
   color: var(--color-fg);
-  background: linear-gradient(180deg, var(--sunset-top), var(--sunset-mid) 60%, var(--sunset-bottom)) fixed;
+  background: var(--sunset-bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -747,6 +769,7 @@ pub fn page_shell(title: &str, body: &str, show_timeline: bool) -> String {
 <button class="variant" data-v="1">1</button>
 <button class="variant" data-v="2">2</button>
 <button class="variant" data-v="3">3</button>
+<button class="variant" data-v="4">4</button>
 <label for="pos"></label>
 </nav>
 <main>
@@ -757,10 +780,10 @@ pub fn page_shell(title: &str, body: &str, show_timeline: bool) -> String {
 var p=document.getElementById("pos"),s=localStorage.getItem("pos");
 if(s!==null)p.checked=s==="1";
 p.onchange=function(){{localStorage.setItem("pos",p.checked?"1":"0")}};
-var btn=document.getElementById("theme");btn.onclick=function(){{var d=document.documentElement,n=d.dataset.theme==="dark"?"light":"dark";d.dataset.theme=n;localStorage.setItem("theme",n)}};
+var btn=document.getElementById("theme");btn.onclick=function(){{var d=document.documentElement,n=d.dataset.theme==="dark"?"light":"dark";d.dataset.theme=n;localStorage.setItem("theme",n);sunTick()}};
 var vbs=document.querySelectorAll("button.variant"),cv=localStorage.getItem("variant")||"1";
 document.documentElement.dataset.variant=cv;
-function setV(v){{cv=v;document.documentElement.dataset.variant=v;localStorage.setItem("variant",v);for(var i=0;i<vbs.length;i++)vbs[i].classList.toggle("active",vbs[i].dataset.v===v)}}
+function setV(v){{cv=v;document.documentElement.dataset.variant=v;localStorage.setItem("variant",v);for(var i=0;i<vbs.length;i++)vbs[i].classList.toggle("active",vbs[i].dataset.v===v);if(v==="4"){{sunTick()}}else{{document.documentElement.style.removeProperty("--sunset-bg")}}}}
 setV(cv);
 for(var vi=0;vi<vbs.length;vi++)vbs[vi].onclick=function(){{setV(this.dataset.v)}};
 var arts=Array.from(document.querySelectorAll("main > article")),sel=-1;
@@ -850,6 +873,59 @@ if(typeof DeviceOrientationEvent!=="undefined"&&typeof DeviceOrientationEvent.re
 }}else if("DeviceOrientationEvent" in window){{
   initGyro();
 }}
+
+/* Dynamic Sun — Luleå solar position */
+function sunCalc(){{
+  var now=new Date();
+  var utcH=now.getUTCHours()+now.getUTCMinutes()/60+now.getUTCSeconds()/3600;
+  var jan1=Date.UTC(now.getUTCFullYear(),0,1);
+  var doy=Math.floor((Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate())-jan1)/864e5)+1;
+  var B=2*Math.PI/365*(doy-81);
+  var declDeg=23.45*Math.sin(B);
+  var declR=declDeg*Math.PI/180;
+  var eot=9.87*Math.sin(2*B)-7.53*Math.cos(B)-1.5*Math.sin(B);
+  var solarTime=utcH+22.1/15+eot/60;
+  var ha=(solarTime-12)*15;
+  var haR=ha*Math.PI/180;
+  var lat=65.6*Math.PI/180;
+  var sinEl=Math.sin(lat)*Math.sin(declR)+Math.cos(lat)*Math.cos(declR)*Math.cos(haR);
+  var elev=Math.asin(sinEl)*180/Math.PI;
+  var cosAz=(Math.sin(declR)-Math.sin(lat)*sinEl)/(Math.cos(lat)*Math.cos(Math.asin(sinEl)));
+  cosAz=Math.max(-1,Math.min(1,cosAz));
+  var az=Math.acos(cosAz)*180/Math.PI;
+  if(ha>0)az=360-az;
+  return{{elev:elev,azimuth:az}};
+}}
+function sunSky(elev,dk){{
+  /* Muted Nordic palette — misty whites, pale blue-greys */
+  var S=[
+    [-12,[15,17,35],[20,22,40],[25,22,38]],
+    [-3,[40,45,70],[60,55,75],[80,65,65]],
+    [0,[90,100,130],[150,145,155],[190,175,170]],
+    [8,[160,175,200],[210,210,215],[230,225,220]],
+    [20,[190,205,225],[230,232,235],[242,240,238]],
+    [40,[200,215,235],[238,240,242],[248,247,245]]
+  ];
+  var lo=0,hi=0;
+  if(elev<=S[0][0]){{lo=hi=0}}
+  else if(elev>=S[S.length-1][0]){{lo=hi=S.length-1}}
+  else{{for(var i=0;i<S.length-1;i++){{if(elev>=S[i][0]&&elev<S[i+1][0]){{lo=i;hi=i+1;break}}}}}}
+  var t=(lo===hi)?0:(elev-S[lo][0])/(S[hi][0]-S[lo][0]);
+  function lr(a,b,t){{return Math.round(a+(b-a)*t)}}
+  function lc(a,b,t){{return[lr(a[0],b[0],t),lr(a[1],b[1],t),lr(a[2],b[2],t)]}}
+  function dm(c){{return[Math.round(c[0]*.55),Math.round(c[1]*.55),Math.round(c[2]*.58)]}}
+  function lift(c){{var l=c[0]*.2126+c[1]*.7152+c[2]*.0722;if(l>=160)return c;var f=(160-l)/160;return[Math.round(c[0]+(235-c[0])*f),Math.round(c[1]+(233-c[1])*f),Math.round(c[2]+(230-c[2])*f)]}}
+  var top=lc(S[lo][1],S[hi][1],t),mid=lc(S[lo][2],S[hi][2],t),bot=lc(S[lo][3],S[hi][3],t);
+  if(dk){{top=dm(top);mid=dm(mid);bot=dm(bot)}}else{{top=lift(top);mid=lift(mid);bot=lift(bot)}}
+  return "linear-gradient(180deg,rgb("+top+"),rgb("+mid+") 50%,rgb("+bot+")) fixed";
+}}
+function sunTick(){{
+  if(cv!=="4")return;
+  var s=sunCalc();
+  var bg=sunSky(s.elev,document.documentElement.dataset.theme==="dark");
+  document.documentElement.style.setProperty("--sunset-bg",bg);
+}}
+setInterval(sunTick,60000);
 
 }}();
 </script>
