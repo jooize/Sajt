@@ -1,10 +1,19 @@
 use crate::entry::Entry;
 
 const CSS: &str = r#"
+@property --spec-angle {
+  syntax: '<angle>';
+  inherits: true;
+  initial-value: 160deg;
+}
+
 :root {
   color-scheme: light;
 
   --color-bg: #fff;
+  --sunset-top: #e8e0f0;
+  --sunset-mid: #f5d5c8;
+  --sunset-bottom: #fce4b8;
   --color-fg: #313b3f;
   --color-muted: #555;
   --color-faint: #999;
@@ -34,12 +43,19 @@ const CSS: &str = r#"
   --toggle-pill-hover: rgba(200, 240, 200, .5);
   --glass-border: rgba(34, 139, 34, .2);
   --glass-highlight: rgba(34, 139, 34, .25);
+  --glass-spec-hi: rgba(255, 255, 255, .55);
+  --glass-spec-mid: rgba(255, 255, 255, .15);
+  --glass-spec-lo: rgba(34, 139, 34, .08);
   --noise-opacity: .02;
+  --glass-spec-surface: rgba(255, 255, 255, .1);
 }
 
 :root[data-theme="dark"] {
     color-scheme: dark;
     --color-bg: #151515;
+    --sunset-top: #1a1525;
+    --sunset-mid: #2a1a2e;
+    --sunset-bottom: #2d1f1a;
     --color-fg: #d4d4d4;
     --color-muted: #999;
     --color-faint: #666;
@@ -69,8 +85,30 @@ const CSS: &str = r#"
     --toggle-pill-hover: rgba(70, 120, 70, .2);
     --glass-border: rgba(90, 170, 90, .18);
     --glass-highlight: rgba(90, 170, 90, .22);
+    --glass-spec-hi: rgba(255, 255, 255, .35);
+    --glass-spec-mid: rgba(255, 255, 255, .08);
+    --glass-spec-lo: rgba(90, 170, 90, .05);
     --noise-opacity: .06;
+    --glass-spec-surface: rgba(255, 255, 255, .06);
 }
+
+/* Variant 2: warm glass */
+:root[data-variant="2"] {
+  --color-card-bg: rgba(245, 220, 200, .18);
+  --glass-border: rgba(200, 140, 80, .2);
+  --glass-highlight: rgba(245, 200, 150, .3);
+  --glass-spec-lo: rgba(200, 140, 80, .08);
+}
+:root[data-theme="dark"][data-variant="2"] {
+  --color-card-bg: rgba(45, 30, 25, .2);
+  --glass-border: rgba(180, 120, 80, .18);
+  --glass-highlight: rgba(200, 150, 100, .22);
+  --glass-spec-lo: rgba(180, 120, 80, .05);
+}
+
+/* Variant 3: placeholder for next iteration */
+:root[data-variant="3"] { }
+:root[data-theme="dark"][data-variant="3"] { }
 
 *, *::before, *::after {
   margin: 0;
@@ -89,7 +127,7 @@ body {
   font-size: 1.6rem;
   line-height: 1.6;
   color: var(--color-fg);
-  background: var(--color-bg);
+  background: linear-gradient(180deg, var(--sunset-top), var(--sunset-mid) 60%, var(--sunset-bottom)) fixed;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -129,25 +167,24 @@ body > nav > a:first-child {
   font-size: .85em;
   padding: .3em .85em;
   border-radius: 1em;
-  background: var(--nav-pill-bg);
-  color: #fff;
+  background: var(--color-card-bg);
+  color: var(--nav-pill-fg, rgba(161, 35, 246, 1));
   font-weight: 600;
   text-decoration: none;
-  -webkit-backdrop-filter: blur(8px) saturate(120%);
-  backdrop-filter: blur(8px) saturate(120%);
-  border: 1px solid var(--glass-border);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  backdrop-filter: blur(10px) saturate(120%);
+  border: none;
   box-shadow:
-    0 2px 8px var(--nav-pill-glow),
     inset 0 1px 0 var(--glass-highlight),
     inset 0 -1px 0 rgba(0, 0, 0, .1);
   transition: background .15s, box-shadow .15s;
 }
 
 body > nav > a:first-child:hover {
-  background: var(--nav-pill-hover);
+  background: var(--color-tag-bg);
   text-decoration: none;
   box-shadow:
-    0 4px 14px var(--nav-pill-glow),
+    0 2px 8px rgba(0, 0, 0, .06),
     inset 0 1px 0 var(--glass-highlight),
     inset 0 -1px 0 rgba(0, 0, 0, .1);
 }
@@ -165,11 +202,13 @@ body > nav > label[for="pos"] {
   font-size: .85em;
   padding: .25em .7em;
   border-radius: 1em;
-  background: var(--toggle-pill-bg);
-  border: 1px solid var(--glass-border);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
+  background: var(--color-card-bg);
+  border: none;
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  backdrop-filter: blur(10px) saturate(120%);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    inset 0 -1px 0 rgba(0, 0, 0, .1);
   color: var(--color-faint);
   cursor: pointer;
   user-select: none;
@@ -178,7 +217,7 @@ body > nav > label[for="pos"] {
 }
 
 body > nav > label[for="pos"]:hover {
-  background: var(--toggle-pill-hover);
+  background: var(--color-tag-bg);
   color: var(--color-fg);
 }
 
@@ -226,37 +265,106 @@ body > nav > button#theme:hover {
   opacity: .8;
 }
 
+body > nav > button.variant {
+  appearance: none;
+  border: none;
+  font-size: .75em;
+  padding: .2em .55em;
+  border-radius: 1em;
+  background: var(--color-card-bg);
+  color: var(--color-faint);
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  backdrop-filter: blur(10px) saturate(120%);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    inset 0 -1px 0 rgba(0, 0, 0, .1);
+  transition: opacity .15s;
+  line-height: 1;
+}
+
+body > nav > button.variant:hover {
+  opacity: .8;
+}
+
+body > nav > button.variant.active {
+  color: var(--color-fg);
+  font-weight: 700;
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    inset 0 -1px 0 rgba(0, 0, 0, .1),
+    0 0 0 1px var(--glass-highlight);
+}
+
 #theme::after { content: "\263E"; }
 
 @media (max-width: 85ch) {
   body > nav > label[for="pos"] { display: none; }
 }
 
+/* Glass cards — all viewports */
+
+main > article {
+  position: relative;
+  padding: .7em 1em .6em;
+  background:
+    radial-gradient(ellipse at var(--light-x, 30%) var(--light-y, 30%),
+      var(--glass-spec-surface), transparent 70%),
+    var(--color-card-bg);
+  border-radius: .75em;
+  border: none;
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  backdrop-filter: blur(10px) saturate(120%);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .04);
+  transition: box-shadow .15s, transform .3s ease-out;
+  will-change: transform;
+  transform: rotateX(0deg) rotateY(0deg);
+  transform-style: flat;
+}
+
+main > article::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    var(--spec-angle),
+    var(--glass-spec-hi) 0%,
+    var(--glass-spec-mid) 35%,
+    var(--glass-spec-lo) 65%,
+    transparent 100%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+main > article.selected {
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, .04),
+    0 0 0 1px var(--nav-pill-bg);
+}
+
+main > article.selected::after {
+  background: linear-gradient(
+    var(--spec-angle),
+    var(--nav-pill-bg) 0%,
+    rgba(161, 35, 246, .3) 35%,
+    transparent 100%
+  );
+}
+
 @media (min-width: 70ch) {
   main {
     padding: 1em;
-  }
-
-  main > article {
-    position: relative;
-    padding: .7em 1em .6em;
-    background: var(--color-card-bg);
-    border-radius: .75em;
-    border: 1px solid var(--glass-border);
-    -webkit-backdrop-filter: blur(10px) saturate(120%);
-    backdrop-filter: blur(10px) saturate(120%);
-    box-shadow:
-      0 4px 16px rgba(0, 0, 0, .04),
-      inset 0 1px 0 var(--glass-highlight);
-    transition: border-color .15s, box-shadow .15s;
-  }
-
-  main > article.selected {
-    border-color: var(--nav-pill-bg);
-    box-shadow:
-      0 4px 16px rgba(0, 0, 0, .04),
-      inset 0 1px 0 var(--glass-highlight),
-      0 0 0 1px var(--nav-pill-bg);
+    perspective: 800px;
   }
 
   main > article.selected::before {
@@ -636,6 +744,9 @@ pub fn page_shell(title: &str, body: &str, show_timeline: bool) -> String {
 <nav>
 {nav_link}
 <button id="theme" aria-label="Toggle theme"></button>
+<button class="variant" data-v="1">1</button>
+<button class="variant" data-v="2">2</button>
+<button class="variant" data-v="3">3</button>
 <label for="pos"></label>
 </nav>
 <main>
@@ -647,6 +758,11 @@ var p=document.getElementById("pos"),s=localStorage.getItem("pos");
 if(s!==null)p.checked=s==="1";
 p.onchange=function(){{localStorage.setItem("pos",p.checked?"1":"0")}};
 var btn=document.getElementById("theme");btn.onclick=function(){{var d=document.documentElement,n=d.dataset.theme==="dark"?"light":"dark";d.dataset.theme=n;localStorage.setItem("theme",n)}};
+var vbs=document.querySelectorAll("button.variant"),cv=localStorage.getItem("variant")||"1";
+document.documentElement.dataset.variant=cv;
+function setV(v){{cv=v;document.documentElement.dataset.variant=v;localStorage.setItem("variant",v);for(var i=0;i<vbs.length;i++)vbs[i].classList.toggle("active",vbs[i].dataset.v===v)}}
+setV(cv);
+for(var vi=0;vi<vbs.length;vi++)vbs[vi].onclick=function(){{setV(this.dataset.v)}};
 var arts=Array.from(document.querySelectorAll("main > article")),sel=-1;
 function pick(i){{
 if(sel>=0&&sel<arts.length)arts[sel].classList.remove("selected");
@@ -674,6 +790,67 @@ if(sel>=0){{var a=arts[sel].querySelector("a[href]");if(a){{e.preventDefault();w
 e.preventDefault();history.back()
 }}
 }});
+
+/* Dynamic glass pane effect */
+var root=document.documentElement,raf=0,mql=matchMedia("(min-width:70ch)");
+function glassMove(cx,cy,ww,wh){{
+  var angle=Math.atan2(cy-wh/2,cx-ww/2)*180/Math.PI+90;
+  root.style.setProperty("--spec-angle",angle+"deg");
+  for(var i=0;i<arts.length;i++){{
+    var r=arts[i].getBoundingClientRect();
+    var rx=(cx-(r.left+r.width/2))/r.width;
+    var ry=(cy-(r.top+r.height/2))/r.height;
+    rx=Math.max(-1,Math.min(1,rx));
+    ry=Math.max(-1,Math.min(1,ry));
+    var lx=((rx+1)/2*100).toFixed(1);
+    var ly=((ry+1)/2*100).toFixed(1);
+    arts[i].style.setProperty("--light-x",lx+"%");
+    arts[i].style.setProperty("--light-y",ly+"%");
+    arts[i].style.transform="rotateY("+(rx*.5)+"deg) rotateX("+(-ry*.5)+"deg)";
+  }}
+}}
+function glassReset(){{
+  root.style.removeProperty("--spec-angle");
+  for(var i=0;i<arts.length;i++){{
+    arts[i].style.removeProperty("--light-x");
+    arts[i].style.removeProperty("--light-y");
+    arts[i].style.transform="";
+  }}
+}}
+
+/* Mobile gyro glass effect */
+var gyroActive=false;
+function initGyro(){{
+  if(gyroActive)return;
+  gyroActive=true;
+  window.addEventListener("deviceorientation",function(e){{
+    if(raf)return;
+    raf=requestAnimationFrame(function(){{
+      raf=0;
+      var g=Math.max(-45,Math.min(45,e.gamma||0));
+      var b=Math.max(-45,Math.min(45,(e.beta||0)-45));
+      var nx=g/45,ny=b/45;
+      var angle=Math.atan2(ny,nx)*180/Math.PI+90;
+      root.style.setProperty("--spec-angle",angle+"deg");
+      var lx=((nx+1)/2*100).toFixed(1);
+      var ly=((ny+1)/2*100).toFixed(1);
+      for(var i=0;i<arts.length;i++){{
+        arts[i].style.setProperty("--light-x",lx+"%");
+        arts[i].style.setProperty("--light-y",ly+"%");
+        arts[i].style.transform="rotateY("+(nx*.5)+"deg) rotateX("+(-ny*.5)+"deg)";
+      }}
+    }});
+  }});
+}}
+if(typeof DeviceOrientationEvent!=="undefined"&&typeof DeviceOrientationEvent.requestPermission==="function"){{
+  document.addEventListener("click",function once(){{
+    DeviceOrientationEvent.requestPermission().then(function(s){{if(s==="granted")initGyro()}});
+    document.removeEventListener("click",once);
+  }});
+}}else if("DeviceOrientationEvent" in window){{
+  initGyro();
+}}
+
 }}();
 </script>
 </body>
@@ -686,9 +863,14 @@ e.preventDefault();history.back()
     )
 }
 
-/// Format date with month name and day name: "2026-03-03 (March, Tuesday)"
+/// Format date with time, month name, and day name: "2026-03-03 17:00 (March, Tuesday)"
 fn format_date_display(ts: &chrono::NaiveDateTime) -> String {
-    ts.format("%Y-%m-%d (%B, %A)").to_string()
+    ts.format("%Y-%m-%d %H:%M (%B, %A)").to_string()
+}
+
+/// Format datetime for the HTML `datetime` attribute (ISO 8601).
+fn format_datetime_attr(ts: &chrono::NaiveDateTime) -> String {
+    ts.format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
 /// Permalink for an entry, using timestamp to disambiguate if label is not unique.
@@ -754,7 +936,7 @@ pub fn timeline_page(entries: &[&Entry], filter_desc: &str, all_entries: &[&Entr
 
     let mut html = String::new();
     for entry in entries {
-        let datetime = entry.timestamp.format("%Y-%m-%d").to_string();
+        let datetime = format_datetime_attr(&entry.timestamp);
         let date_display = format_date_display(&entry.timestamp);
         let unique = is_label_unique(entry, &counts);
         let href = entry_href(entry, unique);
@@ -791,7 +973,7 @@ pub fn entry_page(entry: &Entry, rendered_html: &str, label_unique: bool) -> Str
     let label = entry.display_label.as_deref()
         .or(entry.label.as_deref())
         .unwrap_or("Untitled");
-    let datetime = entry.timestamp.format("%Y-%m-%d").to_string();
+    let datetime = format_datetime_attr(&entry.timestamp);
     let date_display = format_date_display(&entry.timestamp);
     let tags = tags_nav(&entry.tags);
     let raw_href = entry_raw_href(entry, label_unique);
@@ -818,7 +1000,7 @@ pub fn entry_page(entry: &Entry, rendered_html: &str, label_unique: bool) -> Str
 /// Render an image viewer page.
 pub fn image_page(entry: &Entry, _mime: &str, label_unique: bool) -> String {
     let label = entry.label.as_deref().unwrap_or("Image");
-    let datetime = entry.timestamp.format("%Y-%m-%d").to_string();
+    let datetime = format_datetime_attr(&entry.timestamp);
     let date_display = format_date_display(&entry.timestamp);
     let tags = tags_nav(&entry.tags);
     let src = entry_raw_href(entry, label_unique);
