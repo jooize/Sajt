@@ -20,6 +20,38 @@ pub async fn index(State(store): State<AppState>) -> impl IntoResponse {
     Html(templates::timeline_page(&all, "", &all))
 }
 
+/// GET /static/{*path} — serve static assets with aggressive caching.
+pub async fn serve_static(Path(path): Path<String>) -> Response {
+    // Restrict to known safe filenames (no path traversal)
+    let safe: bool = path
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+    if !safe || path.contains("..") || path.starts_with('.') {
+        return not_found();
+    }
+
+    let file_path = std::path::Path::new("static").join(&path);
+    let content = match std::fs::read(&file_path) {
+        Ok(c) => c,
+        Err(_) => return not_found(),
+    };
+
+    let ext = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let mime = mime_guess::from_ext(ext)
+        .first_or_octet_stream()
+        .to_string();
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap_or(HeaderValue::from_static("application/octet-stream")))
+        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+        .body(Body::from(content))
+        .unwrap_or_else(|_| not_found())
+}
+
 /// GET /{*path} — catch-all handler
 pub async fn catch_all(
     State(store): State<AppState>,

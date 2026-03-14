@@ -126,6 +126,7 @@ async fn main() {
     let app = axum::Router::new()
         .route("/", axum::routing::get(routes::index))
         .route("/_rescan", axum::routing::post(routes::rescan))
+        .route("/static/{*path}", axum::routing::get(routes::serve_static))
         .route("/{*path}", axum::routing::get(routes::catch_all))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state);
