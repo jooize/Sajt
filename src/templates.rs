@@ -102,40 +102,6 @@ const CSS: &str = r#"
   --glass-spec-lo: rgba(180, 120, 80, .05);
 }
 
-/* Variant 3: full sky gradient */
-:root[data-variant="3"] {
-  --sunset-bg: linear-gradient(180deg in oklab, #4a6fa5, #b07aa8 25%, #d4a080 50%, #d4644a 75%, #c0392b) fixed;
-  --color-card-bg: rgba(245, 220, 200, .18);
-  --glass-border: rgba(200, 140, 80, .2);
-  --glass-highlight: rgba(245, 200, 150, .3);
-  --glass-spec-lo: rgba(200, 140, 80, .08);
-}
-:root[data-theme="dark"][data-variant="3"] {
-  --sunset-bg: linear-gradient(180deg, #0a0e1a, #1a1028 25%, #3a1a2e 50%, #3d1510 75%, #4a1a0a) fixed;
-  --color-card-bg: rgba(45, 30, 25, .2);
-  --glass-border: rgba(180, 120, 80, .18);
-  --glass-highlight: rgba(200, 150, 100, .22);
-  --glass-spec-lo: rgba(180, 120, 80, .05);
-}
-
-/* Variant 4: dynamic sun */
-:root[data-variant="4"] {
-  --color-card-bg: rgba(245, 220, 200, .18);
-  --glass-border: rgba(200, 140, 80, .2);
-  --glass-highlight: rgba(245, 200, 150, .3);
-  --glass-spec-lo: rgba(200, 140, 80, .08);
-  --color-faint: #666;
-  --color-muted: #444;
-}
-:root[data-theme="dark"][data-variant="4"] {
-  --color-card-bg: rgba(45, 30, 25, .2);
-  --glass-border: rgba(180, 120, 80, .18);
-  --glass-highlight: rgba(200, 150, 100, .22);
-  --glass-spec-lo: rgba(180, 120, 80, .05);
-  --color-faint: #aaa;
-  --color-muted: #bbb;
-}
-
 /* Variant 6: raindrop-fx with photo background */
 :root[data-variant="6"] {
   --color-card-bg: rgba(20, 20, 30, .55);
@@ -156,48 +122,8 @@ const CSS: &str = r#"
   --glass-spec-lo: rgba(60, 80, 120, .05);
 }
 
-/* Variant 7: raindrop-fx with demo background — same palette as 6 */
-:root[data-variant="7"] {
-  --color-card-bg: rgba(20, 20, 30, .55);
-  --glass-border: rgba(120, 140, 180, .25);
-  --glass-highlight: rgba(180, 200, 240, .2);
-  --glass-spec-lo: rgba(100, 120, 160, .08);
-  --color-fg: #e0e4ea;
-  --color-muted: #bbb;
-  --color-faint: #999;
-  --color-date: #7ab;
-  --color-tag-bg: rgba(60, 80, 120, .6);
-  --color-tag-fg: #d0dae8;
-}
-:root[data-theme="dark"][data-variant="7"] {
-  --color-card-bg: rgba(10, 10, 18, .6);
-  --glass-border: rgba(80, 100, 140, .2);
-  --glass-highlight: rgba(120, 140, 180, .15);
-  --glass-spec-lo: rgba(60, 80, 120, .05);
-}
-
-/* Variant 5: CSS rain — reuses variant 4 palette */
-:root[data-variant="5"] {
-  --color-card-bg: rgba(245, 220, 200, .18);
-  --glass-border: rgba(200, 140, 80, .2);
-  --glass-highlight: rgba(245, 200, 150, .3);
-  --glass-spec-lo: rgba(200, 140, 80, .08);
-  --color-faint: #666;
-  --color-muted: #444;
-}
-:root[data-theme="dark"][data-variant="5"] {
-  --color-card-bg: rgba(45, 30, 25, .2);
-  --glass-border: rgba(180, 120, 80, .18);
-  --glass-highlight: rgba(200, 150, 100, .22);
-  --glass-spec-lo: rgba(180, 120, 80, .05);
-  --color-faint: #aaa;
-  --color-muted: #bbb;
-}
-
-/* Variants 8, 9, 10, 11: winter glass — cool blue-white */
-:root[data-variant="8"],
+/* Variants 9, 11: winter glass — cool blue-white */
 :root[data-variant="9"],
-:root[data-variant="10"],
 :root[data-variant="11"] {
   --color-card-bg: rgba(200, 220, 240, .18);
   --glass-border: rgba(120, 160, 200, .2);
@@ -208,9 +134,7 @@ const CSS: &str = r#"
   --toggle-pill-bg: rgba(200, 220, 240, .3);
   --toggle-pill-hover: rgba(180, 210, 235, .5);
 }
-:root[data-theme="dark"][data-variant="8"],
 :root[data-theme="dark"][data-variant="9"],
-:root[data-theme="dark"][data-variant="10"],
 :root[data-theme="dark"][data-variant="11"] {
   --color-card-bg: rgba(15, 20, 35, .25);
   --glass-border: rgba(100, 140, 190, .18);
@@ -223,13 +147,9 @@ const CSS: &str = r#"
 }
 
 /* Snow variants: content above snow overlay, snow falls behind glass cards */
-:root[data-variant="8"] nav,
 :root[data-variant="9"] nav,
-:root[data-variant="10"] nav,
 :root[data-variant="11"] nav,
-:root[data-variant="8"] main,
 :root[data-variant="9"] main,
-:root[data-variant="10"] main,
 :root[data-variant="11"] main {
   position: relative;
   z-index: 3;
@@ -894,8 +814,6 @@ article > footer > a:hover {
   font-size: 1.1em;
 }
 
-/* Weather overlays (variant 4, applied via JS body classes) */
-
 /* Rain FX canvas — behind content, replaces body background */
 #rain-fx {
   display: none;
@@ -915,127 +833,6 @@ body.wx-rainfx #rain-fx {
   display: block;
 }
 
-body.wx-snow::after {
-  content: "";
-  position: fixed;
-  inset: -150px;
-  pointer-events: none;
-  z-index: 2;
-  background-image:
-    radial-gradient(2px 2px at 10% 20%, rgba(255,255,255,.7) 50%, transparent),
-    radial-gradient(3px 3px at 40% 50%, rgba(255,255,255,.5) 50%, transparent),
-    radial-gradient(1.5px 1.5px at 70% 15%, rgba(255,255,255,.6) 50%, transparent),
-    radial-gradient(2.5px 2.5px at 25% 70%, rgba(255,255,255,.45) 50%, transparent),
-    radial-gradient(2px 2px at 85% 40%, rgba(255,255,255,.5) 50%, transparent),
-    radial-gradient(1px 1px at 55% 85%, rgba(255,255,255,.55) 50%, transparent);
-  background-size: 200px 200px, 250px 300px, 180px 250px, 220px 280px, 190px 240px, 170px 220px;
-  animation: wx-snow 4s linear infinite;
-}
-
-@keyframes wx-snow {
-  from { transform: translateY(-150px) translateX(-15px); }
-  to { transform: translateY(150px) translateX(15px); }
-}
-
-/* Rain: falling drops overlay (two parallax layers)
-   Uniform tile height per layer so translateY = tile height = seamless loop.
-   Coprime tile widths prevent visible horizontal repetition. */
-body.wx-rain::before {
-  content: "";
-  position: fixed;
-  inset: -150px;
-  pointer-events: none;
-  z-index: 1;
-  background-image:
-    radial-gradient(ellipse 1px 35px, rgba(180,200,225,.35), transparent),
-    radial-gradient(ellipse 1px 28px, rgba(180,200,225,.25), transparent),
-    radial-gradient(ellipse 1px 32px, rgba(180,200,225,.30), transparent),
-    radial-gradient(ellipse 1px 22px, rgba(180,200,225,.20), transparent),
-    radial-gradient(ellipse 1px 38px, rgba(180,200,225,.28), transparent);
-  background-size: 90px 150px, 75px 150px, 120px 150px, 105px 150px, 60px 150px;
-  background-position: 20px 0, 50px 30px, 85px 15px, 10px 60px, 65px 45px;
-  opacity: .35;
-  animation: wx-rain-back 2.5s linear infinite;
-}
-
-body.wx-rain::after {
-  content: "";
-  position: fixed;
-  inset: -200px;
-  pointer-events: none;
-  z-index: 2;
-  background-image:
-    radial-gradient(ellipse 1.5px 55px, rgba(180,200,225,.4), transparent),
-    radial-gradient(ellipse 1.5px 45px, rgba(180,200,225,.35), transparent),
-    radial-gradient(ellipse 2px 60px, rgba(180,200,225,.38), transparent),
-    radial-gradient(ellipse 1.5px 40px, rgba(180,200,225,.30), transparent),
-    radial-gradient(ellipse 2px 50px, rgba(180,200,225,.33), transparent);
-  background-size: 100px 180px, 80px 180px, 140px 180px, 60px 180px, 120px 180px;
-  background-position: 30px 0, 70px 25px, 15px 50px, 95px 10px, 50px 70px;
-  opacity: .5;
-  animation: wx-rain-front 1.2s linear infinite;
-}
-
-@keyframes wx-rain-back {
-  from { transform: translateY(-150px); }
-  to   { transform: translateY(0); }
-}
-
-@keyframes wx-rain-front {
-  from { transform: translateY(-180px); }
-  to   { transform: translateY(0); }
-}
-
-/* Variant 8: CSS snow — two parallax layers
-   Far layer (::before): 8 small dots, slow fall, blur
-   Near layer (::after): 6 larger dots, faster fall
-   Coprime tile widths prevent visible horizontal repetition.
-   Uniform tile height per layer for seamless loop. */
-body.wx-snow-v8::before {
-  content: "";
-  position: fixed;
-  inset: -300px -50px;
-  pointer-events: none;
-  z-index: 1;
-  opacity: .45;
-  filter: blur(1px);
-  background-image:
-    radial-gradient(1.5px 1.5px at 15% 12%, #fff 50%, transparent),
-    radial-gradient(1px 1px at 35% 38%, #fff 50%, transparent),
-    radial-gradient(2px 2px at 55% 65%, #fff 50%, transparent),
-    radial-gradient(1.2px 1.2px at 75% 22%, #fff 50%, transparent),
-    radial-gradient(1.8px 1.8px at 22% 78%, #fff 50%, transparent),
-    radial-gradient(1px 1px at 88% 48%, #fff 50%, transparent),
-    radial-gradient(1.5px 1.5px at 45% 90%, #fff 50%, transparent),
-    radial-gradient(1.3px 1.3px at 65% 5%, #fff 50%, transparent);
-  background-size: 170px 300px, 190px 300px, 210px 300px, 230px 300px, 180px 300px, 200px 300px, 220px 300px, 160px 300px;
-  animation: wx-snow-v8-far 12s linear infinite;
-}
-body.wx-snow-v8::after {
-  content: "";
-  position: fixed;
-  inset: -200px -50px;
-  pointer-events: none;
-  z-index: 2;
-  opacity: .7;
-  background-image:
-    radial-gradient(2.5px 2.5px at 20% 18%, #fff 50%, transparent),
-    radial-gradient(3px 3px at 50% 55%, #fff 50%, transparent),
-    radial-gradient(2.8px 2.8px at 80% 35%, #fff 50%, transparent),
-    radial-gradient(2.5px 2.5px at 35% 75%, #fff 50%, transparent),
-    radial-gradient(3px 3px at 65% 8%, #fff 50%, transparent),
-    radial-gradient(2.6px 2.6px at 10% 50%, #fff 50%, transparent);
-  background-size: 190px 200px, 210px 200px, 170px 200px, 230px 200px, 200px 200px, 180px 200px;
-  animation: wx-snow-v8-near 7s linear infinite;
-}
-@keyframes wx-snow-v8-far {
-  from { transform: translateY(-300px) translateX(-20px); }
-  to   { transform: translateY(0) translateX(20px); }
-}
-@keyframes wx-snow-v8-near {
-  from { transform: translateY(-200px) translateX(-15px); }
-  to   { transform: translateY(0) translateX(15px); }
-}
 "#;
 
 /// Wrap content in a full HTML page shell.
@@ -1073,9 +870,7 @@ pub fn page_shell(title: &str, body: &str, show_timeline: bool) -> String {
 <button id="rain" aria-label="Toggle rain"></button>
 <button class="variant" data-v="1">1</button>
 <button class="variant" data-v="2">2</button>
-<button class="variant" data-v="3">3</button>
 <button class="variant" data-v="6">6</button>
-<button class="variant" data-v="7">7</button>
 <button class="variant" data-v="9">9</button>
 <button class="variant" data-v="11">11</button>
 <label for="pos"></label>
@@ -1088,7 +883,7 @@ pub fn page_shell(title: &str, body: &str, show_timeline: bool) -> String {
 var p=document.getElementById("pos"),s=localStorage.getItem("pos");
 if(s!==null)p.checked=s==="1";
 p.onchange=function(){{localStorage.setItem("pos",p.checked?"1":"0")}};
-var btn=document.getElementById("theme");btn.onclick=function(){{var d=document.documentElement,n=d.dataset.theme==="dark"?"light":"dark";d.dataset.theme=n;localStorage.setItem("theme",n);sunTick();var dk=n==="dark";if(snowCanvas)snowCanvas.setDark(dk);if(snowGL)snowGL.setDark(dk);if(snowShader)snowShader.setDark(dk);if(cv==="8"||cv==="9"||cv==="10"||cv==="11")document.documentElement.style.setProperty("--sunset-bg",winterSky())}};
+var btn=document.getElementById("theme");btn.onclick=function(){{var d=document.documentElement,n=d.dataset.theme==="dark"?"light":"dark";d.dataset.theme=n;localStorage.setItem("theme",n);var dk=n==="dark";if(snowCanvas)snowCanvas.setDark(dk);if(snowShader)snowShader.setDark(dk);if(cv==="9"||cv==="11")document.documentElement.style.setProperty("--sunset-bg",winterSky())}};
 var manualRain=localStorage.getItem("rain")==="1";var rbtn=document.getElementById("rain");
 var rainFx=null,rainLoaded=false;
 function rainFxBg(){{
@@ -1106,13 +901,13 @@ function rainFxBg(){{
 }}
 var rainGen=0,rainMode="";
 function rainFxBgSrc(mode){{
-  return mode==="photo"?"/static/rain-bg.jpg":mode==="demo"?"/static/rain-bg-demo.jpg":null;
+  return mode==="photo"?"/static/rain-bg.jpg":null;
 }}
 function rainFxStart(mode){{
   var m=mode||"gradient";
   if(rainFx&&rainMode!==m){{
     if(rainMode!=="gradient"&&m!=="gradient"){{
-      // Photo <-> demo: swap background texture, keep WebGL context alive
+      // Swap background texture, keep WebGL context alive
       var src=rainFxBgSrc(m);
       if(src){{
         var img=new Image();img.onload=function(){{if(rainFx)rainFx.setBackground(img)}};img.src=src;
@@ -1122,7 +917,7 @@ function rainFxStart(mode){{
       rainMode=m;
       return;
     }}
-    // Gradient <-> photo/demo: different options, full recreate with delay for WebGL cleanup
+    // Gradient <-> photo: different options, full recreate with delay for WebGL cleanup
     rainFxStop();
     rainMode=m;
     var gen=rainGen;
@@ -1205,8 +1000,7 @@ function snowCanvasCreate(){{
   cv.width=window.innerWidth;cv.height=window.innerHeight;
   document.body.appendChild(cv);
   var dk=document.documentElement.dataset.theme==="dark";
-  var wind=wxData?wxData.wind_speed_10m:0;
-  snowCanvas=new SnowCanvas(cv,{{dark:dk,wind:wind}});
+  snowCanvas=new SnowCanvas(cv,{{dark:dk}});
   snowCanvas.start();
   window.addEventListener("resize",snowCanvasResize);
 }}
@@ -1218,41 +1012,6 @@ function snowCanvasStop(){{
   window.removeEventListener("resize",snowCanvasResize);
   if(snowCanvas){{snowCanvas.stop();snowCanvas=null}}
   var el=document.getElementById("snow-canvas");if(el)el.remove();
-}}
-/* Snow WebGL (variant 10) */
-var snowGL=null,snowGLLoaded=false;
-function snowGLStart(){{
-  if(snowGL)return;
-  if(!snowGLLoaded){{
-    var sc=document.createElement("script");sc.src="/static/snow-webgl.js";
-    sc.onload=function(){{snowGLLoaded=true;snowGLCreate()}};
-    document.head.appendChild(sc);
-  }}else{{snowGLCreate()}}
-}}
-function snowGLCreate(){{
-  if(typeof SnowGL==="undefined")return;
-  var cv=document.createElement("canvas");cv.id="snow-webgl";
-  cv.style.cssText="position:fixed;inset:0;z-index:2;pointer-events:none";
-  cv.width=window.innerWidth;cv.height=window.innerHeight;
-  document.body.appendChild(cv);
-  var dk=document.documentElement.dataset.theme==="dark";
-  var wind=wxData?wxData.wind_speed_10m:0;
-  snowGL=new SnowGL(cv,{{dark:dk,wind:wind}});
-  snowGL.start();
-  window.addEventListener("resize",snowGLResize);
-}}
-function snowGLResize(){{
-  var cv=document.getElementById("snow-webgl");
-  if(snowGL&&cv){{cv.width=window.innerWidth;cv.height=window.innerHeight;snowGL.resize(window.innerWidth,window.innerHeight)}}
-}}
-function snowGLStop(){{
-  window.removeEventListener("resize",snowGLResize);
-  if(snowGL){{snowGL.stop();snowGL=null}}
-  var el=document.getElementById("snow-webgl");
-  if(el){{
-    try{{var gl=el.getContext("webgl2");if(gl){{var ext=gl.getExtension("WEBGL_lose_context");if(ext)ext.loseContext()}}}}catch(e){{}}
-    el.remove();
-  }}
 }}
 /* Snow Shader 3D particles (variant 11) */
 var snowShader=null,snowShaderLoaded=false;
@@ -1270,8 +1029,7 @@ function snowShaderCreate(){{
   holder.style.cssText="position:fixed;inset:0;width:100vw;height:100vh;z-index:2;pointer-events:none;overflow:hidden";
   document.body.appendChild(holder);
   var dk=document.documentElement.dataset.theme==="dark";
-  var wind=wxData?wxData.wind_speed_10m:0;
-  snowShader=new SnowShader(holder,{{dark:dk,wind:wind}});
+  snowShader=new SnowShader(holder,{{dark:dk}});
   snowShader.start();
   window.addEventListener("resize",snowShaderResize);
 }}
@@ -1284,12 +1042,12 @@ function snowShaderStop(){{
   var el=document.getElementById("snow-shader");if(el)el.remove();
 }}
 if(manualRain){{rbtn.classList.add("active");rainFxStart()}}
-rbtn.onclick=function(){{manualRain=!manualRain;localStorage.setItem("rain",manualRain?"1":"0");rbtn.classList.toggle("active",manualRain);if(manualRain){{document.body.classList.remove("wx-snow");rainFxStart()}}else{{rainFxStop();wxUpdate()}}}};
+rbtn.onclick=function(){{manualRain=!manualRain;localStorage.setItem("rain",manualRain?"1":"0");rbtn.classList.toggle("active",manualRain);if(manualRain){{rainFxStart()}}else{{rainFxStop()}}}};
 var vbs=document.querySelectorAll("button.variant"),cv=localStorage.getItem("variant")||"1";
 document.documentElement.dataset.variant=cv;
 function winterSky(){{var dk=document.documentElement.dataset.theme==="dark";return dk?"linear-gradient(180deg, #1a1e2e, #202838 40%, #252d38 70%, #1e2228) fixed":"linear-gradient(180deg, #d0d8e8, #c5cfe0 40%, #b8c8d8 70%, #d0d0d5) fixed"}}
-function snowAllStop(){{snowCanvasStop();snowGLStop();snowShaderStop();document.body.classList.remove("wx-snow-v8")}}
-function setV(v){{cv=v;document.documentElement.dataset.variant=v;localStorage.setItem("variant",v);for(var i=0;i<vbs.length;i++)vbs[i].classList.toggle("active",vbs[i].dataset.v===v);if(v==="4"||v==="5"){{snowAllStop();rainFxStop();sunTick();if(v==="5")document.body.classList.add("wx-rain")}}else if(v==="6"){{snowAllStop();document.body.classList.remove("wx-snow","wx-rain");document.documentElement.style.removeProperty("--sunset-bg");rainFxStart("photo")}}else if(v==="7"){{snowAllStop();document.body.classList.remove("wx-snow","wx-rain");document.documentElement.style.removeProperty("--sunset-bg");rainFxStart("demo")}}else if(v==="8"){{snowAllStop();document.body.classList.remove("wx-rain","wx-snow");if(!manualRain)rainFxStop();document.body.classList.add("wx-snow-v8");document.documentElement.style.setProperty("--sunset-bg",winterSky())}}else if(v==="9"){{snowAllStop();document.body.classList.remove("wx-rain","wx-snow");if(!manualRain)rainFxStop();document.documentElement.style.setProperty("--sunset-bg",winterSky());snowCanvasStart()}}else if(v==="10"){{snowAllStop();document.body.classList.remove("wx-rain","wx-snow");if(!manualRain)rainFxStop();document.documentElement.style.setProperty("--sunset-bg",winterSky());snowGLStart()}}else if(v==="11"){{snowAllStop();document.body.classList.remove("wx-rain","wx-snow");if(!manualRain)rainFxStop();document.documentElement.style.setProperty("--sunset-bg",winterSky());snowShaderStart()}}else{{snowAllStop();document.documentElement.style.removeProperty("--sunset-bg");document.body.classList.remove("wx-snow","wx-rain");if(!manualRain)rainFxStop()}}}}
+function snowAllStop(){{snowCanvasStop();snowShaderStop()}}
+function setV(v){{cv=v;document.documentElement.dataset.variant=v;localStorage.setItem("variant",v);for(var i=0;i<vbs.length;i++)vbs[i].classList.toggle("active",vbs[i].dataset.v===v);if(v==="6"){{snowAllStop();document.documentElement.style.removeProperty("--sunset-bg");rainFxStart("photo")}}else if(v==="9"){{snowAllStop();if(!manualRain)rainFxStop();document.documentElement.style.setProperty("--sunset-bg",winterSky());snowCanvasStart()}}else if(v==="11"){{snowAllStop();if(!manualRain)rainFxStop();document.documentElement.style.setProperty("--sunset-bg",winterSky());snowShaderStart()}}else{{snowAllStop();document.documentElement.style.removeProperty("--sunset-bg");if(!manualRain)rainFxStop()}}}}
 setV(cv);
 for(var vi=0;vi<vbs.length;vi++)vbs[vi].onclick=function(){{setV(this.dataset.v)}};
 var arts=Array.from(document.querySelectorAll("main > article")),sel=-1;
@@ -1370,81 +1128,6 @@ if(typeof DeviceOrientationEvent!=="undefined"&&typeof DeviceOrientationEvent.re
 }}else if("DeviceOrientationEvent" in window){{
   initGyro();
 }}
-
-/* Dynamic Sun — Luleå solar position */
-function sunCalc(){{
-  var now=new Date();
-  var utcH=now.getUTCHours()+now.getUTCMinutes()/60+now.getUTCSeconds()/3600;
-  var jan1=Date.UTC(now.getUTCFullYear(),0,1);
-  var doy=Math.floor((Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate())-jan1)/864e5)+1;
-  var B=2*Math.PI/365*(doy-81);
-  var declDeg=23.45*Math.sin(B);
-  var declR=declDeg*Math.PI/180;
-  var eot=9.87*Math.sin(2*B)-7.53*Math.cos(B)-1.5*Math.sin(B);
-  var solarTime=utcH+22.1/15+eot/60;
-  var ha=(solarTime-12)*15;
-  var haR=ha*Math.PI/180;
-  var lat=65.6*Math.PI/180;
-  var sinEl=Math.sin(lat)*Math.sin(declR)+Math.cos(lat)*Math.cos(declR)*Math.cos(haR);
-  var elev=Math.asin(sinEl)*180/Math.PI;
-  var cosAz=(Math.sin(declR)-Math.sin(lat)*sinEl)/(Math.cos(lat)*Math.cos(Math.asin(sinEl)));
-  cosAz=Math.max(-1,Math.min(1,cosAz));
-  var az=Math.acos(cosAz)*180/Math.PI;
-  if(ha>0)az=360-az;
-  return{{elev:elev,azimuth:az}};
-}}
-function sunSky(elev,dk,wx){{
-  /* Muted Nordic palette — misty whites, pale blue-greys */
-  var S=[
-    [-12,[15,17,35],[20,22,40],[25,22,38]],
-    [-3,[40,45,70],[60,55,75],[80,65,65]],
-    [0,[90,100,130],[150,145,155],[190,175,170]],
-    [8,[160,175,200],[210,210,215],[230,225,220]],
-    [20,[190,205,225],[230,232,235],[242,240,238]],
-    [40,[200,215,235],[238,240,242],[248,247,245]]
-  ];
-  var lo=0,hi=0;
-  if(elev<=S[0][0]){{lo=hi=0}}
-  else if(elev>=S[S.length-1][0]){{lo=hi=S.length-1}}
-  else{{for(var i=0;i<S.length-1;i++){{if(elev>=S[i][0]&&elev<S[i+1][0]){{lo=i;hi=i+1;break}}}}}}
-  var t=(lo===hi)?0:(elev-S[lo][0])/(S[hi][0]-S[lo][0]);
-  function lr(a,b,t){{return Math.round(a+(b-a)*t)}}
-  function lc(a,b,t){{return[lr(a[0],b[0],t),lr(a[1],b[1],t),lr(a[2],b[2],t)]}}
-  function dm(c){{return[Math.round(c[0]*.55),Math.round(c[1]*.55),Math.round(c[2]*.58)]}}
-  function lift(c){{var l=c[0]*.2126+c[1]*.7152+c[2]*.0722;if(l>=160)return c;var f=(160-l)/160;return[Math.round(c[0]+(235-c[0])*f),Math.round(c[1]+(233-c[1])*f),Math.round(c[2]+(230-c[2])*f)]}}
-  function bl(c,g,f){{return[Math.round(c[0]+(g[0]-c[0])*f),Math.round(c[1]+(g[1]-c[1])*f),Math.round(c[2]+(g[2]-c[2])*f)]}}
-  var top=lc(S[lo][1],S[hi][1],t),mid=lc(S[lo][2],S[hi][2],t),bot=lc(S[lo][3],S[hi][3],t);
-  if(dk){{top=dm(top);mid=dm(mid);bot=dm(bot)}}else{{top=lift(top);mid=lift(mid);bot=lift(bot)}}
-  if(wx){{var cc=wx.cloud_cover/100,hum=wx.relative_humidity_2m/100;var haze=cc*.6+Math.max(0,hum-.7)*.3;var gr=dk?[120,122,125]:[210,212,215];top=bl(top,gr,haze);mid=bl(mid,gr,haze);bot=bl(bot,gr,haze)}}
-  return "linear-gradient(180deg,rgb("+top+"),rgb("+mid+") 50%,rgb("+bot+")) fixed";
-}}
-var wxData=null,wxTime=0;
-function wxFetch(){{
-  var now=Date.now();
-  if(wxData&&now-wxTime<900000)return;
-  fetch("https://api.open-meteo.com/v1/forecast?latitude=65.6&longitude=22.1&current=weather_code,cloud_cover,relative_humidity_2m,precipitation,rain,snowfall,wind_speed_10m,temperature_2m")
-  .then(function(r){{return r.json()}})
-  .then(function(d){{wxData=d.current;wxTime=now;sunTick()}})
-  .catch(function(){{}});
-}}
-function wxUpdate(){{
-  document.body.classList.remove("wx-snow");
-  if(cv==="5"){{document.body.classList.add("wx-rain");rainFxStop();return}}
-  if(manualRain){{rainFxStart();return}}
-  rainFxStop();
-  if(cv!=="4"||!wxData)return;
-  if(wxData.snowfall>0)document.body.classList.add("wx-snow");
-  else if(wxData.rain>0||wxData.precipitation>0)rainFxStart();
-}}
-function sunTick(){{
-  if(cv!=="4"&&cv!=="5")return;
-  wxFetch();
-  var s=sunCalc();
-  var bg=sunSky(s.elev,document.documentElement.dataset.theme==="dark",wxData);
-  document.documentElement.style.setProperty("--sunset-bg",bg);
-  wxUpdate();
-}}
-setInterval(sunTick,60000);
 
 }}();
 </script>
