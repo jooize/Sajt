@@ -45,7 +45,7 @@ const CSS: &str = r#"
   --glass-spec-mid: rgba(255, 255, 255, .15);
   --glass-spec-lo: rgba(34, 139, 34, .08);
   --noise-opacity: .02;
-  --glass-spec-surface: rgba(255, 255, 255, .1);
+
 }
 
 :root[data-theme="dark"] {
@@ -85,7 +85,7 @@ const CSS: &str = r#"
     --glass-spec-mid: rgba(255, 255, 255, .08);
     --glass-spec-lo: rgba(90, 170, 90, .05);
     --noise-opacity: .06;
-    --glass-spec-surface: rgba(255, 255, 255, .06);
+    --glass-spec-opacity: .06;
 }
 
 /* Variant 2: warm glass */
@@ -199,7 +199,7 @@ const CSS: &str = r#"
 :root[data-variant="9"],
 :root[data-variant="10"],
 :root[data-variant="11"] {
-  --color-card-bg: rgba(200, 220, 240, .28);
+  --color-card-bg: rgba(200, 220, 240, .18);
   --glass-border: rgba(120, 160, 200, .2);
   --glass-highlight: rgba(180, 210, 240, .3);
   --glass-spec-lo: rgba(120, 160, 200, .08);
@@ -207,13 +207,12 @@ const CSS: &str = r#"
   --color-date: #4a8ab5;
   --toggle-pill-bg: rgba(200, 220, 240, .3);
   --toggle-pill-hover: rgba(180, 210, 235, .5);
-  --glass-spec-surface: transparent;
 }
 :root[data-theme="dark"][data-variant="8"],
 :root[data-theme="dark"][data-variant="9"],
 :root[data-theme="dark"][data-variant="10"],
 :root[data-theme="dark"][data-variant="11"] {
-  --color-card-bg: rgba(15, 20, 35, .4);
+  --color-card-bg: rgba(15, 20, 35, .25);
   --glass-border: rgba(100, 140, 190, .18);
   --glass-highlight: rgba(130, 170, 210, .22);
   --glass-spec-lo: rgba(100, 140, 190, .05);
@@ -221,7 +220,6 @@ const CSS: &str = r#"
   --color-date: #6aa0c5;
   --toggle-pill-bg: rgba(40, 60, 90, .15);
   --toggle-pill-hover: rgba(50, 80, 110, .25);
-  --glass-spec-surface: transparent;
 }
 
 /* Snow variants: content above snow overlay, snow falls behind glass cards */
@@ -234,18 +232,7 @@ const CSS: &str = r#"
 :root[data-variant="10"] main,
 :root[data-variant="11"] main {
   position: relative;
-  z-index: 10001;
-}
-
-/* Snow variant cards: no backdrop-filter (causes 8-bit banding with animated snow behind),
-   inset box-shadow adds soft frosted density toward center */
-:root[data-variant="8"] main > article,
-:root[data-variant="9"] main > article,
-:root[data-variant="10"] main > article,
-:root[data-variant="11"] main > article {
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, .08), inset 0 0 60px 20px var(--color-card-bg);
+  z-index: 3;
 }
 
 *, *::before, *::after {
@@ -473,10 +460,7 @@ body > nav > button#rain.active {
 main > article {
   position: relative;
   padding: .7em 1em .6em;
-  background:
-    radial-gradient(ellipse at var(--light-x, 30%) var(--light-y, 30%),
-      var(--glass-spec-surface), transparent 70%),
-    var(--color-card-bg);
+  background: var(--color-card-bg);
   border-radius: .75em;
   border: none;
   -webkit-backdrop-filter: blur(10px) saturate(120%);
@@ -486,6 +470,19 @@ main > article {
   will-change: transform;
   transform: rotateX(0deg) rotateY(0deg);
   transform-style: flat;
+}
+
+main > article::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #fff;
+  filter: url(#glass-spec);
+  mix-blend-mode: screen;
+  opacity: var(--glass-spec-opacity, .12);
+  z-index: -1;
+  pointer-events: none;
 }
 
 main > article::after {
@@ -923,7 +920,7 @@ body.wx-snow::after {
   position: fixed;
   inset: -150px;
   pointer-events: none;
-  z-index: 10000;
+  z-index: 2;
   background-image:
     radial-gradient(2px 2px at 10% 20%, rgba(255,255,255,.7) 50%, transparent),
     radial-gradient(3px 3px at 40% 50%, rgba(255,255,255,.5) 50%, transparent),
@@ -948,7 +945,7 @@ body.wx-rain::before {
   position: fixed;
   inset: -150px;
   pointer-events: none;
-  z-index: 9999;
+  z-index: 1;
   background-image:
     radial-gradient(ellipse 1px 35px, rgba(180,200,225,.35), transparent),
     radial-gradient(ellipse 1px 28px, rgba(180,200,225,.25), transparent),
@@ -966,7 +963,7 @@ body.wx-rain::after {
   position: fixed;
   inset: -200px;
   pointer-events: none;
-  z-index: 10000;
+  z-index: 2;
   background-image:
     radial-gradient(ellipse 1.5px 55px, rgba(180,200,225,.4), transparent),
     radial-gradient(ellipse 1.5px 45px, rgba(180,200,225,.35), transparent),
@@ -999,7 +996,7 @@ body.wx-snow-v8::before {
   position: fixed;
   inset: -300px -50px;
   pointer-events: none;
-  z-index: 9999;
+  z-index: 1;
   opacity: .45;
   filter: blur(1px);
   background-image:
@@ -1019,7 +1016,7 @@ body.wx-snow-v8::after {
   position: fixed;
   inset: -200px -50px;
   pointer-events: none;
-  z-index: 10000;
+  z-index: 2;
   opacity: .7;
   background-image:
     radial-gradient(2.5px 2.5px at 20% 18%, #fff 50%, transparent),
@@ -1059,6 +1056,16 @@ pub fn page_shell(title: &str, body: &str, show_timeline: bool) -> String {
 <script>!function(){{var t=localStorage.getItem("theme");if(!t)t=matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}}()</script>
 </head>
 <body>
+<svg style="position:absolute;width:0;height:0" aria-hidden="true">
+<filter id="glass-spec">
+<feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" seed="42" result="noise"/>
+<feGaussianBlur in="noise" stdDeviation="3" result="smooth"/>
+<feSpecularLighting in="smooth" surfaceScale="1.2" specularConstant="0.5" specularExponent="25" lighting-color="white" result="spec">
+<feDistantLight azimuth="225" elevation="50"/>
+</feSpecularLighting>
+<feComposite in="spec" in2="SourceAlpha" operator="in"/>
+</filter>
+</svg>
 <input type="checkbox" id="pos" checked>
 <nav>
 {nav_link}
@@ -1194,7 +1201,7 @@ function snowCanvasStart(){{
 function snowCanvasCreate(){{
   if(typeof SnowCanvas==="undefined")return;
   var cv=document.createElement("canvas");cv.id="snow-canvas";
-  cv.style.cssText="position:fixed;inset:0;z-index:10000;pointer-events:none";
+  cv.style.cssText="position:fixed;inset:0;z-index:2;pointer-events:none";
   cv.width=window.innerWidth;cv.height=window.innerHeight;
   document.body.appendChild(cv);
   var dk=document.documentElement.dataset.theme==="dark";
@@ -1225,7 +1232,7 @@ function snowGLStart(){{
 function snowGLCreate(){{
   if(typeof SnowGL==="undefined")return;
   var cv=document.createElement("canvas");cv.id="snow-webgl";
-  cv.style.cssText="position:fixed;inset:0;z-index:10000;pointer-events:none";
+  cv.style.cssText="position:fixed;inset:0;z-index:2;pointer-events:none";
   cv.width=window.innerWidth;cv.height=window.innerHeight;
   document.body.appendChild(cv);
   var dk=document.documentElement.dataset.theme==="dark";
@@ -1260,7 +1267,7 @@ function snowShaderStart(){{
 function snowShaderCreate(){{
   if(typeof SnowShader==="undefined")return;
   var holder=document.createElement("div");holder.id="snow-shader";
-  holder.style.cssText="position:fixed;inset:0;width:100vw;height:100vh;z-index:10000;pointer-events:none;overflow:hidden";
+  holder.style.cssText="position:fixed;inset:0;width:100vw;height:100vh;z-index:2;pointer-events:none;overflow:hidden";
   document.body.appendChild(holder);
   var dk=document.documentElement.dataset.theme==="dark";
   var wind=wxData?wxData.wind_speed_10m:0;
@@ -1325,18 +1332,12 @@ function glassMove(cx,cy,ww,wh){{
     var ry=(cy-(r.top+r.height/2))/r.height;
     rx=Math.max(-1,Math.min(1,rx));
     ry=Math.max(-1,Math.min(1,ry));
-    var lx=((rx+1)/2*100).toFixed(1);
-    var ly=((ry+1)/2*100).toFixed(1);
-    arts[i].style.setProperty("--light-x",lx+"%");
-    arts[i].style.setProperty("--light-y",ly+"%");
     arts[i].style.transform="rotateY("+(rx*.5)+"deg) rotateX("+(-ry*.5)+"deg)";
   }}
 }}
 function glassReset(){{
   root.style.removeProperty("--spec-angle");
   for(var i=0;i<arts.length;i++){{
-    arts[i].style.removeProperty("--light-x");
-    arts[i].style.removeProperty("--light-y");
     arts[i].style.transform="";
   }}
 }}
@@ -1355,11 +1356,7 @@ function initGyro(){{
       var nx=g/45,ny=b/45;
       var angle=Math.atan2(ny,nx)*180/Math.PI+90;
       root.style.setProperty("--spec-angle",angle+"deg");
-      var lx=((nx+1)/2*100).toFixed(1);
-      var ly=((ny+1)/2*100).toFixed(1);
       for(var i=0;i<arts.length;i++){{
-        arts[i].style.setProperty("--light-x",lx+"%");
-        arts[i].style.setProperty("--light-y",ly+"%");
         arts[i].style.transform="rotateY("+(nx*.5)+"deg) rotateX("+(-ny*.5)+"deg)";
       }}
     }});
