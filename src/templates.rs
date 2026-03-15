@@ -199,7 +199,7 @@ const CSS: &str = r#"
 :root[data-variant="9"],
 :root[data-variant="10"],
 :root[data-variant="11"] {
-  --color-card-bg: rgba(200, 220, 240, .18);
+  --color-card-bg: rgba(200, 220, 240, .28);
   --glass-border: rgba(120, 160, 200, .2);
   --glass-highlight: rgba(180, 210, 240, .3);
   --glass-spec-lo: rgba(120, 160, 200, .08);
@@ -207,12 +207,13 @@ const CSS: &str = r#"
   --color-date: #4a8ab5;
   --toggle-pill-bg: rgba(200, 220, 240, .3);
   --toggle-pill-hover: rgba(180, 210, 235, .5);
+  --glass-spec-surface: transparent;
 }
 :root[data-theme="dark"][data-variant="8"],
 :root[data-theme="dark"][data-variant="9"],
 :root[data-theme="dark"][data-variant="10"],
 :root[data-theme="dark"][data-variant="11"] {
-  --color-card-bg: rgba(15, 20, 35, .25);
+  --color-card-bg: rgba(15, 20, 35, .4);
   --glass-border: rgba(100, 140, 190, .18);
   --glass-highlight: rgba(130, 170, 210, .22);
   --glass-spec-lo: rgba(100, 140, 190, .05);
@@ -220,6 +221,31 @@ const CSS: &str = r#"
   --color-date: #6aa0c5;
   --toggle-pill-bg: rgba(40, 60, 90, .15);
   --toggle-pill-hover: rgba(50, 80, 110, .25);
+  --glass-spec-surface: transparent;
+}
+
+/* Snow variants: content above snow overlay, snow falls behind glass cards */
+:root[data-variant="8"] nav,
+:root[data-variant="9"] nav,
+:root[data-variant="10"] nav,
+:root[data-variant="11"] nav,
+:root[data-variant="8"] main,
+:root[data-variant="9"] main,
+:root[data-variant="10"] main,
+:root[data-variant="11"] main {
+  position: relative;
+  z-index: 10001;
+}
+
+/* Snow variant cards: no backdrop-filter (causes 8-bit banding with animated snow behind),
+   inset box-shadow adds soft frosted density toward center */
+:root[data-variant="8"] main > article,
+:root[data-variant="9"] main > article,
+:root[data-variant="10"] main > article,
+:root[data-variant="11"] main > article {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, .08), inset 0 0 60px 20px var(--color-card-bg);
 }
 
 *, *::before, *::after {
@@ -1041,13 +1067,9 @@ pub fn page_shell(title: &str, body: &str, show_timeline: bool) -> String {
 <button class="variant" data-v="1">1</button>
 <button class="variant" data-v="2">2</button>
 <button class="variant" data-v="3">3</button>
-<button class="variant" data-v="4">4</button>
-<button class="variant" data-v="5">5</button>
 <button class="variant" data-v="6">6</button>
 <button class="variant" data-v="7">7</button>
-<button class="variant" data-v="8">8</button>
 <button class="variant" data-v="9">9</button>
-<button class="variant" data-v="10">10</button>
 <button class="variant" data-v="11">11</button>
 <label for="pos"></label>
 </nav>
