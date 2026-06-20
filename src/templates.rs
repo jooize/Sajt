@@ -1,12 +1,6 @@
 use crate::entry::Entry;
 
 const CSS: &str = r#"
-@property --spec-angle {
-  syntax: '<angle>';
-  inherits: true;
-  initial-value: 160deg;
-}
-
 :root {
   color-scheme: light;
 
@@ -21,7 +15,7 @@ const CSS: &str = r#"
   --color-tag-bg: rgba(100, 155, 210, .55);
   --color-tag-hover: rgba(109, 90, 207, .65);
   --color-tag-fg: #fff;
-  --color-card-bg: rgba(220, 245, 220, .18);
+  --color-card-bg: rgba(224, 244, 224, .5);
   --color-border: #e3e9ed;
   --color-code-bg: #e8ecf0;
   --color-blockquote-border: #e5eff5;
@@ -40,12 +34,11 @@ const CSS: &str = r#"
   --toggle-pill-bg: rgba(220, 245, 220, .3);
   --toggle-pill-hover: rgba(200, 240, 200, .5);
   --glass-border: rgba(34, 139, 34, .2);
-  --glass-highlight: rgba(34, 139, 34, .25);
-  --glass-spec-hi: rgba(255, 255, 255, .55);
-  --glass-spec-mid: rgba(255, 255, 255, .15);
-  --glass-spec-lo: rgba(34, 139, 34, .08);
-  --noise-opacity: .02;
-
+  --glass-shadow:
+    inset 0 0 0 1px var(--glass-border),
+    inset 0 1px 1px rgba(255, 255, 255, .55),
+    0 2px 8px rgba(40, 50, 40, .06),
+    0 10px 28px rgba(40, 50, 40, .05);
 }
 
 :root[data-theme="dark"] {
@@ -61,7 +54,7 @@ const CSS: &str = r#"
     --color-tag-bg: rgba(58, 90, 110, .6);
     --color-tag-hover: rgba(90, 74, 191, .6);
     --color-tag-fg: #c8dce8;
-    --color-card-bg: rgba(25, 40, 25, .2);
+    --color-card-bg: rgba(28, 44, 28, .42);
     --color-border: #333;
     --color-code-bg: #232629;
     --color-blockquote-border: #333;
@@ -80,34 +73,27 @@ const CSS: &str = r#"
     --toggle-pill-bg: rgba(60, 100, 60, .12);
     --toggle-pill-hover: rgba(70, 120, 70, .2);
     --glass-border: rgba(90, 170, 90, .18);
-    --glass-highlight: rgba(90, 170, 90, .22);
-    --glass-spec-hi: rgba(255, 255, 255, .35);
-    --glass-spec-mid: rgba(255, 255, 255, .08);
-    --glass-spec-lo: rgba(90, 170, 90, .05);
-    --noise-opacity: .06;
-    --glass-spec-opacity: .06;
+    --glass-shadow:
+      inset 0 0 0 1px var(--glass-border),
+      inset 0 1px 1px rgba(255, 255, 255, .07),
+      0 2px 8px rgba(0, 0, 0, .28),
+      0 10px 28px rgba(0, 0, 0, .22);
 }
 
 /* Variant 2: warm glass */
 :root[data-variant="2"] {
-  --color-card-bg: rgba(245, 220, 200, .18);
+  --color-card-bg: rgba(245, 222, 200, .5);
   --glass-border: rgba(200, 140, 80, .2);
-  --glass-highlight: rgba(245, 200, 150, .3);
-  --glass-spec-lo: rgba(200, 140, 80, .08);
 }
 :root[data-theme="dark"][data-variant="2"] {
-  --color-card-bg: rgba(45, 30, 25, .2);
+  --color-card-bg: rgba(48, 32, 26, .44);
   --glass-border: rgba(180, 120, 80, .18);
-  --glass-highlight: rgba(200, 150, 100, .22);
-  --glass-spec-lo: rgba(180, 120, 80, .05);
 }
 
 /* Variant 6: raindrop-fx with photo background */
 :root[data-variant="6"] {
-  --color-card-bg: rgba(20, 20, 30, .55);
+  --color-card-bg: rgba(22, 22, 32, .62);
   --glass-border: rgba(120, 140, 180, .25);
-  --glass-highlight: rgba(180, 200, 240, .2);
-  --glass-spec-lo: rgba(100, 120, 160, .08);
   --color-fg: #e0e4ea;
   --color-muted: #bbb;
   --color-faint: #999;
@@ -116,19 +102,15 @@ const CSS: &str = r#"
   --color-tag-fg: #d0dae8;
 }
 :root[data-theme="dark"][data-variant="6"] {
-  --color-card-bg: rgba(10, 10, 18, .6);
+  --color-card-bg: rgba(10, 10, 18, .66);
   --glass-border: rgba(80, 100, 140, .2);
-  --glass-highlight: rgba(120, 140, 180, .15);
-  --glass-spec-lo: rgba(60, 80, 120, .05);
 }
 
 /* Variants 9, 11: winter glass — cool blue-white */
 :root[data-variant="9"],
 :root[data-variant="11"] {
-  --color-card-bg: rgba(200, 220, 240, .18);
+  --color-card-bg: rgba(206, 224, 242, .52);
   --glass-border: rgba(120, 160, 200, .2);
-  --glass-highlight: rgba(180, 210, 240, .3);
-  --glass-spec-lo: rgba(120, 160, 200, .08);
   --color-tag-bg: rgba(100, 150, 200, .5);
   --color-date: #4a8ab5;
   --toggle-pill-bg: rgba(200, 220, 240, .3);
@@ -136,10 +118,8 @@ const CSS: &str = r#"
 }
 :root[data-theme="dark"][data-variant="9"],
 :root[data-theme="dark"][data-variant="11"] {
-  --color-card-bg: rgba(15, 20, 35, .25);
+  --color-card-bg: rgba(18, 24, 40, .46);
   --glass-border: rgba(100, 140, 190, .18);
-  --glass-highlight: rgba(130, 170, 210, .22);
-  --glass-spec-lo: rgba(100, 140, 190, .05);
   --color-tag-bg: rgba(50, 80, 120, .55);
   --color-date: #6aa0c5;
   --toggle-pill-bg: rgba(40, 60, 90, .15);
@@ -212,26 +192,20 @@ body > nav > a:first-child {
   font-size: .85em;
   padding: .3em .85em;
   border-radius: 1em;
-  background: var(--color-card-bg);
+  background-color: color-mix(in srgb, var(--color-card-bg), transparent 40%);
   color: var(--nav-pill-fg, rgba(161, 35, 246, 1));
   font-weight: 600;
   text-decoration: none;
-  -webkit-backdrop-filter: blur(10px) saturate(120%);
-  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(150%);
+  backdrop-filter: blur(8px) saturate(150%);
   border: none;
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    inset 0 -1px 0 rgba(0, 0, 0, .1);
-  transition: background .15s, box-shadow .15s;
+  box-shadow: var(--glass-shadow);
+  transition: background-color .15s, box-shadow .15s;
 }
 
 body > nav > a:first-child:hover {
-  background: var(--color-tag-bg);
+  background-color: color-mix(in srgb, var(--color-tag-bg), transparent 30%);
   text-decoration: none;
-  box-shadow:
-    0 2px 8px rgba(0, 0, 0, .06),
-    inset 0 1px 0 var(--glass-highlight),
-    inset 0 -1px 0 rgba(0, 0, 0, .1);
 }
 
 /* Position toggle — pure CSS checkbox hack */
@@ -247,13 +221,11 @@ body > nav > label[for="pos"] {
   font-size: .85em;
   padding: .25em .7em;
   border-radius: 1em;
-  background: var(--color-card-bg);
+  background-color: color-mix(in srgb, var(--color-card-bg), transparent 40%);
   border: none;
-  -webkit-backdrop-filter: blur(10px) saturate(120%);
-  backdrop-filter: blur(10px) saturate(120%);
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    inset 0 -1px 0 rgba(0, 0, 0, .1);
+  -webkit-backdrop-filter: blur(8px) saturate(150%);
+  backdrop-filter: blur(8px) saturate(150%);
+  box-shadow: var(--glass-shadow);
   color: var(--color-faint);
   cursor: pointer;
   user-select: none;
@@ -262,7 +234,7 @@ body > nav > label[for="pos"] {
 }
 
 body > nav > label[for="pos"]:hover {
-  background: var(--color-tag-bg);
+  background-color: color-mix(in srgb, var(--color-tag-bg), transparent 30%);
   color: var(--color-fg);
 }
 
@@ -290,24 +262,71 @@ body > nav > label[for="pos"]::after {
   content: "center \2192";
 }
 
-/* Theme toggle — opposite color of current mode */
+/* Theme toggle — sun/moon switcher */
 
-body > nav > button#theme {
-  appearance: none;
+.theme-switcher {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 3px;
+  margin: 0;
   border: none;
-  font-size: .85em;
-  padding: .25em .6em;
-  border-radius: 1em;
-  background: var(--color-fg);
-  color: var(--color-bg);
-  cursor: pointer;
-  font-weight: 600;
-  transition: opacity .15s;
-  line-height: 1;
+  border-radius: 99em;
+  background-color: color-mix(in srgb, var(--color-card-bg), transparent 40%);
+  -webkit-backdrop-filter: blur(8px) saturate(150%);
+  backdrop-filter: blur(8px) saturate(150%);
+  box-shadow: var(--glass-shadow);
+  transition: background-color 400ms cubic-bezier(1, 0, .4, 1), box-shadow 400ms cubic-bezier(1, 0, .4, 1);
+  position: relative;
 }
 
-body > nav > button#theme:hover {
-  opacity: .8;
+.theme-switcher legend {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  border: 0; padding: 0; clip: rect(0 0 0 0); clip-path: inset(100%); overflow: hidden;
+}
+
+.theme-switcher input {
+  position: absolute; width: 1px; height: 1px;
+  clip: rect(0 0 0 0); clip-path: inset(100%); overflow: hidden;
+}
+
+.theme-switcher label {
+  display: flex; justify-content: center; align-items: center;
+  width: 28px; height: 28px;
+  border-radius: 99em;
+  cursor: pointer;
+  color: var(--color-faint);
+  transition: color 200ms;
+}
+
+.theme-switcher label:hover { color: var(--color-fg); }
+.theme-switcher label:has(input:checked) { color: var(--color-fg); cursor: default; }
+
+.theme-switcher label svg {
+  display: block; width: 18px; height: 18px;
+  transition: scale 200ms cubic-bezier(.5, 0, 0, 1);
+}
+.theme-switcher label:hover svg { scale: 1.15; }
+.theme-switcher label:has(input:checked) svg { scale: 1; }
+
+/* Sliding glass indicator */
+.theme-switcher::after {
+  content: "";
+  position: absolute;
+  left: 3px; top: 3px;
+  width: 28px; height: 28px;
+  border-radius: 99em;
+  background-color: color-mix(in srgb, var(--color-card-bg), transparent 10%);
+  z-index: -1;
+  box-shadow: var(--glass-shadow);
+  transition: translate 400ms cubic-bezier(1, 0, .4, 1), background-color 400ms cubic-bezier(1, 0, .4, 1), box-shadow 400ms cubic-bezier(1, 0, .4, 1);
+}
+
+.theme-switcher:has(input[value="light"]:checked)::after {
+  translate: 0 0;
+}
+.theme-switcher:has(input[value="dark"]:checked)::after {
+  translate: 28px 0;
 }
 
 body > nav > button.variant {
@@ -316,60 +335,27 @@ body > nav > button.variant {
   font-size: .75em;
   padding: .2em .55em;
   border-radius: 1em;
-  background: var(--color-card-bg);
+  background-color: color-mix(in srgb, var(--color-card-bg), transparent 40%);
   color: var(--color-faint);
   cursor: pointer;
-  -webkit-backdrop-filter: blur(10px) saturate(120%);
-  backdrop-filter: blur(10px) saturate(120%);
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    inset 0 -1px 0 rgba(0, 0, 0, .1);
-  transition: opacity .15s;
+  -webkit-backdrop-filter: blur(8px) saturate(150%);
+  backdrop-filter: blur(8px) saturate(150%);
+  box-shadow: var(--glass-shadow);
+  transition: box-shadow .15s, color .15s;
   line-height: 1;
 }
 
 body > nav > button.variant:hover {
-  opacity: .8;
+  color: var(--color-fg);
 }
 
 body > nav > button.variant.active {
   color: var(--color-fg);
   font-weight: 700;
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    inset 0 -1px 0 rgba(0, 0, 0, .1),
-    0 0 0 1px var(--glass-highlight);
+  background-color: color-mix(in srgb, var(--color-card-bg), transparent 20%);
 }
 
-#theme::after { content: "\263E"; }
 
-body > nav > button#rain {
-  appearance: none;
-  border: none;
-  font-size: .85em;
-  padding: .25em .6em;
-  border-radius: 1em;
-  background: var(--color-card-bg);
-  color: var(--color-faint);
-  cursor: pointer;
-  -webkit-backdrop-filter: blur(10px) saturate(120%);
-  backdrop-filter: blur(10px) saturate(120%);
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    inset 0 -1px 0 rgba(0, 0, 0, .1);
-  transition: opacity .15s, color .15s;
-  line-height: 1;
-}
-
-body > nav > button#rain:hover {
-  opacity: .8;
-}
-
-body > nav > button#rain.active {
-  color: var(--color-link);
-}
-
-#rain::after { content: "\1F4A7"; }
 
 @media (max-width: 85ch) {
   body > nav > label[for="pos"] { display: none; }
@@ -380,68 +366,21 @@ body > nav > button#rain.active {
 main > article {
   position: relative;
   padding: .7em 1em .6em;
-  background: var(--color-card-bg);
+  background-color: var(--color-card-bg);
   border-radius: .75em;
   border: none;
-  -webkit-backdrop-filter: blur(10px) saturate(120%);
-  backdrop-filter: blur(10px) saturate(120%);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, .04);
+  -webkit-backdrop-filter: blur(16px) saturate(125%);
+  backdrop-filter: blur(16px) saturate(125%);
+  box-shadow: var(--glass-shadow);
   transition: box-shadow .15s, transform .3s ease-out;
   will-change: transform;
   transform: rotateX(0deg) rotateY(0deg);
   transform-style: flat;
 }
 
-main > article::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: #fff;
-  filter: url(#glass-spec);
-  mix-blend-mode: screen;
-  opacity: var(--glass-spec-opacity, .12);
-  z-index: -1;
-  pointer-events: none;
-}
-
-main > article::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(
-    var(--spec-angle),
-    var(--glass-spec-hi) 0%,
-    var(--glass-spec-mid) 35%,
-    var(--glass-spec-lo) 65%,
-    transparent 100%
-  );
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  pointer-events: none;
-}
-
 main > article.selected {
-  box-shadow:
-    0 4px 16px rgba(0, 0, 0, .04),
-    0 0 0 1px var(--nav-pill-bg);
-}
-
-main > article.selected::after {
-  background: linear-gradient(
-    var(--spec-angle),
-    var(--nav-pill-bg) 0%,
-    rgba(161, 35, 246, .3) 35%,
-    transparent 100%
-  );
+  outline: 1.5px solid var(--nav-pill-bg);
+  outline-offset: -1px;
 }
 
 @media (min-width: 70ch) {
@@ -526,15 +465,15 @@ article > header > nav {
 
 article > header > nav > a {
   display: inline-block;
-  background: var(--color-tag-bg);
+  background-color: color-mix(in srgb, var(--color-tag-bg), transparent 20%);
   border-radius: 1em;
   padding: .25em .75em;
   color: var(--color-tag-fg);
-  border: 1px solid var(--glass-border);
-  -webkit-backdrop-filter: blur(6px) saturate(120%);
-  backdrop-filter: blur(6px) saturate(120%);
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-  transition: background .15s;
+  border: none;
+  -webkit-backdrop-filter: blur(6px) saturate(150%);
+  backdrop-filter: blur(6px) saturate(150%);
+  box-shadow: var(--glass-shadow);
+  transition: background-color .15s;
 }
 
 article > header > nav > a:hover {
@@ -853,21 +792,14 @@ pub fn page_shell(title: &str, body: &str, show_timeline: bool) -> String {
 <script>!function(){{var t=localStorage.getItem("theme");if(!t)t=matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}}()</script>
 </head>
 <body>
-<svg style="position:absolute;width:0;height:0" aria-hidden="true">
-<filter id="glass-spec">
-<feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" seed="42" result="noise"/>
-<feGaussianBlur in="noise" stdDeviation="3" result="smooth"/>
-<feSpecularLighting in="smooth" surfaceScale="1.2" specularConstant="0.5" specularExponent="25" lighting-color="white" result="spec">
-<feDistantLight azimuth="225" elevation="50"/>
-</feSpecularLighting>
-<feComposite in="spec" in2="SourceAlpha" operator="in"/>
-</filter>
-</svg>
 <input type="checkbox" id="pos" checked>
 <nav>
 {nav_link}
-<button id="theme" aria-label="Toggle theme"></button>
-<button id="rain" aria-label="Toggle rain"></button>
+<fieldset class="theme-switcher">
+<legend>Theme</legend>
+<label><input type="radio" name="theme" value="light"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 36 36"><path fill="currentColor" fill-rule="evenodd" d="M18 12a6 6 0 1 1 0 12 6 6 0 0 1 0-12Zm0 2a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" clip-rule="evenodd"/><path fill="currentColor" d="M17 6a1 1 0 1 1 2 0v3a1 1 0 0 1-2 0V6ZM24.2 7.7a1 1 0 1 1 1.6 1.2l-1.7 2.4a1 1 0 1 1-1.6-1.2l1.7-2.4ZM29.1 13.4a1 1 0 0 1 .6 1.9l-2.8.9a1 1 0 1 1-.7-1.9l2.9-.9ZM29.7 20.8a1 1 0 0 1-.6 1.9l-2.9-.9a1 1 0 1 1 .7-1.9l2.8.9ZM25.9 27.2a1 1 0 0 1-1.7 1.1l-1.7-2.4a1 1 0 1 1 1.6-1.2l1.8 2.5ZM19 30a1 1 0 0 1-2 0v-3a1 1 0 1 1 2 0v3ZM11.8 28.3a1 1 0 0 1-1.7-1.1l1.8-2.5a1 1 0 1 1 1.6 1.2l-1.7 2.4ZM6.9 22.7a1 1 0 1 1-.6-1.9l2.8-.9a1 1 0 1 1 .7 1.9l-2.9.9ZM6.3 15.3a1 1 0 1 1 .6-1.9l2.9.9a1 1 0 1 1-.7 1.9l-2.8-.9ZM10.1 8.9a1 1 0 0 1 1.7-1.2l1.7 2.4a1 1 0 0 1-1.6 1.2l-1.8-2.4Z"/></svg></label>
+<label><input type="radio" name="theme" value="dark"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 36 36"><path fill="currentColor" d="M12.5 8.5a11 11 0 0 1 8.8-1 7.4 7.4 0 0 0-3.7 4.7l-.1.4A7.5 7.5 0 0 0 28.7 20.4a11 11 0 0 1-5.2 7.1l-.5.3c-5 2.6-11.2.9-14.2-3.8l-.3-.5C5.5 18.4 7.1 11.9 12 8.8l.5-.3Zm4.2.6a9 9 0 0 0-2.8.9l-.4.2A9 9 0 0 0 10.2 22.5l.2.4A9 9 0 0 0 22.5 25.8l.4-.3a9 9 0 0 0 2.2-2 9.4 9.4 0 0 1-2.8-.3c-5-1.4-8-6.5-6.7-11.6l.2-.5c.2-.7.6-1.4 1-2Z"/></svg></label>
+</fieldset>
 <button class="variant" data-v="1">1</button>
 <button class="variant" data-v="2">2</button>
 <button class="variant" data-v="6">6</button>
@@ -883,8 +815,9 @@ pub fn page_shell(title: &str, body: &str, show_timeline: bool) -> String {
 var p=document.getElementById("pos"),s=localStorage.getItem("pos");
 if(s!==null)p.checked=s==="1";
 p.onchange=function(){{localStorage.setItem("pos",p.checked?"1":"0")}};
-var btn=document.getElementById("theme");btn.onclick=function(){{var d=document.documentElement,n=d.dataset.theme==="dark"?"light":"dark";d.dataset.theme=n;localStorage.setItem("theme",n);var dk=n==="dark";if(snowCanvas)snowCanvas.setDark(dk);if(snowShader)snowShader.setDark(dk);if(cv==="9"||cv==="11")document.documentElement.style.setProperty("--sunset-bg",winterSky())}};
-var manualRain=localStorage.getItem("rain")==="1";var rbtn=document.getElementById("rain");
+var themeRadios=document.querySelectorAll('.theme-switcher input[name="theme"]');
+var curTheme=document.documentElement.dataset.theme||"light";
+themeRadios.forEach(function(r){{if(r.value===curTheme)r.checked=true;r.addEventListener("change",function(){{var d=document.documentElement,n=this.value;d.dataset.theme=n;localStorage.setItem("theme",n);var dk=n==="dark";if(snowCanvas)snowCanvas.setDark(dk);if(snowShader)snowShader.setDark(dk);if(cv==="9"||cv==="11")document.documentElement.style.setProperty("--sunset-bg",winterSky())}})}})
 var rainFx=null,rainLoaded=false;
 function rainFxBg(){{
   var dk=document.documentElement.dataset.theme==="dark";
@@ -1041,13 +974,11 @@ function snowShaderStop(){{
   if(snowShader){{snowShader.stop();snowShader=null}}
   var el=document.getElementById("snow-shader");if(el)el.remove();
 }}
-if(manualRain){{rbtn.classList.add("active");rainFxStart()}}
-rbtn.onclick=function(){{manualRain=!manualRain;localStorage.setItem("rain",manualRain?"1":"0");rbtn.classList.toggle("active",manualRain);if(manualRain){{rainFxStart()}}else{{rainFxStop()}}}};
 var vbs=document.querySelectorAll("button.variant"),cv=localStorage.getItem("variant")||"1";
 document.documentElement.dataset.variant=cv;
 function winterSky(){{var dk=document.documentElement.dataset.theme==="dark";return dk?"linear-gradient(180deg, #1a1e2e, #202838 40%, #252d38 70%, #1e2228) fixed":"linear-gradient(180deg, #d0d8e8, #c5cfe0 40%, #b8c8d8 70%, #d0d0d5) fixed"}}
 function snowAllStop(){{snowCanvasStop();snowShaderStop()}}
-function setV(v){{cv=v;document.documentElement.dataset.variant=v;localStorage.setItem("variant",v);for(var i=0;i<vbs.length;i++)vbs[i].classList.toggle("active",vbs[i].dataset.v===v);if(v==="6"){{snowAllStop();document.documentElement.style.removeProperty("--sunset-bg");rainFxStart("photo")}}else if(v==="9"){{snowAllStop();if(!manualRain)rainFxStop();document.documentElement.style.setProperty("--sunset-bg",winterSky());snowCanvasStart()}}else if(v==="11"){{snowAllStop();if(!manualRain)rainFxStop();document.documentElement.style.setProperty("--sunset-bg",winterSky());snowShaderStart()}}else{{snowAllStop();document.documentElement.style.removeProperty("--sunset-bg");if(!manualRain)rainFxStop()}}}}
+function setV(v){{cv=v;document.documentElement.dataset.variant=v;localStorage.setItem("variant",v);for(var i=0;i<vbs.length;i++)vbs[i].classList.toggle("active",vbs[i].dataset.v===v);if(v==="6"){{snowAllStop();document.documentElement.style.removeProperty("--sunset-bg");rainFxStart("photo")}}else if(v==="9"){{snowAllStop();rainFxStop();document.documentElement.style.setProperty("--sunset-bg",winterSky());snowCanvasStart()}}else if(v==="11"){{snowAllStop();rainFxStop();document.documentElement.style.setProperty("--sunset-bg",winterSky());snowShaderStart()}}else{{snowAllStop();rainFxStop();document.documentElement.style.removeProperty("--sunset-bg")}}}}
 setV(cv);
 for(var vi=0;vi<vbs.length;vi++)vbs[vi].onclick=function(){{setV(this.dataset.v)}};
 var arts=Array.from(document.querySelectorAll("main > article")),sel=-1;
@@ -1082,8 +1013,6 @@ window.addEventListener("pageshow",function(e){{if(e.persisted){{var el=document
 /* Dynamic glass pane effect */
 var root=document.documentElement,raf=0,mql=matchMedia("(min-width:70ch)");
 function glassMove(cx,cy,ww,wh){{
-  var angle=Math.atan2(cy-wh/2,cx-ww/2)*180/Math.PI+90;
-  root.style.setProperty("--spec-angle",angle+"deg");
   for(var i=0;i<arts.length;i++){{
     var r=arts[i].getBoundingClientRect();
     var rx=(cx-(r.left+r.width/2))/r.width;
@@ -1094,7 +1023,6 @@ function glassMove(cx,cy,ww,wh){{
   }}
 }}
 function glassReset(){{
-  root.style.removeProperty("--spec-angle");
   for(var i=0;i<arts.length;i++){{
     arts[i].style.transform="";
   }}
@@ -1112,8 +1040,6 @@ function initGyro(){{
       var g=Math.max(-45,Math.min(45,e.gamma||0));
       var b=Math.max(-45,Math.min(45,(e.beta||0)-45));
       var nx=g/45,ny=b/45;
-      var angle=Math.atan2(ny,nx)*180/Math.PI+90;
-      root.style.setProperty("--spec-angle",angle+"deg");
       for(var i=0;i<arts.length;i++){{
         arts[i].style.transform="rotateY("+(nx*.5)+"deg) rotateX("+(-ny*.5)+"deg)";
       }}
