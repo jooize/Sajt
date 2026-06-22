@@ -11,6 +11,12 @@
   --accent-soft: rgba(161,35,246,.14);
   --win-radius: 13px;
 
+  /* Liquid Glass tile material (macOS 26 Tahoe-style) */
+  --glass-fill: linear-gradient(155deg, rgba(255,255,255,.52), rgba(255,255,255,.24));
+  --glass-edge: rgba(255,255,255,.6);
+  --lg-shadow: inset 0 1px 0 rgba(255,255,255,.75), inset 0 0 0 .5px rgba(255,255,255,.22), 0 8px 24px rgba(20,24,40,.14);
+  --lg-shadow-hover: inset 0 1px 0 rgba(255,255,255,.9), inset 0 0 0 .5px rgba(255,255,255,.3), 0 16px 38px rgba(20,24,40,.2);
+
   --mat-sidebar: rgba(244,245,248,.62);
   --mat-content: rgba(250,250,252,.94);
   --mat-toolbar: rgba(250,250,252,.7);
@@ -41,6 +47,10 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) { color-scheme: dark;
     --accent-soft: rgba(161,35,246,.26);
+    --glass-fill: linear-gradient(155deg, rgba(255,255,255,.14), rgba(255,255,255,.05));
+    --glass-edge: rgba(255,255,255,.16);
+    --lg-shadow: inset 0 1px 0 rgba(255,255,255,.2), inset 0 0 0 .5px rgba(255,255,255,.08), 0 8px 24px rgba(0,0,0,.45);
+    --lg-shadow-hover: inset 0 1px 0 rgba(255,255,255,.28), inset 0 0 0 .5px rgba(255,255,255,.12), 0 16px 38px rgba(0,0,0,.55);
     --mat-sidebar: rgba(30,30,34,.58);
     --mat-content: rgba(28,28,30,.93);
     --mat-toolbar: rgba(38,38,42,.7);
@@ -61,6 +71,10 @@
 }
 :root[data-theme="dark"] { color-scheme: dark;
   --accent-soft: rgba(161,35,246,.26);
+  --glass-fill: linear-gradient(155deg, rgba(255,255,255,.14), rgba(255,255,255,.05));
+  --glass-edge: rgba(255,255,255,.16);
+  --lg-shadow: inset 0 1px 0 rgba(255,255,255,.2), inset 0 0 0 .5px rgba(255,255,255,.08), 0 8px 24px rgba(0,0,0,.45);
+  --lg-shadow-hover: inset 0 1px 0 rgba(255,255,255,.28), inset 0 0 0 .5px rgba(255,255,255,.12), 0 16px 38px rgba(0,0,0,.55);
   --mat-sidebar: rgba(30,30,34,.58);
   --mat-content: rgba(28,28,30,.93);
   --mat-toolbar: rgba(38,38,42,.7);
@@ -247,6 +261,43 @@ svg.sym { width: 0; height: 0; position: absolute; }
 /* segmented filter inside a window toolbar */
 .window .seg button[aria-pressed="true"] { color: var(--accent); }
 
+/* gated (private) chip */
+.gated { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: 999px; color: var(--text2); background: var(--tag-bg); white-space: nowrap; }
+.gated .ic { font-size: 12px; }
+
+/* Bento grid — relative grade drives tile size (Liquid Glass) */
+.bento { display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: 118px; gap: 14px;
+  grid-auto-flow: row dense; align-content: start; }
+.tile { position: relative; border-radius: 20px; overflow: hidden; padding: 14px; display: flex; flex-direction: column;
+  background: var(--glass-fill); border: .5px solid var(--glass-edge);
+  -webkit-backdrop-filter: blur(20px) saturate(185%); backdrop-filter: blur(20px) saturate(185%);
+  box-shadow: var(--lg-shadow); transition: transform .16s ease, box-shadow .16s ease; }
+.tile:hover { transform: translateY(-3px); box-shadow: var(--lg-shadow-hover); }
+.tile.s-3 { grid-column: span 2; grid-row: span 2; }
+.tile.s-2 { grid-column: span 2; grid-row: span 1; }
+.tile.s-1 { grid-column: span 1; grid-row: span 1; }
+.tile .tglyph { position: absolute; top: 12px; left: 12px; width: 28px; height: 28px; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center; font-size: 16px;
+  background: var(--mat-inset); box-shadow: inset 0 0 0 .5px var(--inset-border); }
+.tile .tbody { position: relative; margin-top: auto; }
+.tile .ttitle { font-size: 14px; font-weight: 650; letter-spacing: -.015em; }
+.tile.s-3 .ttitle { font-size: 20px; }
+.tile .ttitle.untitled { color: var(--text3); font-style: italic; font-weight: 500; }
+.tile .texcerpt { font-size: 12.5px; color: var(--text2); margin-top: 5px; line-height: 1.42;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.tile .tmeta { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.tile.media { padding: 13px; }
+.tile.media .thumb { position: absolute; inset: 0; }
+.tile.media .scrim { position: absolute; inset: 0; background: linear-gradient(transparent 30%, rgba(0,0,0,.55)); }
+.tile.media .tglyph { color: #fff !important; background: rgba(255,255,255,.18); box-shadow: none;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.tile.media .ttitle { color: #fff; }
+.tile.media .tag { background: rgba(255,255,255,.24); color: #fff; }
+.tile.media .gated { color: #fff; background: rgba(255,255,255,.24); }
+.tile.media .grade i { background: rgba(255,255,255,.45); opacity: 1; }
+.tile.media .grade i.on { background: #fff; }
+
 /* relative-grade meter */
 .metaline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .grade { display: inline-flex; align-items: flex-end; gap: 2px; height: 10px; }
@@ -305,6 +356,7 @@ svg.sym { width: 0; height: 0; position: absolute; }
   <symbol id="ic-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 7h11M9 12h11M9 17h11"/><circle cx="5" cy="7" r=".6"/><circle cx="5" cy="12" r=".6"/><circle cx="5" cy="17" r=".6"/></symbol>
   <symbol id="ic-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4.5" y="4.5" width="6" height="6" rx="1.5"/><rect x="13.5" y="4.5" width="6" height="6" rx="1.5"/><rect x="4.5" y="13.5" width="6" height="6" rx="1.5"/><rect x="13.5" y="13.5" width="6" height="6" rx="1.5"/></symbol>
   <symbol id="ic-sort" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5v14M3 16l3 3 3-3"/><path d="M13 7h7M13 12h5M13 17h3"/></symbol>
+  <symbol id="ic-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2.2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
 </defs></svg>
 
 <div class="chooser">
@@ -331,8 +383,10 @@ const E = [
   { kind:'app',   ext:'link', label:'things-3',          date:'2026-03-19 12:00', tags:['apps'],             q:.35, sub:'apps.apple.com · App Store' },
   { kind:'podcast',ext:'link',label:'the-daily',         date:'2026-03-19 12:02', tags:['audio'],            q:.40, sub:'podcasts.apple.com · Podcast' },
   { kind:'html',  ext:'html', label:'snow-test',         date:'2026-04-02 23:30', tags:['design','weather'], q:.68, sub:'Snowfall variant prototypes.' },
+  { kind:'image', ext:'png',  label:'screenshot-bug',    date:'2026-04-18 13:25', tags:['dev','meme'],       q:.38, sub:'It works on my machine.' },
   { kind:'note',  ext:'md',   label:'on-file-systems',   date:'2026-04-24 10:05', tags:['writing'],          q:.88, sub:'Why folders lost to tags.' },
-  { kind:'note',  ext:'md',   label:'journal-2026-05',   date:'2026-05-02 09:00', tags:['personal'],         q:.30, sub:'Quiet personal note — just tagged, nothing fancy.' },
+  { kind:'note',  ext:'md',   label:'journal-2026-05',   date:'2026-05-02 09:00', tags:['personal','public'],q:.30, sub:'A personal post — tagged personal, still public.' },
+  { kind:'note',  ext:'md',   label:'draft-letter',      date:'2026-05-12 20:15', tags:['private','personal'],q:.25, sub:'Gated — only people I give the link to.' },
   { kind:'image', ext:'png',  label:'wireframe',         date:'2026-05-26 16:20', tags:['design'],           q:.45, sub:'420 KB · 1600×1000' },
   { kind:'image', ext:'jpg',  label:'family-trip',       date:'2026-05-30 19:40', tags:['photo','family'],   q:.60, sub:'12 photos from the coast.' },
 ];
@@ -351,7 +405,11 @@ const svg = id => `<span class="ic"><svg><use href="#${id}"/></svg></span>`;
 const titleOf = e => e.label ? e.label : '(untitled)';
 const dotDate = e => { const [y,m,d] = e.date.split(' ')[0].split('-'); return MONTHS[+m-1].slice(0,3)+' '+(+d); };
 const monthKey = e => { const [y,m] = e.date.split(' ')[0].split('-'); return MONTHS[+m-1]+' '+y; };
-const tagsHTML = (e,n=2) => `<span class="tags">${e.tags.slice(0,n).map(t=>`<span class="tag">${t}</span>`).join('')}</span>`;
+const VIS = new Set(['private','public']);              // visibility tags, shown as state not pills
+const visTags = e => e.tags.filter(t => !VIS.has(t));   // descriptive tags (personal, design, ...)
+const gated = e => e.tags.includes('private');
+const tagsHTML = (e,n=2) => `<span class="tags">${visTags(e).slice(0,n).map(t=>`<span class="tag">${t}</span>`).join('')}</span>`;
+const gatedHTML = e => gated(e) ? `<span class="gated">${svg('ic-lock')}gated</span>` : '';
 const groupByMonth = arr => { const g={},o=[]; arr.forEach(e=>{const k=monthKey(e); if(!g[k]){g[k]=[];o.push(k);} g[k].push(e);}); return o.map(k=>[k,g[k]]); };
 
 const FILTERS = {
@@ -407,7 +465,7 @@ function vColumns() {
   const rows = E.map((e,i)=>`
     <tr data-sel="${i}"${i===0?' class="sel"':''}>
       <td><span class="name"><span class="kic" style="background:${KIND[e.kind].c}">${svg(KIND[e.kind].ic)}</span>
-        <span class="${e.label?'':'untitled'}">${titleOf(e)}.${e.ext}</span></span></td>
+        <span class="${e.label?'':'untitled'}">${titleOf(e)}.${e.ext}</span>${gatedHTML(e)}</span></td>
       <td>${gradeHTML(e)}</td>
       <td class="kind">${KIND[e.kind].name}</td>
       <td><time>${e.date}</time></td>
@@ -433,7 +491,7 @@ function vTopFilter() {
         <div class="body">
           <div class="title${e.label?'':' untitled'}">${titleOf(e)}</div>
           <div class="sub">${e.sub}</div>
-          <div class="metaline">${gradeHTML(e)}${tagsHTML(e,2)}<time style="margin-left:auto">${dotDate(e)}</time></div>
+          <div class="metaline">${gradeHTML(e)}${tagsHTML(e,2)}${gatedHTML(e)}<time style="margin-left:auto">${dotDate(e)}</time></div>
         </div>
       </div>`).join('')).join('') + `</div>`
     : `<p style="text-align:center;color:var(--text3);font-size:13px;padding:48px">No entries of this kind.</p>`;
@@ -444,6 +502,40 @@ function vTopFilter() {
       <span class="tool-search">${svg('ic-search')}<span>Search</span></span>
     </div>
     <div class="content" style="background:var(--mat-content)"><div class="scroll" style="scrollbar-gutter:stable both-edges">${feed}</div></div>
+  </div>`;
+}
+
+/* ---- Variant: grade-sized Bento grid (Liquid Glass) ---- */
+function tileEl(e) {
+  const t = tier(e.q), size = t===3 ? 's-3' : t===2 ? 's-2' : 's-1';
+  const media = e.kind === 'image';
+  const glyph = `<span class="tglyph" style="color:${KIND[e.kind].c}">${svg(KIND[e.kind].ic)}</span>`;
+  const meta = `<div class="tmeta">${gradeHTML(e)}${tagsHTML(e,1)}${gatedHTML(e)}</div>`;
+  const title = `<div class="ttitle${e.label?'':' untitled'}">${titleOf(e)}</div>`;
+  const excerpt = (t===3 && !media) ? `<div class="texcerpt">${e.sub}</div>` : '';
+  if (media) {
+    return `<div class="tile media ${size}">
+      <div class="thumb" style="background:linear-gradient(150deg, ${KIND[e.kind].c}, color-mix(in srgb, ${KIND[e.kind].c} 48%, #112233 34%))"></div>
+      <div class="scrim"></div>${glyph}
+      <div class="tbody">${title}${meta}</div></div>`;
+  }
+  return `<div class="tile ${size}">${glyph}<div class="tbody">${title}${excerpt}${meta}</div></div>`;
+}
+function vBento() {
+  const filters = [['all','All'],['top','Top'],['note','Notes'],['html','Pages'],['links','Links'],['image','Media']];
+  const data = filtered();
+  const ordered = filter === 'top'
+    ? [...data].sort((a,b)=> b.q - a.q)
+    : [...data].sort((a,b)=>{ const d = tier(b.q) - tier(a.q); return d !== 0 ? d : (a.date < b.date ? 1 : -1); });
+  const tiles = data.length ? ordered.map(tileEl).join('')
+    : `<p style="grid-column:1/-1;text-align:center;color:var(--text3);font-size:13px;padding:48px">Nothing here.</p>`;
+  return `<div class="window" data-layout="top"><div class="lights"><i></i><i></i><i></i></div>
+    <div class="toolbar">
+      <h1 style="margin-right:6px">esko.bar</h1>
+      <div class="seg" style="margin:0 auto">${filters.map(([id,f])=>`<button data-filter="${id}" aria-pressed="${id===filter}">${f}</button>`).join('')}</div>
+      <span class="tool-search">${svg('ic-search')}<span>Search</span></span>
+    </div>
+    <div class="content"><div class="scroll" style="scrollbar-gutter:stable both-edges;background:var(--wall)"><div class="bento">${tiles}</div></div></div>
   </div>`;
 }
 
@@ -506,6 +598,9 @@ function vPublish() {
 }
 
 const VARIANTS = [
+  { id:'bento', label:'Bento · Grade-sized', render:vBento,
+    title:'Grade-sized Bento grid — Liquid Glass',
+    desc:'Novel layout where relative grade drives tile size: top-graded entries become hero tiles, the rest pack densely around them (the layout itself encodes the grade meter). Each kind gets its own tile — media is full-bleed, posts are text-forward, links are compact. Liquid-Glass tiles (specular rims, concentric radii) blur the wallpaper behind them. Tags show as pills; private entries get a “gated” chip. Try the Top filter and ◐ Theme.' },
   { id:'topfilter', label:'Toolbar Filter', render:vTopFilter,
     title:'Top toolbar with segmented filter',
     desc:'Unified toolbar with brand title, a centered segmented control (All / Top / Notes / Pages / Links / Media) and search. Content feed below, centered to a readable column. The segments filter live; “Top” surfaces the highest-graded entries.' },
@@ -517,7 +612,7 @@ const VARIANTS = [
     desc:'How you’d grade at publish time: no scores, just “better or worse than this?” a few times (binary search, ≈ log₂ N taps). The result is a relative position (e.g. top 18%), used only to sort and surface — the grade meter on each entry reflects it. Click Better / Worse to try placing a post.' },
 ];
 
-let cur = 'topfilter';
+let cur = 'bento';
 function paint() {
   const v = VARIANTS.find(x=>x.id===cur);
   document.getElementById('mount').innerHTML = v.render();
