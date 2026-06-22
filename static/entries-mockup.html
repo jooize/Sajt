@@ -11,11 +11,11 @@
   --accent-soft: rgba(161,35,246,.14);
   --win-radius: 13px;
 
-  /* Liquid Glass tile material (macOS 26 Tahoe-style) */
-  --glass-fill: linear-gradient(155deg, rgba(255,255,255,.52), rgba(255,255,255,.24));
+  /* Floating card glass — readability-tuned per macOS 27 Golden Gate */
   --glass-edge: rgba(255,255,255,.6);
-  --lg-shadow: inset 0 1px 0 rgba(255,255,255,.75), inset 0 0 0 .5px rgba(255,255,255,.22), 0 8px 24px rgba(20,24,40,.14);
-  --lg-shadow-hover: inset 0 1px 0 rgba(255,255,255,.9), inset 0 0 0 .5px rgba(255,255,255,.3), 0 16px 38px rgba(20,24,40,.2);
+  --card-glass: rgba(252,252,254,.72);
+  --card-shadow: 0 6px 20px rgba(20,24,40,.12), 0 1px 2px rgba(20,24,40,.07), inset 0 1px 0 rgba(255,255,255,.7);
+  --card-shadow-hover: 0 14px 32px rgba(20,24,40,.2), inset 0 1px 0 rgba(255,255,255,.82);
 
   --mat-sidebar: rgba(244,245,248,.62);
   --mat-content: rgba(250,250,252,.94);
@@ -47,10 +47,10 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) { color-scheme: dark;
     --accent-soft: rgba(161,35,246,.26);
-    --glass-fill: linear-gradient(155deg, rgba(255,255,255,.14), rgba(255,255,255,.05));
     --glass-edge: rgba(255,255,255,.16);
-    --lg-shadow: inset 0 1px 0 rgba(255,255,255,.2), inset 0 0 0 .5px rgba(255,255,255,.08), 0 8px 24px rgba(0,0,0,.45);
-    --lg-shadow-hover: inset 0 1px 0 rgba(255,255,255,.28), inset 0 0 0 .5px rgba(255,255,255,.12), 0 16px 38px rgba(0,0,0,.55);
+    --card-glass: rgba(44,44,48,.62);
+    --card-shadow: 0 6px 20px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.16);
+    --card-shadow-hover: 0 14px 32px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.22);
     --mat-sidebar: rgba(30,30,34,.58);
     --mat-content: rgba(28,28,30,.93);
     --mat-toolbar: rgba(38,38,42,.7);
@@ -71,10 +71,10 @@
 }
 :root[data-theme="dark"] { color-scheme: dark;
   --accent-soft: rgba(161,35,246,.26);
-  --glass-fill: linear-gradient(155deg, rgba(255,255,255,.14), rgba(255,255,255,.05));
   --glass-edge: rgba(255,255,255,.16);
-  --lg-shadow: inset 0 1px 0 rgba(255,255,255,.2), inset 0 0 0 .5px rgba(255,255,255,.08), 0 8px 24px rgba(0,0,0,.45);
-  --lg-shadow-hover: inset 0 1px 0 rgba(255,255,255,.28), inset 0 0 0 .5px rgba(255,255,255,.12), 0 16px 38px rgba(0,0,0,.55);
+  --card-glass: rgba(44,44,48,.62);
+  --card-shadow: 0 6px 20px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.16);
+  --card-shadow-hover: 0 14px 32px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.22);
   --mat-sidebar: rgba(30,30,34,.58);
   --mat-content: rgba(28,28,30,.93);
   --mat-toolbar: rgba(38,38,42,.7);
@@ -266,37 +266,30 @@ svg.sym { width: 0; height: 0; position: absolute; }
   border-radius: 999px; color: var(--text2); background: var(--tag-bg); white-space: nowrap; }
 .gated .ic { font-size: 12px; }
 
-/* Bento grid — relative grade drives tile size (Liquid Glass) */
-.bento { display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: 118px; gap: 14px;
-  grid-auto-flow: row dense; align-content: start; }
-.tile { position: relative; border-radius: 20px; overflow: hidden; padding: 14px; display: flex; flex-direction: column;
-  background: var(--glass-fill); border: .5px solid var(--glass-edge);
-  -webkit-backdrop-filter: blur(20px) saturate(185%); backdrop-filter: blur(20px) saturate(185%);
-  box-shadow: var(--lg-shadow); transition: transform .16s ease, box-shadow .16s ease; }
-.tile:hover { transform: translateY(-3px); box-shadow: var(--lg-shadow-hover); }
-.tile.s-3 { grid-column: span 2; grid-row: span 2; }
-.tile.s-2 { grid-column: span 2; grid-row: span 1; }
-.tile.s-1 { grid-column: span 1; grid-row: span 1; }
-.tile .tglyph { position: absolute; top: 12px; left: 12px; width: 28px; height: 28px; border-radius: 9px;
-  display: flex; align-items: center; justify-content: center; font-size: 16px;
-  background: var(--mat-inset); box-shadow: inset 0 0 0 .5px var(--inset-border); }
-.tile .tbody { position: relative; margin-top: auto; }
-.tile .ttitle { font-size: 14px; font-weight: 650; letter-spacing: -.015em; }
-.tile.s-3 .ttitle { font-size: 20px; }
-.tile .ttitle.untitled { color: var(--text3); font-style: italic; font-weight: 500; }
-.tile .texcerpt { font-size: 12.5px; color: var(--text2); margin-top: 5px; line-height: 1.42;
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.tile .tmeta { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-.tile.media { padding: 13px; }
-.tile.media .thumb { position: absolute; inset: 0; }
-.tile.media .scrim { position: absolute; inset: 0; background: linear-gradient(transparent 30%, rgba(0,0,0,.55)); }
-.tile.media .tglyph { color: #fff !important; background: rgba(255,255,255,.18); box-shadow: none;
-  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
-.tile.media .ttitle { color: #fff; }
-.tile.media .tag { background: rgba(255,255,255,.24); color: #fff; }
-.tile.media .gated { color: #fff; background: rgba(255,255,255,.24); }
-.tile.media .grade i { background: rgba(255,255,255,.45); opacity: 1; }
-.tile.media .grade i.on { background: #fff; }
+/* native pull-down button (toolbar) */
+.pulldown { display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12.5px; font-weight: 550;
+  color: var(--text); cursor: pointer; border: .5px solid var(--sep); background: var(--mat-inset);
+  padding: 5px 9px 5px 11px; border-radius: 8px; box-shadow: 0 1px 1.5px rgba(0,0,0,.06); white-space: nowrap; }
+.pulldown:hover { background: var(--hover); }
+.pulldown .chev { display: inline-flex; flex-direction: column; line-height: .55; color: var(--text3); font-size: 9px; }
+
+/* floating glass cards (timeline) */
+.cards-stage { position: relative; background: var(--wall); scrollbar-gutter: stable both-edges; }
+.cards { position: relative; z-index: 1; width: min(600px, 100% - 32px); margin: 0 auto; padding: 8px 0 36px;
+  display: flex; flex-direction: column; gap: 12px; }
+.cards .month { font-size: 12px; font-weight: 700; color: var(--text2); letter-spacing: -.01em; padding: 12px 4px 0; }
+.gcard { display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; border-radius: 16px;
+  background: var(--card-glass); border: .5px solid var(--glass-edge);
+  -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: var(--card-shadow); transition: transform .16s ease, box-shadow .16s ease; }
+.gcard:hover { transform: translateY(-2px); box-shadow: var(--card-shadow-hover); }
+.gcard .kic { width: 38px; height: 38px; border-radius: 11px; font-size: 20px; flex: none;
+  display: flex; align-items: center; justify-content: center; color: #fff; }
+.gcard .body { flex: 1; min-width: 0; }
+.gcard .title { font-size: 15px; font-weight: 650; letter-spacing: -.015em; }
+.gcard .title.untitled { color: var(--text3); font-style: italic; font-weight: 500; }
+.gcard .sub { font-size: 12.5px; color: var(--text2); margin-top: 2px; }
+.gcard time { font-size: 12px; color: var(--text3); font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
 
 /* relative-grade meter */
 .metaline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
@@ -505,37 +498,31 @@ function vTopFilter() {
   </div>`;
 }
 
-/* ---- Variant: grade-sized Bento grid (Liquid Glass) ---- */
-function tileEl(e) {
-  const t = tier(e.q), size = t===3 ? 's-3' : t===2 ? 's-2' : 's-1';
-  const media = e.kind === 'image';
-  const glyph = `<span class="tglyph" style="color:${KIND[e.kind].c}">${svg(KIND[e.kind].ic)}</span>`;
-  const meta = `<div class="tmeta">${gradeHTML(e)}${tagsHTML(e,1)}${gatedHTML(e)}</div>`;
-  const title = `<div class="ttitle${e.label?'':' untitled'}">${titleOf(e)}</div>`;
-  const excerpt = (t===3 && !media) ? `<div class="texcerpt">${e.sub}</div>` : '';
-  if (media) {
-    return `<div class="tile media ${size}">
-      <div class="thumb" style="background:linear-gradient(150deg, ${KIND[e.kind].c}, color-mix(in srgb, ${KIND[e.kind].c} 48%, #112233 34%))"></div>
-      <div class="scrim"></div>${glyph}
-      <div class="tbody">${title}${meta}</div></div>`;
-  }
-  return `<div class="tile ${size}">${glyph}<div class="tbody">${title}${excerpt}${meta}</div></div>`;
-}
-function vBento() {
+/* ---- Variant: floating glass cards, macOS toolbar filter ---- */
+function vCards() {
   const filters = [['all','All'],['top','Top'],['note','Notes'],['html','Pages'],['links','Links'],['image','Media']];
   const data = filtered();
-  const ordered = filter === 'top'
-    ? [...data].sort((a,b)=> b.q - a.q)
-    : [...data].sort((a,b)=>{ const d = tier(b.q) - tier(a.q); return d !== 0 ? d : (a.date < b.date ? 1 : -1); });
-  const tiles = data.length ? ordered.map(tileEl).join('')
-    : `<p style="grid-column:1/-1;text-align:center;color:var(--text3);font-size:13px;padding:48px">Nothing here.</p>`;
+  const card = e => `
+    <div class="gcard">
+      <span class="kic" style="background:${KIND[e.kind].c}">${svg(KIND[e.kind].ic)}</span>
+      <div class="body">
+        <div class="title${e.label?'':' untitled'}">${titleOf(e)}</div>
+        <div class="sub">${e.sub}</div>
+        <div class="metaline">${gradeHTML(e)}${tagsHTML(e,2)}${gatedHTML(e)}</div>
+      </div>
+      <time>${dotDate(e)}</time>
+    </div>`;
+  const body = data.length ? arrange(data).map(([m, items]) =>
+      `<div class="month">${m}</div>${items.map(card).join('')}`).join('')
+    : `<p style="text-align:center;color:var(--text3);font-size:13px;padding:40px">Nothing here.</p>`;
   return `<div class="window" data-layout="top"><div class="lights"><i></i><i></i><i></i></div>
     <div class="toolbar">
       <h1 style="margin-right:6px">esko.bar</h1>
       <div class="seg" style="margin:0 auto">${filters.map(([id,f])=>`<button data-filter="${id}" aria-pressed="${id===filter}">${f}</button>`).join('')}</div>
-      <span class="tool-search">${svg('ic-search')}<span>Search</span></span>
+      <span class="pulldown" title="Sort by">${filter==='top'?'Grade':'Recent'} <span class="chev">▴▾</span></span>
+      <span class="icon-btn" title="Search">${svg('ic-search')}</span>
     </div>
-    <div class="content"><div class="scroll" style="scrollbar-gutter:stable both-edges;background:var(--wall)"><div class="bento">${tiles}</div></div></div>
+    <div class="content"><div class="scroll cards-stage"><div class="cards">${body}</div></div></div>
   </div>`;
 }
 
@@ -598,9 +585,9 @@ function vPublish() {
 }
 
 const VARIANTS = [
-  { id:'bento', label:'Bento · Grade-sized', render:vBento,
-    title:'Grade-sized Bento grid — Liquid Glass',
-    desc:'Novel layout where relative grade drives tile size: top-graded entries become hero tiles, the rest pack densely around them (the layout itself encodes the grade meter). Each kind gets its own tile — media is full-bleed, posts are text-forward, links are compact. Liquid-Glass tiles (specular rims, concentric radii) blur the wallpaper behind them. Tags show as pills; private entries get a “gated” chip. Try the Top filter and ◐ Theme.' },
+  { id:'cards', label:'Floating Cards', render:vCards,
+    title:'Floating glass cards — macOS toolbar filter',
+    desc:'The floating-card list you liked, minus the pill: roomy Liquid-Glass cards drift over the wallpaper, filtered by a standard macOS toolbar — segmented control (All / Top / Notes / Pages / Links / Media), a Sort pull-down, and search, with native buttonography. Cards are tuned tinted/opaque for readability per macOS 27 Golden Gate. Grade meter + tags + a “gated” chip on each card. Try the segments and ◐ Theme.' },
   { id:'topfilter', label:'Toolbar Filter', render:vTopFilter,
     title:'Top toolbar with segmented filter',
     desc:'Unified toolbar with brand title, a centered segmented control (All / Top / Notes / Pages / Links / Media) and search. Content feed below, centered to a readable column. The segments filter live; “Top” surfaces the highest-graded entries.' },
@@ -612,7 +599,7 @@ const VARIANTS = [
     desc:'How you’d grade at publish time: no scores, just “better or worse than this?” a few times (binary search, ≈ log₂ N taps). The result is a relative position (e.g. top 18%), used only to sort and surface — the grade meter on each entry reflects it. Click Better / Worse to try placing a post.' },
 ];
 
-let cur = 'bento';
+let cur = 'cards';
 function paint() {
   const v = VARIANTS.find(x=>x.id===cur);
   document.getElementById('mount').innerHTML = v.render();
