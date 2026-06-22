@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>esko.bar — entry list mockups</title>
+<style>
+:root {
+  --accent: #a123f6;          /* esko electric violet */
+  --accent-2: #c46bff;
+  --accent-soft: rgba(161,35,246,.14);
+  --win-radius: 13px;
+
+  --mat-sidebar: rgba(244,245,248,.62);
+  --mat-content: rgba(250,250,252,.94);
+  --mat-toolbar: rgba(250,250,252,.7);
+  --mat-inset: #ffffff;
+  --inset-border: rgba(0,0,0,.07);
+  --hover: rgba(0,0,0,.045);
+  --sep: rgba(0,0,0,.08);
+
+  --text: #1d1d1f;
+  --text2: rgba(60,60,67,.62);
+  --text3: rgba(60,60,67,.35);
+
+  --c-note: #34c759;
+  --c-link: #0a84ff;
+  --c-image: #ff9f0a;
+  --c-html: #1fb6c9;
+  --c-app: #5e5ce6;
+  --c-podcast: #ff2d55;
+
+  --tag-bg: rgba(120,120,128,.14);
+
+  --win-shadow: 0 30px 80px -28px rgba(20,24,40,.5), 0 12px 30px -18px rgba(20,24,40,.32);
+  --wall: radial-gradient(900px 620px at 18% 8%, rgba(161,35,246,.22), transparent 60%),
+          radial-gradient(840px 600px at 88% 22%, rgba(38,168,237,.20), transparent 60%),
+          radial-gradient(900px 760px at 60% 100%, rgba(52,199,89,.22), transparent 62%),
+          linear-gradient(160deg, #eef1f5, #e6e9ee);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { color-scheme: dark;
+    --accent-soft: rgba(161,35,246,.26);
+    --mat-sidebar: rgba(30,30,34,.58);
+    --mat-content: rgba(28,28,30,.93);
+    --mat-toolbar: rgba(38,38,42,.7);
+    --mat-inset: #2a2a2d;
+    --inset-border: rgba(255,255,255,.07);
+    --hover: rgba(255,255,255,.06);
+    --sep: rgba(255,255,255,.1);
+    --text: #f5f5f7;
+    --text2: rgba(235,235,245,.62);
+    --text3: rgba(235,235,245,.32);
+    --tag-bg: rgba(120,120,128,.28);
+    --win-shadow: 0 34px 90px -28px rgba(0,0,0,.72), 0 14px 34px -18px rgba(0,0,0,.6);
+    --wall: radial-gradient(900px 620px at 18% 8%, rgba(161,35,246,.30), transparent 60%),
+            radial-gradient(840px 600px at 88% 22%, rgba(38,168,237,.22), transparent 60%),
+            radial-gradient(900px 760px at 60% 100%, rgba(52,199,89,.20), transparent 62%),
+            linear-gradient(160deg, #14151a, #0c0d11);
+  }
+}
+:root[data-theme="dark"] { color-scheme: dark;
+  --accent-soft: rgba(161,35,246,.26);
+  --mat-sidebar: rgba(30,30,34,.58);
+  --mat-content: rgba(28,28,30,.93);
+  --mat-toolbar: rgba(38,38,42,.7);
+  --mat-inset: #2a2a2d;
+  --inset-border: rgba(255,255,255,.07);
+  --hover: rgba(255,255,255,.06);
+  --sep: rgba(255,255,255,.1);
+  --text: #f5f5f7;
+  --text2: rgba(235,235,245,.62);
+  --text3: rgba(235,235,245,.32);
+  --tag-bg: rgba(120,120,128,.28);
+  --win-shadow: 0 34px 90px -28px rgba(0,0,0,.72), 0 14px 34px -18px rgba(0,0,0,.6);
+  --wall: radial-gradient(900px 620px at 18% 8%, rgba(161,35,246,.30), transparent 60%),
+          radial-gradient(840px 600px at 88% 22%, rgba(38,168,237,.22), transparent 60%),
+          radial-gradient(900px 760px at 60% 100%, rgba(52,199,89,.20), transparent 62%),
+          linear-gradient(160deg, #14151a, #0c0d11);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "Segoe UI", Roboto, system-ui, sans-serif;
+  color: var(--text);
+  background: var(--wall) fixed;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+svg.sym { width: 0; height: 0; position: absolute; }
+.ic { display: inline-flex; }
+.ic svg { width: 1em; height: 1em; display: block; }
+
+/* ---------- chooser bar ---------- */
+.chooser {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 18px;
+  background: var(--mat-toolbar);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  border-bottom: .5px solid var(--sep);
+}
+.chooser b { font-size: 13px; font-weight: 700; letter-spacing: -.01em; opacity: .9; margin-right: 4px; }
+.seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 11px; background: var(--tag-bg); }
+.seg button {
+  font: inherit; font-size: 12.5px; font-weight: 550;
+  border: 0; cursor: pointer; color: var(--text2);
+  padding: 6px 12px; border-radius: 8px; background: transparent;
+  transition: all .15s ease; white-space: nowrap;
+}
+.seg button[aria-pressed="true"] { background: var(--mat-inset); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.4); }
+.spacer { flex: 1; }
+.tbtn {
+  font: inherit; font-size: 12.5px; font-weight: 550; cursor: pointer;
+  border: .5px solid var(--sep); color: var(--text);
+  padding: 6px 13px; border-radius: 9px; background: var(--mat-inset);
+}
+
+/* ---------- stage + window ---------- */
+.stage { padding: 34px clamp(14px, 4vw, 48px) 60px; display: flex; flex-direction: column; align-items: center; }
+.caption { max-width: 1080px; width: 100%; margin: 0 0 12px; }
+.caption h2 { font-size: 15px; font-weight: 700; letter-spacing: -.01em; margin: 0 0 2px; }
+.caption p { font-size: 13px; color: var(--text2); margin: 0; max-width: 80ch; }
+
+.window {
+  width: min(1080px, 96vw);
+  height: 680px;
+  border-radius: var(--win-radius);
+  overflow: hidden;
+  box-shadow: var(--win-shadow);
+  border: .5px solid rgba(255,255,255,.18);
+  display: grid;
+  position: relative;
+  isolation: isolate;
+}
+.window[data-layout="side"] { grid-template-columns: 244px 1fr; }
+.window[data-layout="top"]  { grid-template-rows: auto 1fr; grid-template-columns: 1fr; width: min(940px, 96vw); }
+
+.lights { position: absolute; top: 13px; left: 14px; z-index: 20; display: flex; gap: 8px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.12); }
+.lights i:nth-child(1){ background:#ff5f57; }
+.lights i:nth-child(2){ background:#febc2e; }
+.lights i:nth-child(3){ background:#28c840; }
+
+/* ---------- sidebar ---------- */
+.sidebar {
+  background: var(--mat-sidebar);
+  -webkit-backdrop-filter: blur(34px) saturate(180%);
+  backdrop-filter: blur(34px) saturate(180%);
+  border-right: .5px solid var(--sep);
+  padding: 44px 10px 12px;
+  overflow-y: auto;
+}
+.side-search {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--tag-bg); border-radius: 8px;
+  padding: 5px 9px; margin: 0 2px 12px; color: var(--text3);
+  font-size: 12.5px;
+}
+.side-search .ic { font-size: 13px; }
+.side-sec { font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+  color: var(--text3); padding: 10px 10px 4px; }
+.side-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 6px 9px; border-radius: 7px; cursor: default;
+  font-size: 13.5px; font-weight: 500; color: var(--text);
+  margin-bottom: 1px;
+}
+.side-item .ic { font-size: 16px; color: var(--accent); }
+.side-item .lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-item .cnt { font-size: 12px; color: var(--text3); font-variant-numeric: tabular-nums; }
+.side-item:hover { background: var(--hover); }
+.side-item.sel { background: var(--accent); color: #fff; }
+.side-item.sel .ic, .side-item.sel .cnt { color: rgba(255,255,255,.9); }
+.dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+/* ---------- content + toolbar ---------- */
+.content { background: var(--mat-content); display: flex; flex-direction: column; min-width: 0; }
+.toolbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 16px; height: 52px; flex: none;
+  background: var(--mat-toolbar);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  border-bottom: .5px solid var(--sep);
+}
+.window[data-layout="top"] .toolbar { padding-left: 86px; height: 56px; }
+.toolbar h1 { font-size: 15px; font-weight: 700; letter-spacing: -.015em; margin: 0; }
+.toolbar .sub { font-size: 12px; color: var(--text3); font-variant-numeric: tabular-nums; }
+.tool-search {
+  display: flex; align-items: center; gap: 6px; color: var(--text3);
+  background: var(--tag-bg); border-radius: 8px; padding: 5px 10px;
+  font-size: 12.5px; min-width: 150px;
+}
+.icon-btn { display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 26px; border-radius: 7px; color: var(--text2); font-size: 16px; }
+.icon-btn:hover { background: var(--hover); }
+
+.scroll { overflow-y: auto; padding: 16px; flex: 1; }
+
+/* ---------- tag pills (shared) ---------- */
+.tags { display: inline-flex; gap: 4px; }
+.tag { font-size: 11px; font-weight: 600; color: var(--text2); background: var(--tag-bg);
+  padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+
+/* ---------- table / columns ---------- */
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table thead th { position: sticky; top: 0; background: var(--mat-content);
+  text-align: left; font-weight: 600; color: var(--text2); font-size: 11.5px;
+  padding: 4px 12px 9px; border-bottom: .5px solid var(--sep); }
+.table thead th .ic { font-size: 12px; color: var(--accent); margin-left: 4px; vertical-align: -1px; }
+.table tbody td { padding: 7px 12px; border-bottom: .5px solid var(--sep); white-space: nowrap; vertical-align: middle; }
+.table tbody tr:hover td { background: var(--hover); }
+.table .name { display: flex; align-items: center; gap: 9px; }
+.table .name .kic { width: 20px; height: 20px; border-radius: 5px; font-size: 13px; }
+.table .name .untitled { color: var(--text3); font-style: italic; }
+.table .kind { color: var(--text2); }
+.table time { color: var(--text3); font-variant-numeric: tabular-nums; }
+
+/* content feed (toolbar variant) */
+.feed { width: min(640px, 100%); margin: 0 auto; }
+.feed-sec { font-size: 12px; font-weight: 700; color: var(--text2); letter-spacing: -.01em; padding: 18px 4px 6px; }
+.feed-sec:first-child { padding-top: 2px; }
+.feed-item { display: flex; gap: 14px; padding: 14px 12px; position: relative; align-items: flex-start; border-radius: 12px; }
+.feed-item + .feed-item::before { content: ""; position: absolute; left: 60px; right: 12px; top: 0; border-top: .5px solid var(--sep); }
+.feed-item:hover { background: var(--hover); }
+.feed-item:hover + .feed-item::before, .feed-item:hover::before { border-color: transparent; }
+.feed-item .kic.big { width: 38px; height: 38px; border-radius: 11px; font-size: 20px; flex: none; }
+.feed-item .body { flex: 1; min-width: 0; }
+.feed-item .title { font-size: 15px; font-weight: 650; letter-spacing: -.015em; }
+.feed-item .title.untitled { color: var(--text3); font-style: italic; font-weight: 500; }
+.feed-item .sub { font-size: 13px; color: var(--text2); margin-top: 2px; line-height: 1.42;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.feed-item .metaline { display: flex; align-items: center; gap: 9px; margin-top: 8px; }
+.feed-item .metaline time { font-size: 12px; color: var(--text3); font-variant-numeric: tabular-nums; }
+
+/* Finder row selection */
+.table tbody tr { cursor: default; }
+.table tbody tr.sel td { background: var(--accent); color: #fff; border-bottom-color: transparent; }
+.table tbody tr.sel .kind, .table tbody tr.sel time { color: rgba(255,255,255,.85); }
+.table tbody tr.sel .untitled { color: rgba(255,255,255,.7); }
+.table tbody tr.sel .tag { background: rgba(255,255,255,.22); color: #fff; }
+.table tbody tr.sel:hover td { background: var(--accent); }
+
+/* segmented filter inside a window toolbar */
+.window .seg button[aria-pressed="true"] { color: var(--accent); }
+
+/* relative-grade meter */
+.metaline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.grade { display: inline-flex; align-items: flex-end; gap: 2px; height: 10px; }
+.grade i { width: 3px; height: 4px; border-radius: 1px; background: var(--text3); opacity: .4; }
+.grade i:nth-child(2) { height: 7px; }
+.grade i:nth-child(3) { height: 10px; }
+.grade i.on { background: var(--accent); opacity: 1; }
+
+/* pairwise publish sheet */
+.sheet-wrap { display: flex; align-items: center; justify-content: center; height: 100%; padding: 24px; }
+.sheet { width: min(420px, 100%); background: var(--mat-inset); border: .5px solid var(--inset-border);
+  border-radius: 20px; padding: 22px 22px 20px; box-shadow: 0 24px 64px rgba(20,24,40,.24); text-align: center; }
+.sheet h3 { margin: 0 0 2px; font-size: 17px; font-weight: 700; letter-spacing: -.02em; }
+.sheet .lede { font-size: 12.5px; color: var(--text2); margin: 0 0 16px; }
+.mini { display: flex; align-items: center; gap: 11px; text-align: left; padding: 11px 13px; border-radius: 13px;
+  background: var(--mat-content); border: .5px solid var(--inset-border); }
+.mini.fresh { box-shadow: 0 0 0 2px var(--accent-soft); }
+.mini .kic { width: 34px; height: 34px; border-radius: 9px; font-size: 18px; flex: none; }
+.mini .t { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+.mini .k { font-size: 12px; color: var(--text3); margin-top: 1px; }
+.sheet-q { font-size: 13px; font-weight: 600; color: var(--text2); margin: 16px 0 9px; }
+.cmp-btns { display: flex; gap: 10px; margin-top: 12px; }
+.cbtn { flex: 1; padding: 12px; border-radius: 13px; border: 0; font: inherit; font-weight: 650; font-size: 14px; cursor: pointer; }
+.cbtn.up { color: var(--c-note); background: color-mix(in srgb, var(--c-note) 16%, transparent); }
+.cbtn.down { color: var(--c-podcast); background: color-mix(in srgb, var(--c-podcast) 14%, transparent); }
+.cbtn:hover { filter: brightness(1.06); }
+.cmp-prog { margin-top: 16px; }
+.cmp-prog .bar { height: 4px; border-radius: 2px; background: var(--tag-bg); overflow: hidden; margin-bottom: 7px; }
+.cmp-prog .bar span { display: block; height: 100%; background: var(--accent); transition: width .3s ease; }
+.cmp-prog small { font-size: 11.5px; color: var(--text3); }
+.placed { font-size: 15px; margin: 16px 0 4px; }
+.placed b { color: var(--accent); }
+.placed .between { font-size: 13px; color: var(--text2); margin-top: 5px; line-height: 1.4; }
+.sheet-actions { display: flex; gap: 10px; margin-top: 18px; }
+.cta { flex: 1; padding: 11px; border-radius: 12px; border: 0; font: inherit; font-weight: 650; font-size: 14px; cursor: pointer; background: var(--accent); color: #fff; }
+.ghost { padding: 11px 14px; border-radius: 12px; border: .5px solid var(--sep); background: transparent; color: var(--text); font: inherit; font-weight: 550; font-size: 13.5px; cursor: pointer; }
+.skip { display: inline-block; margin-top: 14px; font-size: 12.5px; color: var(--text3); cursor: pointer; }
+.skip:hover { color: var(--text2); }
+</style>
+</head>
+<body>
+
+<svg class="sym" aria-hidden="true"><defs>
+  <symbol id="ic-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><path d="M10 13h5M10 16h5M10 10h2.5"/></symbol>
+  <symbol id="ic-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a3 3 0 0 0 4 .3l3-3a3 3 0 0 0-4.3-4.3l-1.4 1.4"/><path d="M14 11a3 3 0 0 0-4-.3l-3 3a3 3 0 0 0 4.3 4.3l1.4-1.4"/></symbol>
+  <symbol id="ic-photo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M4 16.5l4-3.5 3.5 3 3-2.5L20 17"/></symbol>
+  <symbol id="ic-page" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2.5"/><path d="M4 9h16"/><circle cx="7" cy="7" r=".5"/><circle cx="9.4" cy="7" r=".5"/><path d="M10 13l-1.5 1.5L10 16M14 13l1.5 1.5L14 16"/></symbol>
+  <symbol id="ic-app" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4.5" y="4.5" width="6" height="6" rx="1.8"/><rect x="13.5" y="4.5" width="6" height="6" rx="1.8"/><rect x="4.5" y="13.5" width="6" height="6" rx="1.8"/><rect x="13.5" y="13.5" width="6" height="6" rx="1.8"/></symbol>
+  <symbol id="ic-wave" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 11v2M8 8v8M12 5v14M16 8v8M20 11v2"/></symbol>
+  <symbol id="ic-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></symbol>
+  <symbol id="ic-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 6l6 6-6 6"/></symbol>
+  <symbol id="ic-tray" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14l2.5 3.5h11L20 14"/><path d="M4 14V6h16v8"/></symbol>
+  <symbol id="ic-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.5l3 1.8"/></symbol>
+  <symbol id="ic-star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5l2.3 4.7 5.2.8-3.8 3.7.9 5.1L12 16.9 7.4 18.6l.9-5.1L4.5 10l5.2-.8z"/></symbol>
+  <symbol id="ic-tag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11V5h6l9 9-6 6-9-9z"/><circle cx="8" cy="8" r="1.1"/></symbol>
+  <symbol id="ic-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 7h11M9 12h11M9 17h11"/><circle cx="5" cy="7" r=".6"/><circle cx="5" cy="12" r=".6"/><circle cx="5" cy="17" r=".6"/></symbol>
+  <symbol id="ic-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4.5" y="4.5" width="6" height="6" rx="1.5"/><rect x="13.5" y="4.5" width="6" height="6" rx="1.5"/><rect x="4.5" y="13.5" width="6" height="6" rx="1.5"/><rect x="13.5" y="13.5" width="6" height="6" rx="1.5"/></symbol>
+  <symbol id="ic-sort" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5v14M3 16l3 3 3-3"/><path d="M13 7h7M13 12h5M13 17h3"/></symbol>
+</defs></svg>
+
+<div class="chooser">
+  <b>esko.bar entry list</b>
+  <div class="seg" id="seg"></div>
+  <span class="spacer"></span>
+  <button class="tbtn" id="theme">◐ Theme</button>
+</div>
+
+<div class="stage">
+  <div class="caption" id="cap"></div>
+  <div id="mount"></div>
+</div>
+
+<script>
+const E = [
+  { kind:'note',  ext:'md',   label:'hello-world',       date:'2026-03-03 14:30', tags:['intro'],            q:.82, sub:'This is the first post on esko.bar.' },
+  { kind:'image', ext:'jpg',  label:'sunset',            date:'2026-03-03 15:00', tags:['photo'],            q:.55, sub:'1.8 MB · 4032×3024' },
+  { kind:'note',  ext:'txt',  label:null,                date:'2026-03-04 09:15', tags:[],                   q:.20, sub:'Just a plain text note. Timestamps are all you need sometimes.' },
+  { kind:'note',  ext:'md',   label:'code-highlighting', date:'2026-03-05 12:00', tags:['dev'],              q:.70, sub:'Fenced code blocks in Rust, Python, Bash, JS.' },
+  { kind:'image', ext:'gif',  label:'cat-loaf',          date:'2026-03-09 22:10', tags:['meme'],             q:.62, sub:'When the deploy finally goes green.' },
+  { kind:'html',  ext:'html', label:'glass-tuner',       date:'2026-03-11 18:42', tags:['design','glass'],   q:.90, sub:'Interactive SVG specular light tuner.' },
+  { kind:'html',  ext:'html', label:'rain-canvas',       date:'2026-03-14 21:08', tags:['design','weather'], q:.76, sub:'Lightweight Canvas 2D rain renderer.' },
+  { kind:'app',   ext:'link', label:'things-3',          date:'2026-03-19 12:00', tags:['apps'],             q:.35, sub:'apps.apple.com · App Store' },
+  { kind:'podcast',ext:'link',label:'the-daily',         date:'2026-03-19 12:02', tags:['audio'],            q:.40, sub:'podcasts.apple.com · Podcast' },
+  { kind:'html',  ext:'html', label:'snow-test',         date:'2026-04-02 23:30', tags:['design','weather'], q:.68, sub:'Snowfall variant prototypes.' },
+  { kind:'note',  ext:'md',   label:'on-file-systems',   date:'2026-04-24 10:05', tags:['writing'],          q:.88, sub:'Why folders lost to tags.' },
+  { kind:'note',  ext:'md',   label:'journal-2026-05',   date:'2026-05-02 09:00', tags:['personal'],         q:.30, sub:'Quiet personal note — just tagged, nothing fancy.' },
+  { kind:'image', ext:'png',  label:'wireframe',         date:'2026-05-26 16:20', tags:['design'],           q:.45, sub:'420 KB · 1600×1000' },
+  { kind:'image', ext:'jpg',  label:'family-trip',       date:'2026-05-30 19:40', tags:['photo','family'],   q:.60, sub:'12 photos from the coast.' },
+];
+
+const KIND = {
+  note:   { ic:'ic-doc',   c:'var(--c-note)',    name:'Note'    },
+  link:   { ic:'ic-link',  c:'var(--c-link)',    name:'Link'    },
+  image:  { ic:'ic-photo', c:'var(--c-image)',   name:'Image'   },
+  html:   { ic:'ic-page',  c:'var(--c-html)',    name:'Page'    },
+  app:    { ic:'ic-app',   c:'var(--c-app)',     name:'App'     },
+  podcast:{ ic:'ic-wave',  c:'var(--c-podcast)', name:'Podcast' },
+};
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+const svg = id => `<span class="ic"><svg><use href="#${id}"/></svg></span>`;
+const titleOf = e => e.label ? e.label : '(untitled)';
+const dotDate = e => { const [y,m,d] = e.date.split(' ')[0].split('-'); return MONTHS[+m-1].slice(0,3)+' '+(+d); };
+const monthKey = e => { const [y,m] = e.date.split(' ')[0].split('-'); return MONTHS[+m-1]+' '+y; };
+const tagsHTML = (e,n=2) => `<span class="tags">${e.tags.slice(0,n).map(t=>`<span class="tag">${t}</span>`).join('')}</span>`;
+const groupByMonth = arr => { const g={},o=[]; arr.forEach(e=>{const k=monthKey(e); if(!g[k]){g[k]=[];o.push(k);} g[k].push(e);}); return o.map(k=>[k,g[k]]); };
+
+const FILTERS = {
+  all:   () => true,
+  top:   e => e.q >= 0.6,
+  note:  e => e.kind==='note',
+  html:  e => e.kind==='html',
+  links: e => ['link','app','podcast'].includes(e.kind),
+  image: e => e.kind==='image',
+};
+let filter = 'all';
+const filtered = () => E.filter(FILTERS[filter]);
+const arrange = data => {
+  if (filter === 'top') return [['Top rated', [...data].sort((a,b)=>b.q-a.q)]];
+  const recent = [...data].sort((a,b)=> a.date < b.date ? 1 : -1);
+  return groupByMonth(recent);
+};
+const tier = q => q>=0.78 ? 3 : q>=0.5 ? 2 : 1;
+const gradeHTML = e => `<span class="grade" title="relative grade">${[0,1,2].map(i=>`<i${i<tier(e.q)?' class="on"':''}></i>`).join('')}</span>`;
+let pub = null;
+
+function sidebar() {
+  const cnt = k => E.filter(e => e.kind===k).length;
+  const tags = [...new Set(E.flatMap(e=>e.tags))];
+  const tagColors = { design:'var(--c-html)', dev:'var(--c-link)', weather:'#5ac8fa', writing:'var(--c-note)', apps:'var(--c-app)', photo:'var(--c-image)', glass:'var(--accent)', audio:'var(--c-podcast)', intro:'#ffd60a' };
+  return `<aside class="sidebar">
+    <div class="side-search">${svg('ic-search')}<span>Search</span></div>
+    <div class="side-sec">Library</div>
+    <div class="side-item sel"><span class="ic"><svg><use href="#ic-tray"/></svg></span><span class="lbl">All Entries</span><span class="cnt">${E.length}</span></div>
+    <div class="side-item"><span class="ic"><svg><use href="#ic-clock"/></svg></span><span class="lbl">Recents</span><span class="cnt">7</span></div>
+    <div class="side-item"><span class="ic"><svg><use href="#ic-star"/></svg></span><span class="lbl">Favorites</span><span class="cnt">3</span></div>
+    <div class="side-sec">Kinds</div>
+    <div class="side-item"><span class="ic" style="color:var(--c-note)"><svg><use href="#ic-doc"/></svg></span><span class="lbl">Notes</span><span class="cnt">${cnt('note')}</span></div>
+    <div class="side-item"><span class="ic" style="color:var(--c-html)"><svg><use href="#ic-page"/></svg></span><span class="lbl">Pages</span><span class="cnt">${cnt('html')}</span></div>
+    <div class="side-item"><span class="ic" style="color:var(--c-link)"><svg><use href="#ic-link"/></svg></span><span class="lbl">Links</span><span class="cnt">${cnt('link')+cnt('app')+cnt('podcast')}</span></div>
+    <div class="side-item"><span class="ic" style="color:var(--c-image)"><svg><use href="#ic-photo"/></svg></span><span class="lbl">Media</span><span class="cnt">${cnt('image')}</span></div>
+    <div class="side-sec">Tags</div>
+    ${tags.map(t=>`<div class="side-item"><span class="dot" style="background:${tagColors[t]||'var(--text3)'}"></span><span class="lbl">${t}</span></div>`).join('')}
+  </aside>`;
+}
+
+function toolbar(view) {
+  return `<div class="toolbar">
+    <h1>All Entries</h1><span class="sub">${E.length} items</span>
+    <span class="spacer" style="flex:1"></span>
+    <span class="tool-search">${svg('ic-search')}<span>Search</span></span>
+    <span class="icon-btn"><svg><use href="#ic-sort"/></svg></span>
+  </div>`;
+}
+
+/* ---- Variant C: sidebar + Finder-style columns ---- */
+function vColumns() {
+  const rows = E.map((e,i)=>`
+    <tr data-sel="${i}"${i===0?' class="sel"':''}>
+      <td><span class="name"><span class="kic" style="background:${KIND[e.kind].c}">${svg(KIND[e.kind].ic)}</span>
+        <span class="${e.label?'':'untitled'}">${titleOf(e)}.${e.ext}</span></span></td>
+      <td>${gradeHTML(e)}</td>
+      <td class="kind">${KIND[e.kind].name}</td>
+      <td><time>${e.date}</time></td>
+      <td>${tagsHTML(e,3)}</td>
+    </tr>`).join('');
+  return `<div class="window" data-layout="side"><div class="lights"><i></i><i></i><i></i></div>
+    ${sidebar()}
+    <div class="content">${toolbar('list')}<div class="scroll" style="padding:8px 12px">
+      <table class="table">
+        <thead><tr><th>Name <span class="ic" style="font-size:11px;color:var(--accent)"><svg style="transform:rotate(90deg)"><use href="#ic-chev"/></svg></span></th><th>Grade</th><th>Kind</th><th>Date Added</th><th>Tags</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div></div></div>`;
+}
+
+/* ---- Variant D: top toolbar + segmented filter ---- */
+function vTopFilter() {
+  const filters = [['all','All'],['top','Top'],['note','Notes'],['html','Pages'],['links','Links'],['image','Media']];
+  const data = filtered();
+  const feed = data.length ? `<div class="feed">` + arrange(data).map(([m, items]) =>
+    `<div class="feed-sec">${m}</div>` + items.map(e=>`
+      <div class="feed-item">
+        <span class="kic big" style="background:${KIND[e.kind].c}">${svg(KIND[e.kind].ic)}</span>
+        <div class="body">
+          <div class="title${e.label?'':' untitled'}">${titleOf(e)}</div>
+          <div class="sub">${e.sub}</div>
+          <div class="metaline">${gradeHTML(e)}${tagsHTML(e,2)}<time style="margin-left:auto">${dotDate(e)}</time></div>
+        </div>
+      </div>`).join('')).join('') + `</div>`
+    : `<p style="text-align:center;color:var(--text3);font-size:13px;padding:48px">No entries of this kind.</p>`;
+  return `<div class="window" data-layout="top"><div class="lights"><i></i><i></i><i></i></div>
+    <div class="toolbar">
+      <h1 style="margin-right:6px">esko.bar</h1>
+      <div class="seg" style="margin:0 auto">${filters.map(([id,f])=>`<button data-filter="${id}" aria-pressed="${id===filter}">${f}</button>`).join('')}</div>
+      <span class="tool-search">${svg('ic-search')}<span>Search</span></span>
+    </div>
+    <div class="content" style="background:var(--mat-content)"><div class="scroll" style="scrollbar-gutter:stable both-edges">${feed}</div></div>
+  </div>`;
+}
+
+/* ---- Variant F: pairwise publish flow (relative grading) ---- */
+function pubInit() { pub = { items: [...E].sort((a,b)=>b.q-a.q), lo:0, hi:E.length, steps:0, done:false, placeIdx:0 }; }
+function pubStep(better) {
+  if (!pub || pub.done) return;
+  const mid = (pub.lo + pub.hi) >> 1;
+  if (better) pub.hi = mid; else pub.lo = mid + 1;
+  pub.steps++;
+  if (pub.lo >= pub.hi) { pub.done = true; pub.placeIdx = pub.lo; }
+}
+function miniCard(e, fresh) {
+  return `<div class="mini${fresh?' fresh':''}">
+    <span class="kic" style="background:${KIND[e.kind].c}">${svg(KIND[e.kind].ic)}</span>
+    <div><div class="t">${titleOf(e)}</div><div class="k">${KIND[e.kind].name}${e.tags[0]?' · '+e.tags[0]:''}</div></div>
+  </div>`;
+}
+function vPublish() {
+  if (!pub) pubInit();
+  const items = pub.items;
+  const fresh = { kind:'image', ext:'gif', label:'deploy-green', tags:['meme'] };
+  const total = Math.max(1, Math.ceil(Math.log2(items.length + 1)));
+  let inner;
+  if (!pub.done) {
+    const mid = (pub.lo + pub.hi) >> 1, pivot = items[mid];
+    inner = `
+      <h3>Place your post</h3>
+      <p class="lede">No scores — just compare. About ${total} quick taps.</p>
+      ${miniCard(fresh, true)}
+      <div class="sheet-q">Better or worse than this?</div>
+      ${miniCard(pivot)}
+      <div class="cmp-btns">
+        <button class="cbtn up" data-cmp="better">▲&nbsp; Better</button>
+        <button class="cbtn down" data-cmp="worse">▼&nbsp; Worse</button>
+      </div>
+      <div class="cmp-prog"><div class="bar"><span style="width:${(pub.steps/total*100).toFixed(0)}%"></span></div>
+        <small>Comparison ${pub.steps+1} of ~${total}</small></div>
+      <span class="skip" data-cmp="reset">Skip grading</span>`;
+  } else {
+    const i = pub.placeIdx, above = items[i-1], below = items[i];
+    const pct = Math.max(1, Math.round((1 - i/items.length) * 100));
+    const between = i === 0 ? 'New best — ranks above everything you’ve posted.'
+      : !below ? 'Ranks at the very bottom.'
+      : `Sits between <b style="color:var(--text)">${titleOf(above)}</b> and <b style="color:var(--text)">${titleOf(below)}</b>.`;
+    inner = `
+      <h3>Placed</h3>
+      <p class="lede">Settled in ${pub.steps} comparison${pub.steps===1?'':'s'}.</p>
+      ${miniCard(fresh, true)}
+      <div class="placed"><b>Top ${pct}%</b><div class="between">${between}</div></div>
+      <div class="sheet-actions">
+        <button class="ghost" data-cmp="reset">Place again</button>
+        <button class="cta">Publish</button>
+      </div>`;
+  }
+  return `<div class="window" data-layout="top"><div class="lights"><i></i><i></i><i></i></div>
+    <div class="toolbar"><h1>esko.bar</h1><span class="sub">new entry</span></div>
+    <div class="content"><div class="sheet-wrap"><div class="sheet">${inner}</div></div></div>
+  </div>`;
+}
+
+const VARIANTS = [
+  { id:'topfilter', label:'Toolbar Filter', render:vTopFilter,
+    title:'Top toolbar with segmented filter',
+    desc:'Unified toolbar with brand title, a centered segmented control (All / Top / Notes / Pages / Links / Media) and search. Content feed below, centered to a readable column. The segments filter live; “Top” surfaces the highest-graded entries.' },
+  { id:'columns', label:'Sidebar Columns', render:vColumns,
+    title:'Sidebar + Finder list view',
+    desc:'Translucent sidebar (Library / Kinds / Tags) + dense sortable table — Name, Grade, Kind, Date Added, Tags — like Finder list view. Highest information density. Click a row to select it (accent fill, Finder-style).' },
+  { id:'publish', label:'Publish · Grading', render:vPublish,
+    title:'Publish flow — relative grading by comparison',
+    desc:'How you’d grade at publish time: no scores, just “better or worse than this?” a few times (binary search, ≈ log₂ N taps). The result is a relative position (e.g. top 18%), used only to sort and surface — the grade meter on each entry reflects it. Click Better / Worse to try placing a post.' },
+];
+
+let cur = 'topfilter';
+function paint() {
+  const v = VARIANTS.find(x=>x.id===cur);
+  document.getElementById('mount').innerHTML = v.render();
+  document.getElementById('cap').innerHTML = `<h2>${v.title}</h2><p>${v.desc}</p>`;
+  document.querySelectorAll('#seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.id===cur));
+}
+const seg = document.getElementById('seg');
+seg.innerHTML = VARIANTS.map(v=>`<button data-id="${v.id}">${v.label}</button>`).join('');
+seg.addEventListener('click', e => { const b=e.target.closest('button'); if(b){ cur=b.dataset.id; filter='all'; pub=null; paint(); } });
+
+// in-window interactions: pairwise flow + live filters + Finder row selection
+document.getElementById('mount').addEventListener('click', e => {
+  const cmp = e.target.closest('[data-cmp]');
+  if (cmp) { const a=cmp.dataset.cmp; if(a==='reset') pub=null; else pubStep(a==='better'); paint(); return; }
+  const f = e.target.closest('[data-filter]');
+  if (f) { filter = f.dataset.filter; paint(); return; }
+  const tr = e.target.closest('tr[data-sel]');
+  if (tr) {
+    tr.parentElement.querySelectorAll('tr.sel').forEach(r => r.classList.remove('sel'));
+    tr.classList.add('sel');
+  }
+});
+
+document.getElementById('theme').addEventListener('click', () => {
+  const r = document.documentElement;
+  const order = ['auto','light','dark'];
+  const next = order[(order.indexOf(r.dataset.theme||'auto')+1)%3];
+  r.dataset.theme = next === 'auto' ? '' : next;
+  r.setAttribute('data-theme', next==='auto' ? 'auto' : next);
+});
+
+paint();
+</script>
+</body>
+</html>
