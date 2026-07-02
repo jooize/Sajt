@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>esko.bar — site design: floating cards</title>
+<style>
+:root {
+  --accent: #a123f6;
+  --accent-soft: rgba(161,35,246,.14);
+
+  --glass-edge: rgba(255,255,255,.6);
+  --card-glass: rgba(252,252,254,.72);
+  --card-shadow: 0 6px 20px rgba(20,24,40,.12), 0 1px 2px rgba(20,24,40,.07), inset 0 1px 0 rgba(255,255,255,.7);
+  --card-shadow-hover: 0 14px 32px rgba(20,24,40,.2), inset 0 1px 0 rgba(255,255,255,.82);
+
+  --mat-header: rgba(250,250,252,.72);
+  --mat-inset: #ffffff;
+  --inset-border: rgba(0,0,0,.07);
+  --hover: rgba(0,0,0,.045);
+  --sep: rgba(0,0,0,.08);
+
+  --text: #1d1d1f;
+  --text2: rgba(60,60,67,.62);
+  --text3: rgba(60,60,67,.35);
+
+  --c-note: #34c759;
+  --c-link: #0a84ff;
+  --c-image: #ff9f0a;
+  --c-html: #1fb6c9;
+  --c-app: #5e5ce6;
+  --c-podcast: #ff2d55;
+
+  --tag-bg: rgba(120,120,128,.14);
+
+  --wall: radial-gradient(900px 620px at 18% 8%, rgba(161,35,246,.22), transparent 60%),
+          radial-gradient(840px 600px at 88% 22%, rgba(38,168,237,.20), transparent 60%),
+          radial-gradient(900px 760px at 60% 100%, rgba(52,199,89,.22), transparent 62%),
+          linear-gradient(160deg, #eef1f5, #e6e9ee);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { color-scheme: dark;
+    --accent-soft: rgba(161,35,246,.26);
+    --glass-edge: rgba(255,255,255,.16);
+    --card-glass: rgba(44,44,48,.62);
+    --card-shadow: 0 6px 20px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.16);
+    --card-shadow-hover: 0 14px 32px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.22);
+    --mat-header: rgba(24,24,28,.68);
+    --mat-inset: #2a2a2d;
+    --inset-border: rgba(255,255,255,.07);
+    --hover: rgba(255,255,255,.06);
+    --sep: rgba(255,255,255,.1);
+    --text: #f5f5f7;
+    --text2: rgba(235,235,245,.62);
+    --text3: rgba(235,235,245,.32);
+    --tag-bg: rgba(120,120,128,.28);
+    --wall: radial-gradient(900px 620px at 18% 8%, rgba(161,35,246,.30), transparent 60%),
+            radial-gradient(840px 600px at 88% 22%, rgba(38,168,237,.22), transparent 60%),
+            radial-gradient(900px 760px at 60% 100%, rgba(52,199,89,.20), transparent 62%),
+            linear-gradient(160deg, #14151a, #0c0d11);
+  }
+}
+:root[data-theme="dark"] { color-scheme: dark;
+  --accent-soft: rgba(161,35,246,.26);
+  --glass-edge: rgba(255,255,255,.16);
+  --card-glass: rgba(44,44,48,.62);
+  --card-shadow: 0 6px 20px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.16);
+  --card-shadow-hover: 0 14px 32px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.22);
+  --mat-header: rgba(24,24,28,.68);
+  --mat-inset: #2a2a2d;
+  --inset-border: rgba(255,255,255,.07);
+  --hover: rgba(255,255,255,.06);
+  --sep: rgba(255,255,255,.1);
+  --text: #f5f5f7;
+  --text2: rgba(235,235,245,.62);
+  --text3: rgba(235,235,245,.32);
+  --tag-bg: rgba(120,120,128,.28);
+  --wall: radial-gradient(900px 620px at 18% 8%, rgba(161,35,246,.30), transparent 60%),
+          radial-gradient(840px 600px at 88% 22%, rgba(38,168,237,.22), transparent 60%),
+          radial-gradient(900px 760px at 60% 100%, rgba(52,199,89,.20), transparent 62%),
+          linear-gradient(160deg, #14151a, #0c0d11);
+}
+
+* { box-sizing: border-box; }
+html { scrollbar-gutter: stable; }
+html, body { margin: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, system-ui, sans-serif;
+  color: var(--text);
+  background: var(--wall) fixed;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+svg.sym { width: 0; height: 0; position: absolute; }
+.ic { display: inline-flex; }
+.ic svg { width: 1em; height: 1em; display: block; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+
+/* ---------- site header ---------- */
+header.site {
+  position: sticky; top: 0; z-index: 40;
+  background: var(--mat-header);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  border-bottom: .5px solid var(--sep);
+}
+.hrow {
+  max-width: 1040px; margin: 0 auto;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 10px clamp(14px, 4vw, 28px);
+}
+.brand {
+  font-size: 17px; font-weight: 800; letter-spacing: -.03em;
+  color: var(--text); text-decoration: none; margin-right: 4px;
+}
+.brand b { color: var(--accent); font-weight: 800; }
+nav.filters { margin: 0 auto; }
+.seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 11px; background: var(--tag-bg); max-width: 100%; overflow-x: auto; }
+.seg button {
+  font: inherit; font-size: 13px; font-weight: 550;
+  border: 0; cursor: pointer; color: var(--text2);
+  padding: 6px 13px; border-radius: 8px; background: transparent;
+  transition: background .15s ease, color .15s ease; white-space: nowrap;
+}
+.seg button[aria-pressed="true"] { background: var(--mat-inset); color: var(--accent); box-shadow: 0 1px 2px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.4); }
+.hctl { display: flex; align-items: center; gap: 8px; }
+.pulldown {
+  display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12.5px; font-weight: 550;
+  color: var(--text); cursor: pointer; border: .5px solid var(--sep); background: var(--mat-inset);
+  padding: 5px 9px 5px 11px; border-radius: 8px; box-shadow: 0 1px 1.5px rgba(0,0,0,.06); white-space: nowrap;
+}
+.pulldown:hover { background: var(--hover); }
+.pulldown .chev { display: inline-flex; flex-direction: column; line-height: .55; color: var(--text3); font-size: 9px; }
+.searchbox {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--tag-bg); border-radius: 8px; padding: 5px 10px;
+  color: var(--text3); font-size: 13px;
+}
+.searchbox input {
+  font: inherit; font-size: 13px; border: 0; background: transparent; color: var(--text);
+  width: 110px; padding: 0; outline: none;
+}
+.searchbox input::placeholder { color: var(--text3); }
+.searchbox:focus-within { box-shadow: 0 0 0 2px var(--accent-soft); }
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 28px; border-radius: 8px; border: 0; background: transparent;
+  color: var(--text2); font-size: 16px; cursor: pointer; font-family: inherit;
+}
+.icon-btn:hover { background: var(--hover); }
+
+/* ---------- entries ---------- */
+main { max-width: 640px; margin: 0 auto; padding: 22px clamp(14px, 4vw, 20px) 56px; }
+.month {
+  font-size: 12.5px; font-weight: 700; color: var(--text2); letter-spacing: -.01em;
+  padding: 16px 6px 8px; margin: 0;
+}
+.month:first-child { padding-top: 4px; }
+a.gcard {
+  display: flex; align-items: flex-start; gap: 14px; padding: 15px 17px; border-radius: 16px;
+  margin-bottom: 12px;
+  color: inherit; text-decoration: none;
+  background: var(--card-glass); border: .5px solid var(--glass-edge);
+  -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: var(--card-shadow);
+  transition: transform .16s ease, box-shadow .16s ease;
+}
+a.gcard:hover { transform: translateY(-2px); box-shadow: var(--card-shadow-hover); }
+a.gcard:focus-visible { outline-offset: 0; border-radius: 16px; }
+@media (prefers-reduced-motion: reduce) {
+  a.gcard, .seg button { transition: none; }
+  a.gcard:hover { transform: none; }
+}
+.kic {
+  width: 38px; height: 38px; border-radius: 11px; font-size: 20px; flex: none;
+  display: flex; align-items: center; justify-content: center; color: #fff;
+}
+.gcard .body { flex: 1; min-width: 0; }
+.gcard .title { font-size: 15.5px; font-weight: 650; letter-spacing: -.015em; }
+.gcard .title.untitled { color: var(--text3); font-style: italic; font-weight: 500; }
+.gcard .sub { font-size: 13px; color: var(--text2); margin-top: 2px; line-height: 1.45; }
+.gcard time { font-size: 12px; color: var(--text3); font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; margin-top: 1px; }
+
+.metaline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 9px; }
+.tags { display: inline-flex; gap: 4px; }
+.tag { font-size: 11px; font-weight: 600; color: var(--text2); background: var(--tag-bg);
+  padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.gated { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: 999px; color: var(--text2); background: var(--tag-bg); white-space: nowrap; }
+.gated .ic { font-size: 12px; }
+.grade { display: inline-flex; align-items: flex-end; gap: 2px; height: 10px; }
+.grade i { width: 3px; height: 4px; border-radius: 1px; background: var(--text3); opacity: .4; }
+.grade i:nth-child(2) { height: 7px; }
+.grade i:nth-child(3) { height: 10px; }
+.grade i.on { background: var(--accent); opacity: 1; }
+
+.empty { text-align: center; color: var(--text3); font-size: 13px; padding: 48px 0; }
+
+footer.site {
+  max-width: 640px; margin: 0 auto; padding: 0 clamp(14px, 4vw, 20px) 40px;
+  font-size: 12.5px; color: var(--text3); display: flex; gap: 14px;
+}
+footer.site a { color: var(--text2); text-decoration: none; }
+footer.site a:hover { text-decoration: underline; }
+
+/* ---------- publish dialog (pairwise grading) ---------- */
+dialog.sheet {
+  width: min(420px, calc(100vw - 32px));
+  background: var(--mat-inset); border: .5px solid var(--inset-border);
+  border-radius: 20px; padding: 22px 22px 20px;
+  box-shadow: 0 24px 64px rgba(20,24,40,.35); text-align: center;
+  color: var(--text);
+}
+dialog.sheet::backdrop { background: rgba(10,10,16,.35); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+dialog.sheet h3 { margin: 0 0 2px; font-size: 17px; font-weight: 700; letter-spacing: -.02em; }
+dialog.sheet .lede { font-size: 12.5px; color: var(--text2); margin: 0 0 16px; }
+.mini { display: flex; align-items: center; gap: 11px; text-align: left; padding: 11px 13px; border-radius: 13px;
+  background: var(--hover); border: .5px solid var(--inset-border); }
+.mini.fresh { box-shadow: 0 0 0 2px var(--accent-soft); }
+.mini .kic { width: 34px; height: 34px; border-radius: 9px; font-size: 18px; }
+.mini .t { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+.mini .k { font-size: 12px; color: var(--text3); margin-top: 1px; }
+.sheet-q { font-size: 13px; font-weight: 600; color: var(--text2); margin: 16px 0 9px; }
+.cmp-btns { display: flex; gap: 10px; margin-top: 12px; }
+.cbtn { flex: 1; padding: 12px; border-radius: 13px; border: 0; font: inherit; font-weight: 650; font-size: 14px; cursor: pointer; }
+.cbtn.up { color: var(--c-note); background: color-mix(in srgb, var(--c-note) 16%, transparent); }
+.cbtn.down { color: var(--c-podcast); background: color-mix(in srgb, var(--c-podcast) 14%, transparent); }
+.cbtn:hover { filter: brightness(1.06); }
+.cmp-prog { margin-top: 16px; }
+.cmp-prog .bar { height: 4px; border-radius: 2px; background: var(--tag-bg); overflow: hidden; margin-bottom: 7px; }
+.cmp-prog .bar span { display: block; height: 100%; background: var(--accent); transition: width .3s ease; }
+.cmp-prog small { font-size: 11.5px; color: var(--text3); }
+.placed { font-size: 15px; margin: 16px 0 4px; }
+.placed b { color: var(--accent); }
+.placed .between { font-size: 13px; color: var(--text2); margin-top: 5px; line-height: 1.4; }
+.sheet-actions { display: flex; gap: 10px; margin-top: 18px; }
+.cta { flex: 1; padding: 11px; border-radius: 12px; border: 0; font: inherit; font-weight: 650; font-size: 14px; cursor: pointer; background: var(--accent); color: #fff; }
+.ghost { padding: 11px 14px; border-radius: 12px; border: .5px solid var(--sep); background: transparent; color: var(--text); font: inherit; font-weight: 550; font-size: 13.5px; cursor: pointer; }
+.skip { display: inline-block; margin-top: 14px; font-size: 12.5px; color: var(--text3); cursor: pointer; background: none; border: 0; font-family: inherit; }
+.skip:hover { color: var(--text2); }
+
+/* narrow screens: header wraps to two rows, controls tuck in */
+@media (max-width: 700px) {
+  nav.filters { order: 3; width: 100%; margin: 0; }
+  .seg { width: 100%; justify-content: flex-start; }
+  .searchbox input { width: 70px; }
+}
+</style>
+</head>
+<body>
+
+<svg class="sym" aria-hidden="true"><defs>
+  <symbol id="ic-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><path d="M10 13h5M10 16h5M10 10h2.5"/></symbol>
+  <symbol id="ic-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a3 3 0 0 0 4 .3l3-3a3 3 0 0 0-4.3-4.3l-1.4 1.4"/><path d="M14 11a3 3 0 0 0-4-.3l-3 3a3 3 0 0 0 4.3 4.3l1.4-1.4"/></symbol>
+  <symbol id="ic-photo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M4 16.5l4-3.5 3.5 3 3-2.5L20 17"/></symbol>
+  <symbol id="ic-page" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2.5"/><path d="M4 9h16"/><circle cx="7" cy="7" r=".5"/><circle cx="9.4" cy="7" r=".5"/><path d="M10 13l-1.5 1.5L10 16M14 13l1.5 1.5L14 16"/></symbol>
+  <symbol id="ic-app" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4.5" y="4.5" width="6" height="6" rx="1.8"/><rect x="13.5" y="4.5" width="6" height="6" rx="1.8"/><rect x="4.5" y="13.5" width="6" height="6" rx="1.8"/><rect x="13.5" y="13.5" width="6" height="6" rx="1.8"/></symbol>
+  <symbol id="ic-wave" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 11v2M8 8v8M12 5v14M16 8v8M20 11v2"/></symbol>
+  <symbol id="ic-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></symbol>
+  <symbol id="ic-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2.2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="ic-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+</defs></svg>
+
+<header class="site">
+  <div class="hrow">
+    <a class="brand" href="#">esko<b>.bar</b></a>
+    <nav class="filters" aria-label="Filter entries"><div class="seg" id="seg"></div></nav>
+    <div class="hctl">
+      <button class="pulldown" id="sort" title="Sort by">Recent <span class="chev">&#9652;&#9662;</span></button>
+      <label class="searchbox"><span class="ic"><svg><use href="#ic-search"/></svg></span><input id="q" type="search" placeholder="Search" aria-label="Search entries"></label>
+      <button class="icon-btn" id="new" title="New entry (grading demo)"><svg style="width:1em;height:1em"><use href="#ic-plus"/></svg></button>
+      <button class="icon-btn" id="theme" title="Theme">&#9680;</button>
+    </div>
+  </div>
+</header>
+
+<main id="mount" aria-live="polite"></main>
+
+<footer class="site">
+  <span>&copy; 2026 Tilde Esko</span><a href="#">RSS</a><a href="#">Colophon</a>
+</footer>
+
+<dialog class="sheet" id="sheet"></dialog>
+
+<script>
+const E = [
+  { kind:'note',  ext:'md',   label:'hello-world',       date:'2026-03-03 14:30', tags:['intro'],            q:.82, sub:'This is the first post on esko.bar.' },
+  { kind:'image', ext:'jpg',  label:'sunset',            date:'2026-03-03 15:00', tags:['photo'],            q:.55, sub:'1.8 MB · 4032×3024' },
+  { kind:'note',  ext:'txt',  label:null,                date:'2026-03-04 09:15', tags:[],                   q:.20, sub:'Just a plain text note. Timestamps are all you need sometimes.' },
+  { kind:'note',  ext:'md',   label:'code-highlighting', date:'2026-03-05 12:00', tags:['dev'],              q:.70, sub:'Fenced code blocks in Rust, Python, Bash, JS.' },
+  { kind:'image', ext:'gif',  label:'cat-loaf',          date:'2026-03-09 22:10', tags:['meme'],             q:.62, sub:'When the deploy finally goes green.' },
+  { kind:'html',  ext:'html', label:'glass-tuner',       date:'2026-03-11 18:42', tags:['design','glass'],   q:.90, sub:'Interactive SVG specular light tuner.' },
+  { kind:'html',  ext:'html', label:'rain-canvas',       date:'2026-03-14 21:08', tags:['design','weather'], q:.76, sub:'Lightweight Canvas 2D rain renderer.' },
+  { kind:'app',   ext:'link', label:'things-3',          date:'2026-03-19 12:00', tags:['apps'],             q:.35, sub:'apps.apple.com · App Store' },
+  { kind:'podcast',ext:'link',label:'the-daily',         date:'2026-03-19 12:02', tags:['audio'],            q:.40, sub:'podcasts.apple.com · Podcast' },
+  { kind:'html',  ext:'html', label:'snow-test',         date:'2026-04-02 23:30', tags:['design','weather'], q:.68, sub:'Snowfall variant prototypes.' },
+  { kind:'image', ext:'png',  label:'screenshot-bug',    date:'2026-04-18 13:25', tags:['dev','meme'],       q:.38, sub:'It works on my machine.' },
+  { kind:'note',  ext:'md',   label:'on-file-systems',   date:'2026-04-24 10:05', tags:['writing'],          q:.88, sub:'Why folders lost to tags.' },
+  { kind:'note',  ext:'md',   label:'journal-2026-05',   date:'2026-05-02 09:00', tags:['personal','public'],q:.30, sub:'A personal post — tagged personal, still public.' },
+  { kind:'note',  ext:'md',   label:'draft-letter',      date:'2026-05-12 20:15', tags:['private','personal'],q:.25, sub:'Gated — only people I give the link to.' },
+  { kind:'image', ext:'png',  label:'wireframe',         date:'2026-05-26 16:20', tags:['design'],           q:.45, sub:'420 KB · 1600×1000' },
+  { kind:'image', ext:'jpg',  label:'family-trip',       date:'2026-05-30 19:40', tags:['photo','family'],   q:.60, sub:'12 photos from the coast.' },
+];
+
+const KIND = {
+  note:   { ic:'ic-doc',   c:'var(--c-note)',    name:'Note'    },
+  link:   { ic:'ic-link',  c:'var(--c-link)',    name:'Link'    },
+  image:  { ic:'ic-photo', c:'var(--c-image)',   name:'Image'   },
+  html:   { ic:'ic-page',  c:'var(--c-html)',    name:'Page'    },
+  app:    { ic:'ic-app',   c:'var(--c-app)',     name:'App'     },
+  podcast:{ ic:'ic-wave',  c:'var(--c-podcast)', name:'Podcast' },
+};
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+const svg = id => `<span class="ic"><svg><use href="#${id}"/></svg></span>`;
+const titleOf = e => e.label ? e.label : '(untitled)';
+const dotDate = e => { const [y,m,d] = e.date.split(' ')[0].split('-'); return MONTHS[+m-1].slice(0,3)+' '+(+d); };
+const monthKey = e => { const [y,m] = e.date.split(' ')[0].split('-'); return MONTHS[+m-1]+' '+y; };
+const VIS = new Set(['private','public']);
+const visTags = e => e.tags.filter(t => !VIS.has(t));
+const gated = e => e.tags.includes('private');
+const tagsHTML = (e,n=2) => `<span class="tags">${visTags(e).slice(0,n).map(t=>`<span class="tag">${t}</span>`).join('')}</span>`;
+const gatedHTML = e => gated(e) ? `<span class="gated">${svg('ic-lock')}gated</span>` : '';
+const groupByMonth = arr => { const g={},o=[]; arr.forEach(e=>{const k=monthKey(e); if(!g[k]){g[k]=[];o.push(k);} g[k].push(e);}); return o.map(k=>[k,g[k]]); };
+const tier = q => q>=0.78 ? 3 : q>=0.5 ? 2 : 1;
+const gradeHTML = e => `<span class="grade" title="relative grade">${[0,1,2].map(i=>`<i${i<tier(e.q)?' class="on"':''}></i>`).join('')}</span>`;
+
+const FILTERS = {
+  all:   () => true,
+  top:   e => e.q >= 0.6,
+  note:  e => e.kind==='note',
+  html:  e => e.kind==='html',
+  links: e => ['link','app','podcast'].includes(e.kind),
+  image: e => e.kind==='image',
+};
+let filter = 'all', sortBy = 'recent', query = '';
+
+function matches(e) {
+  if (!FILTERS[filter](e)) return false;
+  if (!query) return true;
+  const hay = [titleOf(e), e.sub, ...e.tags, KIND[e.kind].name].join(' ').toLowerCase();
+  return hay.includes(query);
+}
+function arrange(data) {
+  if (sortBy === 'grade' || filter === 'top')
+    return [['Top rated', [...data].sort((a,b)=>b.q-a.q)]];
+  return groupByMonth([...data].sort((a,b)=> a.date < b.date ? 1 : -1));
+}
+
+const card = e => `
+  <a class="gcard" href="#/${e.label ?? 'untitled'}">
+    <span class="kic" style="background:${KIND[e.kind].c}">${svg(KIND[e.kind].ic)}</span>
+    <span class="body">
+      <span class="title${e.label?'':' untitled'}">${titleOf(e)}</span>
+      <span class="sub" style="display:block">${e.sub}</span>
+      <span class="metaline">${gradeHTML(e)}${tagsHTML(e,2)}${gatedHTML(e)}</span>
+    </span>
+    <time datetime="${e.date.split(' ')[0]}">${dotDate(e)}</time>
+  </a>`;
+
+function paint() {
+  const data = E.filter(matches);
+  document.getElementById('mount').innerHTML = data.length
+    ? arrange(data).map(([m, items]) => `<h2 class="month">${m}</h2>${items.map(card).join('')}`).join('')
+    : `<p class="empty">Nothing matches.</p>`;
+  document.querySelectorAll('#seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.filter===filter));
+  document.getElementById('sort').innerHTML = `${sortBy==='grade'?'Grade':'Recent'} <span class="chev">&#9652;&#9662;</span>`;
+}
+
+const seg = document.getElementById('seg');
+seg.innerHTML = [['all','All'],['top','Top'],['note','Notes'],['html','Pages'],['links','Links'],['image','Media']]
+  .map(([id,f])=>`<button data-filter="${id}" aria-pressed="${id===filter}">${f}</button>`).join('');
+seg.addEventListener('click', e => { const b=e.target.closest('[data-filter]'); if(b){ filter=b.dataset.filter; paint(); } });
+document.getElementById('sort').addEventListener('click', () => { sortBy = sortBy==='recent' ? 'grade' : 'recent'; paint(); });
+document.getElementById('q').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); paint(); });
+
+document.getElementById('theme').addEventListener('click', () => {
+  const r = document.documentElement;
+  const order = ['auto','light','dark'];
+  const next = order[(order.indexOf(r.dataset.theme||'auto')+1)%3];
+  r.setAttribute('data-theme', next);
+});
+
+/* ---- publish flow: pairwise relative grading, in a dialog ---- */
+let pub = null;
+const sheet = document.getElementById('sheet');
+function pubInit() { pub = { items: [...E].sort((a,b)=>b.q-a.q), lo:0, hi:E.length, steps:0, done:false, placeIdx:0 }; }
+function pubStep(better) {
+  const mid = (pub.lo + pub.hi) >> 1;
+  if (better) pub.hi = mid; else pub.lo = mid + 1;
+  pub.steps++;
+  if (pub.lo >= pub.hi) { pub.done = true; pub.placeIdx = pub.lo; }
+}
+const miniCard = (e, fresh) => `<div class="mini${fresh?' fresh':''}">
+  <span class="kic" style="background:${KIND[e.kind].c}">${svg(KIND[e.kind].ic)}</span>
+  <div><div class="t">${titleOf(e)}</div><div class="k">${KIND[e.kind].name}${e.tags[0]?' · '+e.tags[0]:''}</div></div>
+</div>`;
+function paintSheet() {
+  const fresh = { kind:'image', ext:'gif', label:'deploy-green', tags:['meme'] };
+  const total = Math.max(1, Math.ceil(Math.log2(pub.items.length + 1)));
+  if (!pub.done) {
+    const mid = (pub.lo + pub.hi) >> 1, pivot = pub.items[mid];
+    sheet.innerHTML = `
+      <h3>Place your post</h3>
+      <p class="lede">No scores — just compare. About ${total} quick taps.</p>
+      ${miniCard(fresh, true)}
+      <div class="sheet-q">Better or worse than this?</div>
+      ${miniCard(pivot)}
+      <div class="cmp-btns">
+        <button class="cbtn up" data-cmp="better">&#9650;&nbsp; Better</button>
+        <button class="cbtn down" data-cmp="worse">&#9660;&nbsp; Worse</button>
+      </div>
+      <div class="cmp-prog"><div class="bar"><span style="width:${(pub.steps/total*100).toFixed(0)}%"></span></div>
+        <small>Comparison ${pub.steps+1} of ~${total}</small></div>
+      <button class="skip" data-cmp="close">Skip grading</button>`;
+  } else {
+    const i = pub.placeIdx, above = pub.items[i-1], below = pub.items[i];
+    const pct = Math.max(1, Math.round((1 - i/pub.items.length) * 100));
+    const between = i === 0 ? 'New best — ranks above everything you’ve posted.'
+      : !below ? 'Ranks at the very bottom.'
+      : `Sits between <b style="color:var(--text)">${titleOf(above)}</b> and <b style="color:var(--text)">${titleOf(below)}</b>.`;
+    sheet.innerHTML = `
+      <h3>Placed</h3>
+      <p class="lede">Settled in ${pub.steps} comparison${pub.steps===1?'':'s'}.</p>
+      ${miniCard(fresh, true)}
+      <div class="placed"><b>Top ${pct}%</b><div class="between">${between}</div></div>
+      <div class="sheet-actions">
+        <button class="ghost" data-cmp="reset">Place again</button>
+        <button class="cta" data-cmp="close">Publish</button>
+      </div>`;
+  }
+}
+document.getElementById('new').addEventListener('click', () => { pubInit(); paintSheet(); sheet.showModal(); });
+sheet.addEventListener('click', e => {
+  const b = e.target.closest('[data-cmp]');
+  if (!b) return;
+  const a = b.dataset.cmp;
+  if (a === 'close') { sheet.close(); return; }
+  if (a === 'reset') pubInit(); else pubStep(a === 'better');
+  paintSheet();
+});
+
+paint();
+</script>
+</body>
+</html>
