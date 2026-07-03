@@ -93,13 +93,13 @@ impl ContentStore {
         Ok(())
     }
 
-    /// Resolve embeds for entries containing social media URLs.
+    /// Resolve embeds for entries containing recognized URLs.
     pub async fn resolve_embeds(&mut self) {
         let cache = crate::embed::resolve_embeds(&mut self.entries, &self.content_dir).await;
         self.embed_cache = cache;
         let count = self.embed_cache.len();
         if count > 0 {
-            tracing::info!("Resolved {} social media embeds", count);
+            tracing::info!("Resolved {} link embeds", count);
         }
     }
 }

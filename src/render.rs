@@ -17,7 +17,7 @@ pub enum RenderedContent {
     Standalone(String),
     /// Plain text wrapped in <pre>
     PreformattedText(String),
-    /// Social media embed card
+    /// Link embed card
     Embed(String),
     /// Image to be shown in a viewer
     Image {

@@ -47,7 +47,7 @@ async fn main() {
 
     let mut store = content::ContentStore::scan(&content_dir).expect("Failed to scan content directory");
 
-    // Resolve social media embeds (fetches uncached, reads cached)
+    // Resolve link embeds (fetches uncached, reads cached)
     store.resolve_embeds().await;
 
     let state = Arc::new(RwLock::new(store));
@@ -126,6 +126,10 @@ async fn main() {
     let app = axum::Router::new()
         .route("/", axum::routing::get(routes::index))
         .route("/_rescan", axum::routing::post(routes::rescan))
+        .route(
+            "/_embed/{entry_name}/{asset_name}",
+            axum::routing::get(routes::serve_embed_asset),
+        )
         .route("/static/{*path}", axum::routing::get(routes::serve_static))
         .route("/{*path}", axum::routing::get(routes::catch_all))
         .layer(tower_http::trace::TraceLayer::new_for_http())

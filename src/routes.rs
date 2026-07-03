@@ -116,6 +116,74 @@ pub async fn catch_all(
     Html(templates::timeline_page(&matching, &desc, &all_entries)).into_response()
 }
 
+/// GET /_embed/{entry_name}/{asset_name} — serve a cached sidecar asset (OG images, etc.).
+///
+/// `entry_name` must match the filename of a content entry that the store actually knows
+/// about (so this can't be used to traverse arbitrary `.embed-cache` directories on disk);
+/// `asset_name` must be a simple filename (no path separators). Anything else 404s.
+pub async fn serve_embed_asset(
+    State(store): State<AppState>,
+    Path((entry_name, asset_name)): Path<(String, String)>,
+) -> Response {
+    // Reject anything that even looks path-y. Sanitized to the same shape used when
+    // writing the file (`download_media`'s safe_name filter), with no dots-only.
+    if !is_safe_asset_segment(&entry_name) || !is_safe_asset_segment(&asset_name) {
+        return not_found();
+    }
+
+    let store = store.read().await;
+    // Find an entry whose filename matches the requested name. Lookup, not derivation:
+    // we don't want to serve files for entries that have been removed from the store.
+    let entry = store
+        .entries
+        .iter()
+        .find(|e| e.path.file_name().and_then(|n| n.to_str()) == Some(entry_name.as_str()));
+    let entry = match entry {
+        Some(e) => e,
+        None => return not_found(),
+    };
+
+    let cache_dir = crate::embed::cache_dir_for(&entry.path);
+    let asset_path = cache_dir.join(&asset_name);
+
+    // Defense in depth: ensure the resolved path still sits inside cache_dir.
+    if !asset_path.starts_with(&cache_dir) {
+        return not_found();
+    }
+
+    let bytes = match std::fs::read(&asset_path) {
+        Ok(b) => b,
+        Err(_) => return not_found(),
+    };
+
+    let ext = asset_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let mime = mime_guess::from_ext(ext)
+        .first_or_octet_stream()
+        .to_string();
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            header::CONTENT_TYPE,
+            HeaderValue::from_str(&mime).unwrap_or(HeaderValue::from_static("application/octet-stream")),
+        )
+        .header(header::CACHE_CONTROL, "public, max-age=86400")
+        .body(Body::from(bytes))
+        .unwrap_or_else(|_| not_found())
+}
+
+/// Allow only simple filename characters: alphanumeric plus `. - _`.
+/// No path separators, no leading dot, no `..`.
+fn is_safe_asset_segment(s: &str) -> bool {
+    if s.is_empty() || s.starts_with('.') || s.contains("..") {
+        return false;
+    }
+    s.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+}
+
 /// POST /_rescan — re-scan content directory
 pub async fn rescan(State(store): State<AppState>) -> impl IntoResponse {
     let mut store = store.write().await;
@@ -156,7 +224,7 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, label_unique: bool) ->
 
     match render_entry(&entry.extension, &content).await {
         Ok(RenderedContent::Html(html)) => {
-            // Expand inline social media URLs in rendered HTML
+            // Expand inline URLs in rendered HTML to embed cards
             let html = crate::embed::expand_inline_embeds(&html, &store.embed_cache);
             Html(templates::entry_page(entry, &html, label_unique)).into_response()
         }

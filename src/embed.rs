@@ -1,10 +1,16 @@
-//! Social media embed support.
+//! Link embed support.
 //!
-//! Fetches and caches social media post data for display as cards.
+//! Fetches and caches link data for display as rich preview cards.
 //! - oEmbed platforms (Twitter, Bluesky, Mastodon): full cached cards served locally
-//! - Non-oEmbed platforms (Instagram, Threads): archived for personal use, styled link cards served publicly
+//! - Non-oEmbed social (Instagram, Threads): archived for personal use, styled link cards served publicly
+//! - Apple platforms (App Store, Music, Podcasts, Books, TV): iTunes Lookup API preview cards
+//! - Generic HTTPS URLs: OpenGraph/Twitter meta-tag preview cards as a final fallback
 //!
-//! Periodic liveness checks verify originals are still public; deleted posts stop being served.
+//! Periodic liveness checks verify originals are still public; deleted/removed content stops being served.
+//!
+//! Trust model: the site operator authors every `.link` file, so URLs are trusted.
+//! Outbound fetches still go through a single shared client that pins timeouts and
+//! a generic User-Agent so we never leak request-shape detail about the operator.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -21,12 +27,37 @@ pub enum Platform {
     Mastodon,
     Instagram,
     Threads,
+    #[serde(rename = "apple_appstore")]
+    AppleAppStore,
+    #[serde(rename = "apple_music")]
+    AppleMusic,
+    #[serde(rename = "apple_podcasts")]
+    ApplePodcasts,
+    #[serde(rename = "apple_books")]
+    AppleBooks,
+    #[serde(rename = "apple_tv")]
+    AppleTV,
+    /// Any HTTPS URL not matching a more specific platform. Rendered from OpenGraph/Twitter meta tags.
+    #[serde(rename = "generic")]
+    Generic,
 }
 
 impl Platform {
     /// Whether this platform has a public oEmbed API (= implicit license to embed).
     pub fn has_oembed(&self) -> bool {
         matches!(self, Platform::Twitter | Platform::Bluesky | Platform::Mastodon)
+    }
+
+    /// Whether this is an Apple platform (App Store, Music, Podcasts, Books, TV).
+    pub fn is_apple(&self) -> bool {
+        matches!(
+            self,
+            Platform::AppleAppStore
+                | Platform::AppleMusic
+                | Platform::ApplePodcasts
+                | Platform::AppleBooks
+                | Platform::AppleTV
+        )
     }
 
     /// CSS accent color for this platform.
@@ -37,10 +68,18 @@ impl Platform {
             Platform::Mastodon => "#6364ff",
             Platform::Instagram => "#e1306c",
             Platform::Threads => "var(--color-fg)",
+            Platform::AppleAppStore => "#0d84ff", // overridden by render for Mac apps
+            Platform::AppleMusic => "#fa2d48",
+            Platform::ApplePodcasts => "#9933cc",
+            Platform::AppleBooks => "#f5813f",
+            Platform::AppleTV => "#000000",
+            Platform::Generic => "var(--color-link)",
         }
     }
 
-    /// Human-readable platform name.
+    /// Human-readable platform name. For Generic links, the actual display is sourced
+    /// from the embed's site_name/hostname; this static fallback only matters for
+    /// the "deleted" card and similar generic UI.
     pub fn display_name(&self) -> &'static str {
         match self {
             Platform::Twitter => "Twitter",
@@ -48,23 +87,31 @@ impl Platform {
             Platform::Mastodon => "Mastodon",
             Platform::Instagram => "Instagram",
             Platform::Threads => "Threads",
+            Platform::AppleAppStore => "App Store", // overridden by render for Mac apps
+            Platform::AppleMusic => "Apple Music",
+            Platform::ApplePodcasts => "Apple Podcasts",
+            Platform::AppleBooks => "Apple Books",
+            Platform::AppleTV => "Apple TV",
+            Platform::Generic => "Link",
         }
     }
 }
 
-/// Parsed social media URL.
+/// Parsed link URL with platform identification.
 #[derive(Debug, Clone)]
-pub struct SocialUrl {
+pub struct ParsedUrl {
     pub platform: Platform,
     pub url: String,
     pub user: String,
-    pub post_id: String,
+    pub item_id: String,
     /// Mastodon instance hostname (only set for Mastodon URLs).
     pub instance: Option<String>,
+    /// Country code extracted from Apple URLs (e.g. "us", "gb").
+    pub country: Option<String>,
 }
 
-/// Try to parse a URL as a known social media post link.
-pub fn parse_social_url(url: &str) -> Option<SocialUrl> {
+/// Try to parse a URL as a recognized link (social media, Apple, etc.).
+pub fn parse_link_url(url: &str) -> Option<ParsedUrl> {
     let url = url.trim();
 
     // Twitter / X
@@ -78,14 +125,15 @@ pub fn parse_social_url(url: &str) -> Option<SocialUrl> {
     {
         let parts: Vec<&str> = rest.splitn(4, '/').collect();
         if parts.len() >= 3 && parts[1] == "status" && !parts[0].is_empty() && !parts[2].is_empty() {
-            // Strip query string / fragment from post_id
-            let post_id = parts[2].split(['?', '#']).next().unwrap_or(parts[2]);
-            return Some(SocialUrl {
+            // Strip query string / fragment from item_id
+            let item_id = parts[2].split(['?', '#']).next().unwrap_or(parts[2]);
+            return Some(ParsedUrl {
                 platform: Platform::Twitter,
                 url: url.to_string(),
                 user: parts[0].to_string(),
-                post_id: post_id.to_string(),
+                item_id: item_id.to_string(),
                 instance: None,
+                country: None,
             });
         }
     }
@@ -95,13 +143,14 @@ pub fn parse_social_url(url: &str) -> Option<SocialUrl> {
     if let Some(rest) = url.strip_prefix("https://bsky.app/profile/") {
         let parts: Vec<&str> = rest.splitn(4, '/').collect();
         if parts.len() >= 3 && parts[1] == "post" && !parts[0].is_empty() && !parts[2].is_empty() {
-            let post_id = parts[2].split(['?', '#']).next().unwrap_or(parts[2]);
-            return Some(SocialUrl {
+            let item_id = parts[2].split(['?', '#']).next().unwrap_or(parts[2]);
+            return Some(ParsedUrl {
                 platform: Platform::Bluesky,
                 url: url.to_string(),
                 user: parts[0].to_string(),
-                post_id: post_id.to_string(),
+                item_id: item_id.to_string(),
                 instance: None,
+                country: None,
             });
         }
     }
@@ -120,12 +169,13 @@ pub fn parse_social_url(url: &str) -> Option<SocialUrl> {
                 .next()
                 .unwrap_or(parts[1])
                 .trim_end_matches('/');
-            return Some(SocialUrl {
+            return Some(ParsedUrl {
                 platform: Platform::Instagram,
                 url: url.to_string(),
                 user: String::new(), // unknown until we fetch
-                post_id: shortcode.to_string(),
+                item_id: shortcode.to_string(),
                 instance: None,
+                country: None,
             });
         }
     }
@@ -143,18 +193,63 @@ pub fn parse_social_url(url: &str) -> Option<SocialUrl> {
                 .next()
                 .unwrap_or(parts[2])
                 .trim_end_matches('/');
-            return Some(SocialUrl {
+            return Some(ParsedUrl {
                 platform: Platform::Threads,
                 url: url.to_string(),
                 user: parts[0].to_string(),
-                post_id: shortcode.to_string(),
+                item_id: shortcode.to_string(),
                 instance: None,
+                country: None,
             });
         }
     }
 
+    // ── Apple platforms ──
+
+    // App Store: https://apps.apple.com/{country}/app/{name}/id{numeric_id}
+    if let Some(rest) = url.strip_prefix("https://apps.apple.com/") {
+        if let Some(parsed) = parse_apple_url(rest, Platform::AppleAppStore, url) {
+            return Some(parsed);
+        }
+    }
+
+    // Apple Music: https://music.apple.com/{country}/album|artist|playlist|song/...
+    if let Some(rest) = url.strip_prefix("https://music.apple.com/") {
+        if let Some(parsed) = parse_apple_url(rest, Platform::AppleMusic, url) {
+            return Some(parsed);
+        }
+    }
+
+    // Apple Podcasts: https://podcasts.apple.com/{country}/podcast/{name}/id{numeric_id}
+    if let Some(rest) = url.strip_prefix("https://podcasts.apple.com/") {
+        if let Some(parsed) = parse_apple_url(rest, Platform::ApplePodcasts, url) {
+            return Some(parsed);
+        }
+    }
+
+    // Apple Books: https://books.apple.com/{country}/book/{name}/id{numeric_id}
+    if let Some(rest) = url.strip_prefix("https://books.apple.com/") {
+        if let Some(parsed) = parse_apple_url(rest, Platform::AppleBooks, url) {
+            return Some(parsed);
+        }
+    }
+
+    // Apple TV: https://tv.apple.com/{country}/show|movie|episode/{name}/umc.cmc.{id}
+    if let Some(rest) = url.strip_prefix("https://tv.apple.com/") {
+        if let Some(parsed) = parse_apple_url(rest, Platform::AppleTV, url) {
+            return Some(parsed);
+        }
+    }
+
+    // iTunes (movies): https://itunes.apple.com/{country}/movie/{name}/id{numeric_id}
+    if let Some(rest) = url.strip_prefix("https://itunes.apple.com/") {
+        if let Some(parsed) = parse_apple_url(rest, Platform::AppleTV, url) {
+            return Some(parsed);
+        }
+    }
+
     // Mastodon / Fediverse
-    // https://{instance}/@{user}/{post_id}
+    // https://{instance}/@{user}/{item_id}
     // Must be validated via oEmbed discovery later
     if url.starts_with("https://") {
         let without_scheme = &url["https://".len()..];
@@ -164,23 +259,163 @@ pub fn parse_social_url(url: &str) -> Option<SocialUrl> {
             && parts[1].len() > 1
             && !parts[2].is_empty()
         {
-            let post_id = parts[2].split(['?', '#']).next().unwrap_or(parts[2]);
-            // Basic check: post_id should be numeric for Mastodon
-            if post_id.chars().all(|c| c.is_ascii_digit()) {
+            let item_id = parts[2].split(['?', '#']).next().unwrap_or(parts[2]);
+            // Basic check: item_id should be numeric for Mastodon
+            if item_id.chars().all(|c| c.is_ascii_digit()) {
                 let instance = parts[0].to_string();
                 let user = parts[1][1..].to_string(); // strip @
-                return Some(SocialUrl {
+                return Some(ParsedUrl {
                     platform: Platform::Mastodon,
                     url: url.to_string(),
                     user,
-                    post_id: post_id.to_string(),
+                    item_id: item_id.to_string(),
                     instance: Some(instance),
+                    country: None,
                 });
             }
         }
     }
 
+    // Generic HTTPS fallback. Any well-formed https:// URL with a hostname containing
+    // a dot becomes a Generic embed (OG/Twitter meta tags). HTTP is intentionally
+    // rejected — we don't want to render or download from plaintext sources.
+    if let Some(host) = extract_hostname(url) {
+        return Some(ParsedUrl {
+            platform: Platform::Generic,
+            url: url.to_string(),
+            user: String::new(),
+            item_id: host,
+            instance: None,
+            country: None,
+        });
+    }
+
     None
+}
+
+/// Extract a display hostname from an https:// URL.
+///
+/// Returns `None` if the URL is not https, has no hostname, has a hostname without
+/// a dot (which excludes bare hostnames and IP-style locals like `localhost`), or
+/// looks like a private/loopback IP literal. Hostname is lowercased and the leading
+/// `www.` is stripped for display.
+fn extract_hostname(url: &str) -> Option<String> {
+    let after_scheme = url.strip_prefix("https://")?;
+    // Authority ends at first '/', '?', '#'
+    let authority = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(after_scheme);
+    if authority.is_empty() {
+        return None;
+    }
+    // Strip optional userinfo and port (host[:port]); reject userinfo since
+    // none of our trusted URLs need it and it makes display unambiguous.
+    if authority.contains('@') {
+        return None;
+    }
+    let host_no_port = authority.split(':').next().unwrap_or(authority);
+    let host = host_no_port.trim().to_lowercase();
+    if host.is_empty()
+        || host.contains(' ')
+        || !host.contains('.')
+        || host.starts_with('.')
+        || host.ends_with('.')
+    {
+        return None;
+    }
+    // Reject obvious loopback / private literals so a typo can't make the server
+    // fetch from itself. Full SSRF protection would require IP resolution.
+    if is_local_host_literal(&host) {
+        return None;
+    }
+    Some(host.strip_prefix("www.").unwrap_or(&host).to_string())
+}
+
+/// Cheap textual check for hostnames that resolve to loopback or private networks.
+/// Not a substitute for IP-based SSRF guarding; just keeps the obvious foot-guns away.
+fn is_local_host_literal(host: &str) -> bool {
+    if host == "localhost" || host.ends_with(".localhost") || host == "localhost.localdomain" {
+        return true;
+    }
+    if let Ok(addr) = host.parse::<std::net::IpAddr>() {
+        return match addr {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_loopback()
+                    || v4.is_private()
+                    || v4.is_link_local()
+                    || v4.is_unspecified()
+                    || v4.is_broadcast()
+                    || v4.octets()[0] == 0
+            }
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback() || v6.is_unspecified() || v6.segments()[0] & 0xfe00 == 0xfc00
+            }
+        };
+    }
+    false
+}
+
+/// Parse an Apple URL path after the domain prefix.
+///
+/// Handles these patterns:
+/// - `{country}/app/{name}/id{numeric_id}`
+/// - `{country}/album/{name}/{numeric_id}`
+/// - `{country}/artist/{name}/{numeric_id}`
+/// - `{country}/playlist/{name}/pl.{id}`
+/// - `{country}/song/{name}/{numeric_id}` (or just `{country}/song/{numeric_id}`)
+/// - `{country}/podcast/{name}/id{numeric_id}`
+/// - `{country}/book/{name}/id{numeric_id}`
+/// - `{country}/show/{name}/umc.cmc.{id}`
+/// - `{country}/movie/{name}/umc.cmc.{id}` or `id{numeric_id}`
+/// - `{country}/episode/{name}/umc.cmc.{id}`
+fn parse_apple_url(path: &str, platform: Platform, original_url: &str) -> Option<ParsedUrl> {
+    let parts: Vec<&str> = path.split('/').collect();
+    // Minimum: {country}/{type}/{name_or_id}/{id} = 4 parts
+    // Some have only 3: {country}/song/{id}
+    if parts.len() < 3 {
+        return None;
+    }
+
+    let country = parts[0];
+    // Country code should be 2 letters
+    if country.len() != 2 || !country.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+
+    // The ID is in the last path segment (strip query/fragment first)
+    let last = parts.last()?;
+    let last_clean = last.split(['?', '#']).next().unwrap_or(last).trim_end_matches('/');
+
+    // Extract the item ID from the last segment
+    let item_id = if let Some(id) = last_clean.strip_prefix("id") {
+        // id{numeric} pattern (App Store, Podcasts, Books, iTunes movies)
+        if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
+            id.to_string()
+        } else {
+            return None;
+        }
+    } else if last_clean.starts_with("umc.cmc.") {
+        // Apple TV+ UMC pattern
+        last_clean.to_string()
+    } else if last_clean.starts_with("pl.") {
+        // Apple Music playlist pattern
+        last_clean.to_string()
+    } else if last_clean.chars().all(|c| c.is_ascii_digit()) && !last_clean.is_empty() {
+        // Bare numeric ID (Apple Music albums, artists, songs)
+        last_clean.to_string()
+    } else {
+        return None;
+    };
+
+    Some(ParsedUrl {
+        platform,
+        url: original_url.to_string(),
+        user: String::new(),
+        item_id,
+        instance: None,
+        country: Some(country.to_lowercase()),
+    })
 }
 
 // ─── Embed data structures ──────────────────────────────────────
@@ -198,6 +433,18 @@ pub enum EmbedData {
     Instagram(InstagramEmbed),
     #[serde(rename = "threads")]
     Threads(ThreadsEmbed),
+    #[serde(rename = "apple_appstore")]
+    AppleAppStore(AppleEmbed),
+    #[serde(rename = "apple_music")]
+    AppleMusic(AppleEmbed),
+    #[serde(rename = "apple_podcasts")]
+    ApplePodcasts(AppleEmbed),
+    #[serde(rename = "apple_books")]
+    AppleBooks(AppleEmbed),
+    #[serde(rename = "apple_tv")]
+    AppleTV(AppleEmbed),
+    #[serde(rename = "generic")]
+    Generic(GenericEmbed),
 }
 
 impl EmbedData {
@@ -208,6 +455,12 @@ impl EmbedData {
             EmbedData::Mastodon(_) => Platform::Mastodon,
             EmbedData::Instagram(_) => Platform::Instagram,
             EmbedData::Threads(_) => Platform::Threads,
+            EmbedData::AppleAppStore(_) => Platform::AppleAppStore,
+            EmbedData::AppleMusic(_) => Platform::AppleMusic,
+            EmbedData::ApplePodcasts(_) => Platform::ApplePodcasts,
+            EmbedData::AppleBooks(_) => Platform::AppleBooks,
+            EmbedData::AppleTV(_) => Platform::AppleTV,
+            EmbedData::Generic(_) => Platform::Generic,
         }
     }
 
@@ -218,10 +471,16 @@ impl EmbedData {
             EmbedData::Mastodon(e) => &e.url,
             EmbedData::Instagram(e) => &e.url,
             EmbedData::Threads(e) => &e.url,
+            EmbedData::AppleAppStore(e)
+            | EmbedData::AppleMusic(e)
+            | EmbedData::ApplePodcasts(e)
+            | EmbedData::AppleBooks(e)
+            | EmbedData::AppleTV(e) => &e.url,
+            EmbedData::Generic(e) => &e.url,
         }
     }
 
-    /// Generate a display label like "@handle · date" for timeline display.
+    /// Generate a display label for timeline display.
     pub fn display_label(&self) -> String {
         match self {
             EmbedData::Twitter(e) => {
@@ -262,6 +521,30 @@ impl EmbedData {
                     format!("@{} on Threads", e.username)
                 }
             }
+            EmbedData::AppleAppStore(e)
+            | EmbedData::AppleMusic(e)
+            | EmbedData::ApplePodcasts(e)
+            | EmbedData::AppleBooks(e)
+            | EmbedData::AppleTV(e) => {
+                if e.artist_name.is_empty() {
+                    let platform_name = match (self.platform(), e.content_type.as_deref()) {
+                        (Platform::AppleAppStore, Some("mac-software")) => "Mac App Store",
+                        _ => self.platform().display_name(),
+                    };
+                    format!("{} \u{00b7} {}", e.name, platform_name)
+                } else {
+                    format!("{} \u{00b7} {}", e.name, e.artist_name)
+                }
+            }
+            EmbedData::Generic(e) => {
+                let source = e.site_name.as_deref()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&e.hostname);
+                match e.title.as_deref().filter(|t| !t.is_empty()) {
+                    Some(t) => format!("{} \u{00b7} {}", t, source),
+                    None => source.to_string(),
+                }
+            }
         }
     }
 
@@ -270,7 +553,7 @@ impl EmbedData {
         self.platform().has_oembed()
     }
 
-    /// Whether the original post has been confirmed deleted/unavailable.
+    /// Whether the original content has been confirmed deleted/unavailable.
     pub fn is_upstream_deleted(&self) -> bool {
         match self {
             EmbedData::Twitter(e) => e.upstream_deleted,
@@ -278,6 +561,12 @@ impl EmbedData {
             EmbedData::Mastodon(e) => e.upstream_deleted,
             EmbedData::Instagram(e) => e.upstream_deleted,
             EmbedData::Threads(e) => e.upstream_deleted,
+            EmbedData::AppleAppStore(e)
+            | EmbedData::AppleMusic(e)
+            | EmbedData::ApplePodcasts(e)
+            | EmbedData::AppleBooks(e)
+            | EmbedData::AppleTV(e) => e.upstream_deleted,
+            EmbedData::Generic(e) => e.upstream_deleted,
         }
     }
 }
@@ -353,6 +642,50 @@ pub struct ThreadsEmbed {
     pub last_checked: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenericEmbed {
+    pub url: String,
+    /// Hostname extracted from the URL (e.g. "j-fidel-505.neocities.org"). Always present.
+    pub hostname: String,
+    /// `og:site_name`, when the page provides it (preferred over `hostname` for display).
+    pub site_name: Option<String>,
+    /// `og:title` or `<title>`.
+    pub title: Option<String>,
+    /// `og:description` or `<meta name="description">`, with HTML stripped and length capped.
+    pub description: Option<String>,
+    /// Source `og:image` URL (kept for re-fetch on cache invalidation).
+    pub image_url: Option<String>,
+    /// Local cached filename in the sidecar directory.
+    pub image_file: Option<String>,
+    #[serde(default)]
+    pub upstream_deleted: bool,
+    #[serde(default)]
+    pub last_checked: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppleEmbed {
+    pub url: String,
+    pub item_id: String,
+    pub name: String,
+    pub artist_name: String,
+    pub artwork_url: Option<String>,
+    pub artwork_file: Option<String>,
+    pub description: Option<String>,
+    pub price: Option<f64>,
+    pub formatted_price: Option<String>,
+    pub currency: Option<String>,
+    pub rating: Option<f64>,
+    pub rating_count: Option<u64>,
+    pub genre: Option<String>,
+    pub release_date: Option<String>,
+    pub content_type: Option<String>,
+    #[serde(default)]
+    pub upstream_deleted: bool,
+    #[serde(default)]
+    pub last_checked: Option<String>,
+}
+
 // ─── Sidecar cache I/O ──────────────────────────────────────────
 
 /// Get the sidecar cache directory path for an entry file.
@@ -410,7 +743,7 @@ struct OEmbedResponse {
 }
 
 /// Build the oEmbed endpoint URL for a given social URL.
-fn oembed_endpoint(social: &SocialUrl) -> Option<String> {
+fn oembed_endpoint(social: &ParsedUrl) -> Option<String> {
     let encoded = urlencod(&social.url);
     match social.platform {
         Platform::Twitter => Some(format!(
@@ -429,6 +762,13 @@ fn oembed_endpoint(social: &SocialUrl) -> Option<String> {
             ))
         }
         Platform::Instagram | Platform::Threads => None,
+        Platform::AppleAppStore
+        | Platform::AppleMusic
+        | Platform::ApplePodcasts
+        | Platform::AppleBooks
+        | Platform::AppleTV
+        // Generic links are resolved via OG tags (fetch_generic_og), never oEmbed.
+        | Platform::Generic => None,
     }
 }
 
@@ -464,7 +804,7 @@ fn http_client() -> reqwest::Client {
 }
 
 /// Fetch embed data for a social URL via oEmbed.
-async fn fetch_oembed(client: &reqwest::Client, social: &SocialUrl) -> Result<EmbedData, String> {
+async fn fetch_oembed(client: &reqwest::Client, social: &ParsedUrl) -> Result<EmbedData, String> {
     let endpoint = oembed_endpoint(social).ok_or("No oEmbed endpoint for this platform")?;
 
     tracing::info!("Fetching oEmbed: {}", endpoint);
@@ -529,7 +869,7 @@ async fn fetch_oembed(client: &reqwest::Client, social: &SocialUrl) -> Result<Em
 }
 
 /// Fetch OG tags for Instagram/Threads (archived for personal use, not served publicly).
-async fn fetch_og_tags(client: &reqwest::Client, social: &SocialUrl) -> Result<EmbedData, String> {
+async fn fetch_og_tags(client: &reqwest::Client, social: &ParsedUrl) -> Result<EmbedData, String> {
     tracing::info!("Fetching OG tags: {}", social.url);
 
     let resp = client
@@ -558,7 +898,7 @@ async fn fetch_og_tags(client: &reqwest::Client, social: &SocialUrl) -> Result<E
             Ok(EmbedData::Instagram(InstagramEmbed {
                 url: social.url.clone(),
                 username,
-                shortcode: social.post_id.clone(),
+                shortcode: social.item_id.clone(),
                 title,
                 description,
                 image_file: None, // Media downloaded separately
@@ -569,7 +909,7 @@ async fn fetch_og_tags(client: &reqwest::Client, social: &SocialUrl) -> Result<E
         Platform::Threads => Ok(EmbedData::Threads(ThreadsEmbed {
             url: social.url.clone(),
             username: social.user.clone(),
-            shortcode: social.post_id.clone(),
+            shortcode: social.item_id.clone(),
             title,
             description,
             image_file: None,
@@ -578,6 +918,136 @@ async fn fetch_og_tags(client: &reqwest::Client, social: &SocialUrl) -> Result<E
         })),
         _ => Err("Platform does not use OG tags".to_string()),
     }
+}
+
+/// Fetch generic page metadata (OG / Twitter card / `<title>`) for any HTTPS URL.
+async fn fetch_generic_og(
+    client: &reqwest::Client,
+    parsed: &ParsedUrl,
+    entry_path: &Path,
+) -> Result<EmbedData, String> {
+    tracing::info!("Fetching generic OG tags: {}", parsed.url);
+
+    let resp = client
+        .get(&parsed.url)
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (compatible; esko-bar/0.1; +https://esko.bar)",
+        )
+        // Most sites only emit OG tags to clients that accept HTML.
+        .header("Accept", "text/html,application/xhtml+xml")
+        .send()
+        .await
+        .map_err(|e| format!("Generic OG fetch failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Generic OG fetch returned status {}", resp.status()));
+    }
+
+    // Hard cap response body to avoid pulling in giant pages. 4 MiB is plenty for
+    // a `<head>`-heavy page and still cheap to discard if it's a media file.
+    let body = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
+    const MAX_BYTES: usize = 4 * 1024 * 1024;
+    let html_bytes = if body.len() > MAX_BYTES {
+        &body[..MAX_BYTES]
+    } else {
+        &body[..]
+    };
+    let html = String::from_utf8_lossy(html_bytes);
+
+    let (title, description, image_url, site_name) = parse_meta_tags(&html);
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Sanitize description: strip HTML tags, collapse whitespace, cap length.
+    let description = description.map(|d| {
+        let plain = strip_html_tags(&d);
+        let collapsed: String = plain.split_whitespace().collect::<Vec<_>>().join(" ");
+        truncate_for_display(&collapsed, 240)
+    }).filter(|s| !s.is_empty());
+
+    let title = title.map(|t| {
+        let plain = strip_html_tags(&t);
+        let collapsed: String = plain.split_whitespace().collect::<Vec<_>>().join(" ");
+        truncate_for_display(&collapsed, 160)
+    }).filter(|s| !s.is_empty());
+
+    // Resolve image_url against the page URL so /path/to.png works as well as absolute.
+    let resolved_image = image_url
+        .as_deref()
+        .and_then(|raw| resolve_url_relative_to(&parsed.url, raw));
+
+    let mut embed = GenericEmbed {
+        url: parsed.url.clone(),
+        hostname: parsed.item_id.clone(), // we stashed hostname here in parse_link_url
+        site_name,
+        title,
+        description,
+        image_url: resolved_image.clone(),
+        image_file: None,
+        upstream_deleted: false,
+        last_checked: Some(now),
+    };
+
+    if let Some(ref img_url) = resolved_image {
+        let cache_dir = cache_dir_for(entry_path);
+        match download_media(client, img_url, &cache_dir).await {
+            Ok(filename) => embed.image_file = Some(filename),
+            Err(e) => tracing::warn!("Failed to download generic OG image {}: {}", img_url, e),
+        }
+    }
+
+    Ok(EmbedData::Generic(embed))
+}
+
+/// Resolve a possibly-relative URL against a base. Returns None if the result
+/// isn't a usable https URL we'd want to fetch.
+fn resolve_url_relative_to(base: &str, candidate: &str) -> Option<String> {
+    let candidate = candidate.trim();
+    if candidate.is_empty() {
+        return None;
+    }
+    if candidate.starts_with("https://") {
+        return Some(candidate.to_string());
+    }
+    // We intentionally drop http:// candidates — only serve assets fetched over TLS.
+    if candidate.starts_with("http://") {
+        return None;
+    }
+    let base_no_scheme = base.strip_prefix("https://")?;
+    let (authority, _path) = match base_no_scheme.find('/') {
+        Some(idx) => base_no_scheme.split_at(idx),
+        None => (base_no_scheme, ""),
+    };
+    if candidate.starts_with("//") {
+        return Some(format!("https:{}", candidate));
+    }
+    if let Some(rest) = candidate.strip_prefix('/') {
+        return Some(format!("https://{}/{}", authority, rest));
+    }
+    // Relative path. Resolve against base's directory.
+    let base_dir = match base.rfind('/') {
+        Some(idx) if idx > "https://".len() => &base[..=idx],
+        _ => return Some(format!("https://{}/{}", authority, candidate)),
+    };
+    Some(format!("{}{}", base_dir, candidate))
+}
+
+/// Truncate a string to roughly `max_chars`, snapping back to the last space and
+/// appending an ellipsis. Operates on chars, not bytes, so it's safe for non-ASCII.
+fn truncate_for_display(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max_chars).collect();
+    if let Some(last_space) = out.rfind(char::is_whitespace) {
+        out.truncate(last_space);
+    }
+    out.push_str("\u{2026}");
+    out
 }
 
 /// Download media file to sidecar cache directory, preserving original filename.
@@ -633,6 +1103,295 @@ async fn download_media(
         .map_err(|e| format!("Failed to write media file: {}", e))?;
 
     Ok(safe_name)
+}
+
+// ─── iTunes Lookup API ──────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ITunesLookupResponse {
+    #[serde(default, rename = "resultCount")]
+    result_count: u32,
+    #[serde(default)]
+    results: Vec<ITunesResult>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct ITunesResult {
+    #[serde(default, rename = "trackName")]
+    track_name: Option<String>,
+    #[serde(default, rename = "collectionName")]
+    collection_name: Option<String>,
+    #[serde(default, rename = "artistName")]
+    artist_name: Option<String>,
+    #[serde(default, rename = "sellerName")]
+    seller_name: Option<String>,
+    #[serde(default, rename = "artworkUrl512")]
+    artwork_url_512: Option<String>,
+    #[serde(default, rename = "artworkUrl100")]
+    artwork_url_100: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default, rename = "trackPrice")]
+    track_price: Option<f64>,
+    #[serde(default, rename = "collectionPrice")]
+    collection_price: Option<f64>,
+    #[serde(default, rename = "formattedPrice")]
+    formatted_price: Option<String>,
+    #[serde(default)]
+    currency: Option<String>,
+    #[serde(default, rename = "averageUserRating")]
+    average_user_rating: Option<f64>,
+    #[serde(default, rename = "userRatingCount")]
+    user_rating_count: Option<u64>,
+    #[serde(default, rename = "primaryGenreName")]
+    primary_genre_name: Option<String>,
+    #[serde(default, rename = "releaseDate")]
+    release_date: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default, rename = "wrapperType")]
+    wrapper_type: Option<String>,
+}
+
+/// Fetch Apple content metadata via the iTunes Lookup API.
+///
+/// For numeric IDs, uses `https://itunes.apple.com/lookup?id={id}&country={country}`.
+/// For non-numeric IDs (UMC, playlists), falls back to OG tag scraping.
+async fn fetch_apple_content(
+    client: &reqwest::Client,
+    parsed: &ParsedUrl,
+    entry_path: &Path,
+) -> Result<EmbedData, String> {
+    let country = parsed.country.as_deref().unwrap_or("us");
+    let is_numeric = parsed.item_id.chars().all(|c| c.is_ascii_digit());
+
+    let apple_embed = if is_numeric {
+        fetch_itunes_lookup(client, &parsed.item_id, country, parsed).await?
+    } else {
+        // UMC IDs (Apple TV+) and playlist IDs: fall back to OG tags
+        fetch_apple_og_tags(client, parsed).await?
+    };
+
+    // Download artwork into the entry's sidecar cache directory. This MUST be derived
+    // from the entry file path, not the URL: a URL-derived path (e.g.
+    // `https://music.apple.com/...`) is relative and would create a stray `./https:/...`
+    // tree under the server cwd, and the file could never be served back via /_embed.
+    let cache_dir = cache_dir_for(entry_path);
+    let mut apple_embed = apple_embed;
+    if let Some(ref artwork_url) = apple_embed.artwork_url {
+        match download_media(client, artwork_url, &cache_dir).await {
+            Ok(filename) => apple_embed.artwork_file = Some(filename),
+            Err(e) => tracing::warn!("Failed to download Apple artwork: {}", e),
+        }
+    }
+
+    match parsed.platform {
+        Platform::AppleAppStore => Ok(EmbedData::AppleAppStore(apple_embed)),
+        Platform::AppleMusic => Ok(EmbedData::AppleMusic(apple_embed)),
+        Platform::ApplePodcasts => Ok(EmbedData::ApplePodcasts(apple_embed)),
+        Platform::AppleBooks => Ok(EmbedData::AppleBooks(apple_embed)),
+        Platform::AppleTV => Ok(EmbedData::AppleTV(apple_embed)),
+        _ => Err("Not an Apple platform".to_string()),
+    }
+}
+
+/// Fetch metadata from the iTunes Lookup API for numeric Apple IDs.
+async fn fetch_itunes_lookup(
+    client: &reqwest::Client,
+    item_id: &str,
+    country: &str,
+    parsed: &ParsedUrl,
+) -> Result<AppleEmbed, String> {
+    let lookup_url = format!(
+        "https://itunes.apple.com/lookup?id={}&country={}",
+        urlencod(item_id),
+        urlencod(country)
+    );
+
+    tracing::info!("Fetching iTunes Lookup: {}", lookup_url);
+
+    let resp = client
+        .get(&lookup_url)
+        .send()
+        .await
+        .map_err(|e| format!("iTunes Lookup request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("iTunes Lookup returned status {}", resp.status()));
+    }
+
+    let lookup: ITunesLookupResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse iTunes Lookup JSON: {}", e))?;
+
+    if lookup.result_count == 0 || lookup.results.is_empty() {
+        return Err("iTunes Lookup returned no results".to_string());
+    }
+
+    let result = &lookup.results[0];
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Prefer the largest artwork; can swap size suffix for higher res
+    let artwork_url = result
+        .artwork_url_512
+        .as_ref()
+        .or(result.artwork_url_100.as_ref())
+        .cloned();
+
+    let name = result
+        .track_name
+        .as_ref()
+        .or(result.collection_name.as_ref())
+        .cloned()
+        .unwrap_or_default();
+
+    let artist_name = result
+        .artist_name
+        .as_ref()
+        .or(result.seller_name.as_ref())
+        .cloned()
+        .unwrap_or_default();
+
+    let price = result.track_price.or(result.collection_price);
+    let formatted_price = result.formatted_price.clone().or_else(|| {
+        price.map(|p| {
+            let currency = result.currency.as_deref().unwrap_or("USD");
+            if p <= 0.0 {
+                "Free".to_string()
+            } else {
+                format!("{}{:.2}", currency_symbol(currency), p)
+            }
+        })
+    });
+
+    // Truncate description for display
+    let description = result.description.as_ref().map(|d| {
+        let plain = strip_html_tags(d);
+        if plain.len() > 200 {
+            let mut truncated = plain[..200].to_string();
+            // Don't cut mid-word
+            if let Some(last_space) = truncated.rfind(' ') {
+                truncated.truncate(last_space);
+            }
+            truncated.push_str("...");
+            truncated
+        } else {
+            plain
+        }
+    });
+
+    // Parse release date to just the date portion
+    let release_date = result.release_date.as_ref().map(|d| {
+        // iTunes returns ISO 8601 like "2024-01-15T08:00:00Z"
+        d.split('T').next().unwrap_or(d).to_string()
+    });
+
+    Ok(AppleEmbed {
+        url: parsed.url.clone(),
+        item_id: parsed.item_id.clone(),
+        name,
+        artist_name,
+        artwork_url,
+        artwork_file: None,
+        description,
+        price,
+        formatted_price,
+        currency: result.currency.clone(),
+        rating: result.average_user_rating,
+        rating_count: result.user_rating_count,
+        genre: result.primary_genre_name.clone(),
+        release_date,
+        content_type: result.kind.clone().or(result.wrapper_type.clone()),
+        upstream_deleted: false,
+        last_checked: Some(now),
+    })
+}
+
+/// Fall back to OG tags for Apple content not in the iTunes Lookup API
+/// (Apple TV+ UMC IDs, playlists).
+async fn fetch_apple_og_tags(
+    client: &reqwest::Client,
+    parsed: &ParsedUrl,
+) -> Result<AppleEmbed, String> {
+    tracing::info!("Fetching Apple OG tags: {}", parsed.url);
+
+    let resp = client
+        .get(&parsed.url)
+        .send()
+        .await
+        .map_err(|e| format!("Apple OG tag fetch failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Apple OG tag fetch returned status {}", resp.status()));
+    }
+
+    let html = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read Apple response body: {}", e))?;
+
+    let (title, description, image_url) = parse_og_tags(&html);
+    let now = chrono::Utc::now().to_rfc3339();
+
+    Ok(AppleEmbed {
+        url: parsed.url.clone(),
+        item_id: parsed.item_id.clone(),
+        name: title.unwrap_or_default(),
+        artist_name: String::new(),
+        artwork_url: image_url,
+        artwork_file: None,
+        description,
+        price: None,
+        formatted_price: None,
+        currency: None,
+        rating: None,
+        rating_count: None,
+        genre: None,
+        release_date: None,
+        content_type: None,
+        upstream_deleted: false,
+        last_checked: Some(now),
+    })
+}
+
+/// Map currency code to symbol for display.
+fn currency_symbol(code: &str) -> &str {
+    match code {
+        "USD" => "$",
+        "EUR" => "\u{20ac}",
+        "GBP" => "\u{00a3}",
+        "JPY" | "CNY" => "\u{00a5}",
+        "SEK" | "NOK" | "DKK" => "kr ",
+        "CAD" | "AUD" | "NZD" | "SGD" | "HKD" => "$",
+        "CHF" => "CHF ",
+        "KRW" => "\u{20a9}",
+        "INR" => "\u{20b9}",
+        "BRL" => "R$",
+        "MXN" => "MX$",
+        "RUB" => "\u{20bd}",
+        "TRY" => "\u{20ba}",
+        "PLN" => "z\u{0142} ",
+        "THB" => "\u{0e3f}",
+        _ => "",
+    }
+}
+
+/// Strip HTML tags from a string (for plaintext descriptions).
+fn strip_html_tags(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for c in html.chars() {
+        if c == '<' {
+            in_tag = true;
+        } else if c == '>' {
+            in_tag = false;
+        } else if !in_tag {
+            result.push(c);
+        }
+    }
+    result
 }
 
 // ─── HTML helpers ───────────────────────────────────────────────
@@ -730,33 +1489,97 @@ fn remove_event_handlers(tag_body: &str) -> String {
 }
 
 /// Parse OG meta tags from HTML.
+///
+/// Returns (title, description, image_url). Twitter card / `<title>` / standard
+/// `<meta name="description">` are used as fallbacks when OG tags are missing.
 fn parse_og_tags(html: &str) -> (Option<String>, Option<String>, Option<String>) {
+    let (title, description, image, _site_name) = parse_meta_tags(html);
+    (title, description, image)
+}
+
+/// Parse OG and Twitter card meta tags plus `<title>` and `<meta name="description">`.
+///
+/// Returns (title, description, image_url, site_name). Each field uses a fallback
+/// chain: prefer `og:` then `twitter:` then plain `<title>`/`<meta name>`.
+fn parse_meta_tags(
+    html: &str,
+) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
     let doc = scraper::Html::parse_document(html);
-    let selector = scraper::Selector::parse("meta[property]").unwrap();
 
-    let mut title = None;
-    let mut description = None;
-    let mut image = None;
+    // og:* and twitter:* are sometimes mistakenly emitted with name= instead of property=,
+    // so accept either attribute.
+    let meta_selector = scraper::Selector::parse("meta").unwrap();
 
-    for el in doc.select(&selector) {
-        let prop = el.value().attr("property").unwrap_or("");
-        let content = el.value().attr("content");
-        match prop {
-            "og:title" => title = content.map(|s| s.to_string()),
-            "og:description" => description = content.map(|s| s.to_string()),
-            "og:image" => image = content.map(|s| s.to_string()),
-            _ => {}
+    let mut og_title = None;
+    let mut og_description = None;
+    let mut og_image = None;
+    let mut og_site_name = None;
+    let mut tw_title = None;
+    let mut tw_description = None;
+    let mut tw_image = None;
+    let mut tw_site = None;
+    let mut name_description = None;
+
+    for el in doc.select(&meta_selector) {
+        let prop = el.value().attr("property").unwrap_or("").to_ascii_lowercase();
+        let name = el.value().attr("name").unwrap_or("").to_ascii_lowercase();
+        let key = if !prop.is_empty() { prop } else { name };
+        let content = match el.value().attr("content") {
+            Some(c) if !c.is_empty() => c.to_string(),
+            _ => continue,
+        };
+        match key.as_str() {
+            "og:title" => {
+                og_title.get_or_insert(content);
+            }
+            "og:description" => {
+                og_description.get_or_insert(content);
+            }
+            "og:image" | "og:image:url" | "og:image:secure_url" => {
+                og_image.get_or_insert(content);
+            }
+            "og:site_name" => {
+                og_site_name.get_or_insert(content);
+            }
+            "twitter:title" => {
+                tw_title.get_or_insert(content);
+            }
+            "twitter:description" => {
+                tw_description.get_or_insert(content);
+            }
+            "twitter:image" | "twitter:image:src" => {
+                tw_image.get_or_insert(content);
+            }
+            "twitter:site" => {
+                tw_site.get_or_insert(content);
+            }
+            "description" => {
+                name_description.get_or_insert(content);
+            }
+            _ => continue,
         }
     }
 
-    (title, description, image)
+    let title_tag = scraper::Selector::parse("title").unwrap();
+    let html_title = doc
+        .select(&title_tag)
+        .next()
+        .map(|n| n.text().collect::<String>().trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let title = og_title.or(tw_title).or(html_title);
+    let description = og_description.or(tw_description).or(name_description);
+    let image = og_image.or(tw_image);
+    let site_name = og_site_name.or_else(|| tw_site.map(|s| s.trim_start_matches('@').to_string()));
+
+    (title, description, image, site_name)
 }
 
 /// Extract handle from oEmbed author info.
 fn extract_handle(
     author_name: &str,
     author_url: Option<&str>,
-    social: &SocialUrl,
+    social: &ParsedUrl,
 ) -> String {
     // For Twitter, author_name often starts with "@"
     if let Some(handle) = author_name.strip_prefix('@') {
@@ -784,11 +1607,11 @@ fn extract_instagram_username(url: &str) -> Option<String> {
 
 // ─── Public API ─────────────────────────────────────────────────
 
-/// Resolve embeds for entries that contain social media URLs.
+/// Resolve embeds for entries that contain recognized URLs.
 ///
-/// For each entry whose content is a bare social URL:
-/// 1. Check sidecar cache — if `meta.json5` exists, load it
-/// 2. Otherwise, fetch via oEmbed or OG tags
+/// For each `.link` entry:
+/// 1. Check sidecar cache -- if `meta.json5` exists, load it
+/// 2. Otherwise, fetch via oEmbed, OG tags, or iTunes Lookup API
 /// 3. Write cache to sidecar directory
 /// 4. Set `display_label` on the entry
 pub async fn resolve_embeds(
@@ -811,11 +1634,11 @@ pub async fn resolve_embeds(
 
         let trimmed = content.trim();
 
-        let social = match parse_social_url(trimmed) {
+        let parsed = match parse_link_url(trimmed) {
             Some(s) => s,
             None => {
                 tracing::debug!(
-                    "File {} has .link extension but content is not a recognized social URL",
+                    "File {} has .link extension but content is not a recognized URL",
                     entry.path.display()
                 );
                 continue;
@@ -835,10 +1658,14 @@ pub async fn resolve_embeds(
         }
 
         // Fetch fresh data
-        let result = if social.platform.has_oembed() {
-            fetch_oembed(&client, &social).await
+        let result = if parsed.platform.has_oembed() {
+            fetch_oembed(&client, &parsed).await
+        } else if parsed.platform.is_apple() {
+            fetch_apple_content(&client, &parsed, &entry.path).await
+        } else if parsed.platform == Platform::Generic {
+            fetch_generic_og(&client, &parsed, &entry.path).await
         } else {
-            fetch_og_tags(&client, &social).await
+            fetch_og_tags(&client, &parsed).await
         };
 
         match result {
@@ -859,7 +1686,7 @@ pub async fn resolve_embeds(
                 tracing::warn!(
                     "Failed to fetch embed for {} ({}): {}",
                     entry.path.display(),
-                    social.url,
+                    parsed.url,
                     e
                 );
             }
@@ -890,6 +1717,12 @@ pub async fn check_liveness(
             EmbedData::Mastodon(e) => e.last_checked.as_deref(),
             EmbedData::Instagram(e) => e.last_checked.as_deref(),
             EmbedData::Threads(e) => e.last_checked.as_deref(),
+            EmbedData::AppleAppStore(e)
+            | EmbedData::AppleMusic(e)
+            | EmbedData::ApplePodcasts(e)
+            | EmbedData::AppleBooks(e)
+            | EmbedData::AppleTV(e) => e.last_checked.as_deref(),
+            EmbedData::Generic(e) => e.last_checked.as_deref(),
         };
 
         if let Some(checked) = last_checked {
@@ -945,10 +1778,22 @@ pub async fn check_liveness(
                 e.last_checked = Some(now_str.clone());
                 e.upstream_deleted = is_deleted;
             }
+            EmbedData::AppleAppStore(e)
+            | EmbedData::AppleMusic(e)
+            | EmbedData::ApplePodcasts(e)
+            | EmbedData::AppleBooks(e)
+            | EmbedData::AppleTV(e) => {
+                e.last_checked = Some(now_str.clone());
+                e.upstream_deleted = is_deleted;
+            }
+            EmbedData::Generic(e) => {
+                e.last_checked = Some(now_str.clone());
+                e.upstream_deleted = is_deleted;
+            }
         }
 
         if is_deleted {
-            tracing::warn!("Upstream post deleted: {}", url);
+            tracing::warn!("Upstream content removed: {}", url);
         }
 
         // Update the cache file on disk
@@ -961,7 +1806,11 @@ pub async fn check_liveness(
 // ─── Card rendering ─────────────────────────────────────────────
 
 /// Render an embed as an HTML card.
-pub fn render_embed_card(data: &EmbedData, _cache_dir: &Path) -> String {
+///
+/// `cache_dir` is the entry's sidecar directory (e.g. `…/foo.link.embed-cache`).
+/// It's used to construct local `/_embed/...` URLs for cached assets so visitors
+/// don't load images from third-party CDNs (preserves privacy).
+pub fn render_embed_card(data: &EmbedData, cache_dir: &Path) -> String {
     if data.is_upstream_deleted() {
         return render_deleted_card(data);
     }
@@ -1004,7 +1853,88 @@ pub fn render_embed_card(data: &EmbedData, _cache_dir: &Path) -> String {
             e.description.as_deref(),
             &e.url,
         ),
+        EmbedData::AppleAppStore(e) => render_apple_card(Platform::AppleAppStore, e, cache_dir),
+        EmbedData::AppleMusic(e) => render_apple_card(Platform::AppleMusic, e, cache_dir),
+        EmbedData::ApplePodcasts(e) => render_apple_card(Platform::ApplePodcasts, e, cache_dir),
+        EmbedData::AppleBooks(e) => render_apple_card(Platform::AppleBooks, e, cache_dir),
+        EmbedData::AppleTV(e) => render_apple_card(Platform::AppleTV, e, cache_dir),
+        EmbedData::Generic(e) => render_generic_card(e, cache_dir),
     }
+}
+
+/// Build a local URL for an asset cached in a sidecar directory.
+///
+/// Returns `None` if we don't have an entry name to use (e.g., when called from
+/// inline-embed expansion where the cache_dir isn't known). Callers should fall
+/// back to omitting the asset in that case.
+fn local_asset_url(cache_dir: &Path, asset_filename: &str) -> Option<String> {
+    let dir_name = cache_dir.file_name().and_then(|n| n.to_str())?;
+    let entry_name = dir_name.strip_suffix(".embed-cache")?;
+    if entry_name.is_empty() || asset_filename.is_empty() {
+        return None;
+    }
+    Some(format!("/_embed/{}/{}", entry_name, asset_filename))
+}
+
+fn render_generic_card(e: &GenericEmbed, cache_dir: &Path) -> String {
+    let accent = Platform::Generic.accent_color();
+
+    let source_label = e
+        .site_name
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&e.hostname);
+
+    let image_html = match e
+        .image_file
+        .as_deref()
+        .and_then(|f| local_asset_url(cache_dir, f))
+    {
+        Some(local) => format!(
+            r#"<img class="generic-image" src="{}" alt="" loading="lazy">"#,
+            html_escape(&local),
+        ),
+        None => String::new(),
+    };
+
+    let title = e.title.as_deref().unwrap_or("").trim();
+    let title_html = if title.is_empty() {
+        // If there's no title, fall back to the URL path so the card isn't blank.
+        format!(
+            r#"<div class="generic-title">{}</div>"#,
+            html_escape(&e.url)
+        )
+    } else {
+        format!(
+            r#"<div class="generic-title">{}</div>"#,
+            html_escape(title)
+        )
+    };
+
+    let desc_html = match e.description.as_deref() {
+        Some(d) if !d.is_empty() => format!(
+            r#"<p class="generic-desc">{}</p>"#,
+            html_escape(d)
+        ),
+        _ => String::new(),
+    };
+
+    format!(
+        r#"<a href="{url}" class="embed-card generic-card" style="--embed-accent: {accent}" rel="noopener noreferrer" target="_blank">
+{image_html}
+<div class="generic-body">
+<div class="generic-source">{source}</div>
+{title_html}
+{desc_html}
+</div>
+</a>"#,
+        url = html_escape(&e.url),
+        accent = accent,
+        image_html = image_html,
+        source = html_escape(source_label),
+        title_html = title_html,
+        desc_html = desc_html,
+    )
 }
 
 fn render_oembed_card(
@@ -1072,22 +2002,153 @@ fn render_link_card(
     )
 }
 
+fn render_apple_card(platform: Platform, e: &AppleEmbed, cache_dir: &Path) -> String {
+    // For App Store, differentiate iOS vs Mac based on content_type from iTunes API
+    let (accent, platform_name) = if platform == Platform::AppleAppStore {
+        match e.content_type.as_deref() {
+            Some("mac-software") => ("#1e88e5", "Mac App Store"),
+            _ => ("#0d84ff", "App Store"),
+        }
+    } else {
+        (platform.accent_color(), platform.display_name())
+    };
+
+    // Prefer the locally cached artwork so visitors never hit Apple's CDN (preserves
+    // visitor privacy). Fall back to the remote URL only when there's no local copy --
+    // inline embeds (empty cache_dir) or a cache written before the file was fetched
+    // into this sidecar. The existence check keeps stale caches from emitting a broken
+    // <img> that 404s against /_embed.
+    let artwork_src = e
+        .artwork_file
+        .as_deref()
+        .filter(|f| cache_dir.join(f).exists())
+        .and_then(|f| local_asset_url(cache_dir, f))
+        .or_else(|| e.artwork_url.clone());
+
+    let artwork_html = match artwork_src {
+        Some(src) => format!(
+            r#"<img class="apple-artwork" src="{}" alt="" loading="lazy">"#,
+            html_escape(&src)
+        ),
+        None => String::new(),
+    };
+
+    let artist_html = if !e.artist_name.is_empty() {
+        format!(
+            r#"<div class="apple-artist">{}</div>"#,
+            html_escape(&e.artist_name)
+        )
+    } else {
+        String::new()
+    };
+
+    let mut meta_parts: Vec<String> = Vec::new();
+    if let Some(ref price) = e.formatted_price {
+        meta_parts.push(html_escape(price));
+    }
+    if let Some(rating) = e.rating {
+        let stars = render_star_rating(rating);
+        let count_str = e
+            .rating_count
+            .map(|c| format!(" ({})", format_count(c)))
+            .unwrap_or_default();
+        meta_parts.push(format!("{}{}", stars, count_str));
+    }
+    if let Some(ref genre) = e.genre {
+        meta_parts.push(html_escape(genre));
+    }
+
+    let meta_html = if meta_parts.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<div class="apple-meta">{}</div>"#,
+            meta_parts.join(" &middot; ")
+        )
+    };
+
+    let desc_html = match e.description.as_deref() {
+        Some(d) if !d.is_empty() => {
+            format!(r#"<p class="apple-desc">{}</p>"#, html_escape(d))
+        }
+        _ => String::new(),
+    };
+
+    format!(
+        r#"<a href="{url}" class="embed-card apple-card" style="--embed-accent: {accent}" rel="noopener noreferrer" target="_blank">
+<div class="apple-content">
+{artwork_html}
+<div class="apple-info">
+<div class="apple-name">{name}</div>
+{artist_html}
+{meta_html}
+{desc_html}
+</div>
+</div>
+<span class="embed-link">{platform_name}</span>
+</a>"#,
+        url = html_escape(&e.url),
+        accent = accent,
+        platform_name = html_escape(platform_name),
+        artwork_html = artwork_html,
+        name = html_escape(&e.name),
+        artist_html = artist_html,
+        meta_html = meta_html,
+        desc_html = desc_html,
+    )
+}
+
+/// Render a star rating as HTML (filled/empty stars).
+fn render_star_rating(rating: f64) -> String {
+    let mut stars = String::new();
+    let rounded = (rating * 2.0).round() / 2.0; // round to nearest 0.5
+    for i in 1..=5 {
+        let i_f = i as f64;
+        if i_f <= rounded {
+            stars.push_str("<span class=\"star-full\">\u{2605}</span>");
+        } else if i_f - 0.5 <= rounded {
+            stars.push_str("<span class=\"star-half\">\u{2605}</span>");
+        } else {
+            stars.push_str("<span class=\"star-empty\">\u{2606}</span>");
+        }
+    }
+    format!(r#"<span class="apple-stars">{}</span>"#, stars)
+}
+
+/// Format a count for display (e.g. 1500 -> "1.5K", 2300000 -> "2.3M").
+fn format_count(count: u64) -> String {
+    if count >= 1_000_000 {
+        format!("{:.1}M", count as f64 / 1_000_000.0)
+    } else if count >= 1_000 {
+        format!("{:.1}K", count as f64 / 1_000.0)
+    } else {
+        count.to_string()
+    }
+}
+
 fn render_deleted_card(data: &EmbedData) -> String {
     let platform = data.platform();
     let accent = platform.accent_color();
     let platform_name = platform.display_name();
 
+    let removed_text = if platform.is_apple() {
+        format!("This content is no longer available on {}.", platform_name)
+    } else {
+        format!("This post has been removed from {}.", platform_name)
+    };
+
     format!(
         r#"<div class="embed-card embed-deleted" style="--embed-accent: {accent}">
 <div class="embed-platform">{platform_name}</div>
-<p>This post has been removed from {platform_name}.</p>
+<p>{removed_text}</p>
 </div>"#,
         accent = accent,
         platform_name = html_escape(platform_name),
+        removed_text = removed_text,
     )
 }
 
-/// Expand inline social media URLs in rendered HTML to embed cards.
+/// Expand inline URLs in rendered HTML to embed cards.
 ///
 /// Looks for `<a href="...">URL</a>` where the link text equals the href
 /// and the href is a recognized social media URL.
@@ -1150,7 +2211,7 @@ fn html_escape(s: &str) -> String {
 // ─── CSS ────────────────────────────────────────────────────────
 
 pub const EMBED_CSS: &str = r#"
-/* Social media embed cards */
+/* Embed cards */
 
 .embed-card {
   border-left: 3px solid var(--embed-accent, var(--color-link));
@@ -1238,6 +2299,150 @@ pub const EMBED_CSS: &str = r#"
   color: var(--color-faint);
   margin: 0;
 }
+
+/* Apple content cards */
+
+.apple-card {
+  display: block;
+  text-decoration: none;
+  transition: border-color .15s;
+  padding: .7em 1em;
+}
+
+.apple-card:hover {
+  border-left-color: var(--color-link-hover);
+  text-decoration: none;
+}
+
+.apple-content {
+  display: flex;
+  gap: .8em;
+  align-items: center;
+}
+
+.apple-artwork {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.apple-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.apple-name {
+  font-weight: 700;
+  font-size: .9em;
+  line-height: 1.2;
+}
+
+.apple-artist {
+  color: var(--color-faint);
+  font-size: .8em;
+}
+
+.apple-meta {
+  font-size: .75em;
+  color: var(--color-faint);
+  display: flex;
+  flex-wrap: wrap;
+  gap: .1em;
+  align-items: center;
+}
+
+.apple-desc {
+  color: var(--color-muted);
+  font-size: .8em;
+  line-height: 1.3;
+  margin: .2em 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.apple-card > .embed-link {
+  display: none;
+}
+
+.apple-stars {
+  letter-spacing: -.05em;
+}
+
+.apple-stars .star-full {
+  color: var(--embed-accent, #f5a623);
+}
+
+.apple-stars .star-half {
+  color: var(--embed-accent, #f5a623);
+  opacity: .5;
+}
+
+.apple-stars .star-empty {
+  color: var(--color-faint);
+  opacity: .3;
+}
+
+/* Generic OG card (any HTTPS URL not matching a more specific platform) */
+
+.generic-card {
+  display: block;
+  text-decoration: none;
+  transition: border-color .15s;
+  padding: 0;
+  overflow: hidden;
+}
+
+.generic-card:hover {
+  border-left-color: var(--color-link-hover);
+  text-decoration: none;
+}
+
+.generic-card .generic-image {
+  display: block;
+  width: 100%;
+  max-height: 18em;
+  object-fit: cover;
+  background: var(--color-card-bg);
+}
+
+.generic-card .generic-body {
+  padding: .9em 1.1em;
+}
+
+.generic-card .generic-source {
+  font-size: .72em;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--embed-accent, var(--color-link));
+  margin-bottom: .3em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.generic-card .generic-title {
+  font-weight: 600;
+  font-size: 1em;
+  line-height: 1.3;
+  margin-bottom: .25em;
+  color: var(--color-fg);
+}
+
+.generic-card .generic-desc {
+  color: var(--color-muted);
+  font-size: .88em;
+  line-height: 1.4;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 "#;
 
 // ─── Tests ──────────────────────────────────────────────────────
@@ -1248,63 +2453,248 @@ mod tests {
 
     #[test]
     fn parse_twitter_url() {
-        let s = parse_social_url("https://twitter.com/elonmusk/status/1234567890").unwrap();
+        let s = parse_link_url("https://twitter.com/elonmusk/status/1234567890").unwrap();
         assert_eq!(s.platform, Platform::Twitter);
         assert_eq!(s.user, "elonmusk");
-        assert_eq!(s.post_id, "1234567890");
+        assert_eq!(s.item_id, "1234567890");
     }
 
     #[test]
     fn parse_x_url() {
-        let s = parse_social_url("https://x.com/user/status/999?s=20").unwrap();
+        let s = parse_link_url("https://x.com/user/status/999?s=20").unwrap();
         assert_eq!(s.platform, Platform::Twitter);
         assert_eq!(s.user, "user");
-        assert_eq!(s.post_id, "999");
+        assert_eq!(s.item_id, "999");
     }
 
     #[test]
     fn parse_bluesky_url() {
-        let s = parse_social_url("https://bsky.app/profile/alice.bsky.social/post/3abc123").unwrap();
+        let s = parse_link_url("https://bsky.app/profile/alice.bsky.social/post/3abc123").unwrap();
         assert_eq!(s.platform, Platform::Bluesky);
         assert_eq!(s.user, "alice.bsky.social");
-        assert_eq!(s.post_id, "3abc123");
+        assert_eq!(s.item_id, "3abc123");
     }
 
     #[test]
     fn parse_mastodon_url() {
-        let s = parse_social_url("https://mastodon.social/@user/123456789").unwrap();
+        let s = parse_link_url("https://mastodon.social/@user/123456789").unwrap();
         assert_eq!(s.platform, Platform::Mastodon);
         assert_eq!(s.user, "user");
-        assert_eq!(s.post_id, "123456789");
+        assert_eq!(s.item_id, "123456789");
         assert_eq!(s.instance.as_deref(), Some("mastodon.social"));
     }
 
     #[test]
     fn parse_instagram_url() {
-        let s = parse_social_url("https://www.instagram.com/p/ABC123xyz/").unwrap();
+        let s = parse_link_url("https://www.instagram.com/p/ABC123xyz/").unwrap();
         assert_eq!(s.platform, Platform::Instagram);
-        assert_eq!(s.post_id, "ABC123xyz");
+        assert_eq!(s.item_id, "ABC123xyz");
     }
 
     #[test]
     fn parse_instagram_reel() {
-        let s = parse_social_url("https://www.instagram.com/reel/XYZ789/").unwrap();
+        let s = parse_link_url("https://www.instagram.com/reel/XYZ789/").unwrap();
         assert_eq!(s.platform, Platform::Instagram);
-        assert_eq!(s.post_id, "XYZ789");
+        assert_eq!(s.item_id, "XYZ789");
     }
 
     #[test]
     fn parse_threads_url() {
-        let s = parse_social_url("https://www.threads.net/@user/post/ABC123").unwrap();
+        let s = parse_link_url("https://www.threads.net/@user/post/ABC123").unwrap();
         assert_eq!(s.platform, Platform::Threads);
         assert_eq!(s.user, "user");
-        assert_eq!(s.post_id, "ABC123");
+        assert_eq!(s.item_id, "ABC123");
     }
 
     #[test]
-    fn reject_non_social_url() {
-        assert!(parse_social_url("https://example.com/page").is_none());
-        assert!(parse_social_url("not a url").is_none());
+    fn parse_apple_appstore_url() {
+        let s = parse_link_url("https://apps.apple.com/us/app/things-3/id904237743").unwrap();
+        assert_eq!(s.platform, Platform::AppleAppStore);
+        assert_eq!(s.item_id, "904237743");
+        assert_eq!(s.country.as_deref(), Some("us"));
+    }
+
+    #[test]
+    fn parse_apple_music_album_url() {
+        let s = parse_link_url("https://music.apple.com/us/album/random-access-memories/617154241").unwrap();
+        assert_eq!(s.platform, Platform::AppleMusic);
+        assert_eq!(s.item_id, "617154241");
+        assert_eq!(s.country.as_deref(), Some("us"));
+    }
+
+    #[test]
+    fn parse_apple_music_playlist_url() {
+        let s = parse_link_url("https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb").unwrap();
+        assert_eq!(s.platform, Platform::AppleMusic);
+        assert_eq!(s.item_id, "pl.f4d106fed2bd41149aaacabb233eb5eb");
+    }
+
+    #[test]
+    fn parse_apple_podcasts_url() {
+        let s = parse_link_url("https://podcasts.apple.com/us/podcast/the-daily/id1200361736").unwrap();
+        assert_eq!(s.platform, Platform::ApplePodcasts);
+        assert_eq!(s.item_id, "1200361736");
+    }
+
+    #[test]
+    fn parse_apple_books_url() {
+        let s = parse_link_url("https://books.apple.com/us/book/the-great-gatsby/id498685929").unwrap();
+        assert_eq!(s.platform, Platform::AppleBooks);
+        assert_eq!(s.item_id, "498685929");
+    }
+
+    #[test]
+    fn parse_apple_tv_show_url() {
+        let s = parse_link_url("https://tv.apple.com/us/show/severance/umc.cmc.1srk2goyh2q2zdxcx605w8vtx").unwrap();
+        assert_eq!(s.platform, Platform::AppleTV);
+        assert_eq!(s.item_id, "umc.cmc.1srk2goyh2q2zdxcx605w8vtx");
+    }
+
+    #[test]
+    fn parse_itunes_movie_url() {
+        let s = parse_link_url("https://itunes.apple.com/gb/movie/inception/id400763833").unwrap();
+        assert_eq!(s.platform, Platform::AppleTV);
+        assert_eq!(s.item_id, "400763833");
+        assert_eq!(s.country.as_deref(), Some("gb"));
+    }
+
+    #[test]
+    fn unrecognized_https_url_falls_back_to_generic() {
+        // Any well-formed https:// URL that doesn't match a more specific platform
+        // becomes a Generic embed — title/description/image come from OG tags at fetch time.
+        let s = parse_link_url("https://j-fidel-505.neocities.org/roundtables").unwrap();
+        assert_eq!(s.platform, Platform::Generic);
+        assert_eq!(s.url, "https://j-fidel-505.neocities.org/roundtables");
+        assert_eq!(s.item_id, "j-fidel-505.neocities.org"); // hostname stashed here
+
+        let s = parse_link_url("https://example.com/page").unwrap();
+        assert_eq!(s.platform, Platform::Generic);
+        assert_eq!(s.item_id, "example.com");
+    }
+
+    #[test]
+    fn reject_unparseable_url() {
+        assert!(parse_link_url("not a url").is_none());
+        // No dot in hostname — bare names aren't useful as OG sources
+        assert!(parse_link_url("https://localhost/").is_none());
+        // http:// is intentionally not supported — we don't render plaintext sources
+        assert!(parse_link_url("http://example.com/").is_none());
+        // Loopback / private literals
+        assert!(parse_link_url("https://127.0.0.1/").is_none());
+        assert!(parse_link_url("https://192.168.1.1/").is_none());
+    }
+
+    #[test]
+    fn extract_hostname_strips_www() {
+        assert_eq!(extract_hostname("https://www.example.com/x"), Some("example.com".to_string()));
+        assert_eq!(extract_hostname("https://example.com:8443/x"), Some("example.com".to_string()));
+        assert_eq!(extract_hostname("https://user@example.com/"), None);
+    }
+
+    #[test]
+    fn resolve_url_relative_handles_common_cases() {
+        let base = "https://example.com/a/b.html";
+        assert_eq!(
+            resolve_url_relative_to(base, "https://cdn.example.com/img.png"),
+            Some("https://cdn.example.com/img.png".to_string())
+        );
+        assert_eq!(
+            resolve_url_relative_to(base, "//cdn.example.com/img.png"),
+            Some("https://cdn.example.com/img.png".to_string())
+        );
+        assert_eq!(
+            resolve_url_relative_to(base, "/static/img.png"),
+            Some("https://example.com/static/img.png".to_string())
+        );
+        assert_eq!(
+            resolve_url_relative_to(base, "img.png"),
+            Some("https://example.com/a/img.png".to_string())
+        );
+        // Drop http:// candidates
+        assert_eq!(
+            resolve_url_relative_to(base, "http://cdn.example.com/img.png"),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_meta_tags_prefers_og_over_twitter_over_html() {
+        let html = r#"<html><head>
+            <title>HTML Title</title>
+            <meta property="og:title" content="OG Title">
+            <meta name="twitter:title" content="Twitter Title">
+            <meta property="og:description" content="OG Desc">
+            <meta property="og:image" content="https://x/og.png">
+            <meta property="og:site_name" content="Site Name">
+        </head><body></body></html>"#;
+        let (title, desc, image, site) = parse_meta_tags(html);
+        assert_eq!(title.as_deref(), Some("OG Title"));
+        assert_eq!(desc.as_deref(), Some("OG Desc"));
+        assert_eq!(image.as_deref(), Some("https://x/og.png"));
+        assert_eq!(site.as_deref(), Some("Site Name"));
+    }
+
+    #[test]
+    fn parse_meta_tags_falls_back_to_twitter_and_title_tag() {
+        let html = r#"<html><head>
+            <title>Just Title</title>
+            <meta name="twitter:description" content="Tweet Desc">
+        </head></html>"#;
+        let (title, desc, image, _) = parse_meta_tags(html);
+        assert_eq!(title.as_deref(), Some("Just Title"));
+        assert_eq!(desc.as_deref(), Some("Tweet Desc"));
+        assert!(image.is_none());
+    }
+
+    #[test]
+    fn truncate_for_display_handles_unicode() {
+        let s = "café".repeat(100);
+        let t = truncate_for_display(&s, 10);
+        assert!(t.chars().count() <= 11); // 10 + ellipsis
+        assert!(t.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn generic_display_label_combines_title_and_source() {
+        let data = EmbedData::Generic(GenericEmbed {
+            url: "https://example.com/x".to_string(),
+            hostname: "example.com".to_string(),
+            site_name: Some("Example Site".to_string()),
+            title: Some("Hello".to_string()),
+            description: None,
+            image_url: None,
+            image_file: None,
+            upstream_deleted: false,
+            last_checked: None,
+        });
+        assert_eq!(data.display_label(), "Hello \u{00b7} Example Site");
+
+        // Without site_name, falls back to hostname
+        let data = EmbedData::Generic(GenericEmbed {
+            url: "https://example.com/x".to_string(),
+            hostname: "example.com".to_string(),
+            site_name: None,
+            title: Some("Hello".to_string()),
+            description: None,
+            image_url: None,
+            image_file: None,
+            upstream_deleted: false,
+            last_checked: None,
+        });
+        assert_eq!(data.display_label(), "Hello \u{00b7} example.com");
+    }
+
+    #[test]
+    fn local_asset_url_derives_from_cache_dir() {
+        let dir = PathBuf::from("/content/2026-05-26T125952_roundtables.link.embed-cache");
+        assert_eq!(
+            local_asset_url(&dir, "og.png"),
+            Some("/_embed/2026-05-26T125952_roundtables.link/og.png".to_string())
+        );
+
+        // Cache dirs without the suffix don't produce URLs.
+        let bad = PathBuf::from("/content/notacache");
+        assert!(local_asset_url(&bad, "x.png").is_none());
     }
 
     #[test]

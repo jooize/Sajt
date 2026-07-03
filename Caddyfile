@@ -1,8 +1,16 @@
-localhost {
+https://localhost {
 	reverse_proxy localhost:1234
+}
+
+http://localhost {
+	redir https://localhost{uri} permanent
 }
 
 https://[LAN-IP] {
 	tls internal
 	reverse_proxy localhost:1234
+}
+
+http://[LAN-IP] {
+	redir https://[LAN-IP]{uri} permanent
 }
