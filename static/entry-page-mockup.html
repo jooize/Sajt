@@ -6,17 +6,17 @@
 <title>Entry page — esko.bar</title>
 <style>
 /* ================================================================
-   Entry page design reference — plain pages, glass chrome
-   The header floats within the content column, not full-bleed.
-   Drag the edge handle to set reading width. t = typeface,
-   d = theme. Sidenotes move to the margin when there is room.
+   Entry page design reference — plain, typography-first, no glass.
+   Static top nav confined to the content column. Dark mode follows
+   the OS. Drag the edge handle for reading width. Sidenotes right,
+   heading anchors left. t = typeface (mockup control).
    ================================================================ */
 
 :root {
   color-scheme: light dark;
 
   --violet: #a123f6;
-  --violet-soft: light-dark(rgba(161, 35, 246, .09), rgba(161, 35, 246, .14));
+  --violet-soft: light-dark(rgba(161, 35, 246, .08), rgba(161, 35, 246, .13));
 
   --bg:     light-dark(#f5f4f0, #121514);
   --ink:    light-dark(#20231f, #d9ded9);
@@ -24,16 +24,10 @@
   --faint:  light-dark(#71766c, #8b918a);
   --hair:   light-dark(rgba(46, 62, 50, .18), rgba(178, 205, 184, .16));
 
-  /* forest-green glass (chrome only) */
-  --glass-bg:        light-dark(rgba(247, 251, 248, .72), rgba(23, 30, 26, .62));
-  --glass-bg-solid:  light-dark(#f2f6f2, #1a211c);
-  --glass-border:    light-dark(rgba(63, 110, 78, .30), rgba(150, 205, 168, .22));
-  --glass-rim-top:   light-dark(rgba(255, 255, 255, .55), rgba(255, 255, 255, .09));
-  --glass-rim-bot:   light-dark(rgba(63, 110, 78, .10),  rgba(0, 0, 0, .25));
-  --glass-shadow:    light-dark(rgba(30, 50, 38, .30),   rgba(0, 0, 0, .55));
+  --note:     light-dark(#3c6e4e, #9ecfae);
+  --note-bg:  light-dark(rgba(88, 148, 106, .07), rgba(88, 148, 106, .09));
 
-  --tag-bg:     light-dark(rgba(50, 140, 160, .13), rgba(80, 175, 195, .13));
-  --tag-ink:    light-dark(#1f606e, #93d2de);
+  --tag-ink:  light-dark(#1f606e, #93d2de);
 
   --code-bg:    light-dark(#f0efe9, #191e1a);
   --code-hair:  light-dark(rgba(46, 62, 50, .14), rgba(178, 205, 184, .12));
@@ -57,7 +51,10 @@
 * { margin: 0; box-sizing: border-box; }
 
 body {
+  /* plain fallbacks first, so pre-light-dark() browsers still read well */
+  background: #f5f4f0;
   background: var(--bg);
+  color: #20231f;
   color: var(--ink);
   font-family: var(--serif);
   font-size: 1.0625rem;
@@ -75,120 +72,33 @@ html[data-type="sans"] body { font-family: var(--sans); letter-spacing: .001em; 
 
 ::selection { background: rgba(161, 35, 246, .25); }
 
-a { color: var(--violet); text-decoration: none; }
+a {
+  color: #8318c9;
+  color: var(--violet);
+  text-decoration: none;
+}
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
-/* ---------- floating glass header, confined to the content column ---------- */
+/* ---------- site nav: plain links, top of the content column ---------- */
 
 body > header {
-  position: sticky;
-  top: .75rem;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: .5rem .85rem;
   max-width: var(--content-w);
-  margin: .8rem auto 0;
-  padding: .48rem .55rem .48rem 1.05rem;
-  border-radius: 999px;
-  background: var(--glass-bg);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid var(--glass-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-rim-top),
-    inset 0 -1px 0 var(--glass-rim-bot),
-    0 12px 32px -14px var(--glass-shadow);
-  font-family: var(--sans);
+  margin-inline: auto;
+  padding: 1.15rem 0 .1rem;
 }
 
-@supports not (backdrop-filter: blur(1px)) {
-  body > header { background: var(--glass-bg-solid); }
-}
-@media (prefers-reduced-transparency: reduce) {
-  body > header {
-    background: var(--glass-bg-solid);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-}
-
-body > header > strong {
-  font-size: .95rem;
-  font-weight: 650;
-  letter-spacing: -.01em;
-}
-body > header > strong > span { color: var(--violet); }
-
-body > header > nav > a {
-  display: inline-block;
-  padding: .26rem .78rem;
-  border-radius: 999px;
-  font-size: .78rem;
-  font-weight: 550;
-  color: var(--violet);
-  background: var(--violet-soft);
-  border: 1px solid var(--glass-border);
-  box-shadow: inset 0 1px 0 var(--glass-rim-top);
-}
-body > header > nav > a:hover { text-decoration: none; filter: brightness(1.06); }
-
-/* ---------- mockup controls ---------- */
-
-#controls {
+body > header > nav {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: .45rem;
-  margin-left: auto;
+  gap: 1.35rem;
+  font: 550 .8rem var(--sans);
 }
 
-#controls fieldset {
-  display: inline-flex;
-  padding: 2px;
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
-  background: light-dark(rgba(255, 255, 255, .35), rgba(0, 0, 0, .25));
-  box-shadow: inset 0 1px 0 var(--glass-rim-top);
+body > header > nav > a { color: var(--faint); }
+body > header > nav > a:hover {
+  color: var(--violet);
+  text-decoration: none;
 }
-
-#controls label {
-  position: relative;
-  padding: .2rem .65rem;
-  border-radius: 999px;
-  font-size: .72rem;
-  font-weight: 550;
-  color: var(--faint);
-  cursor: pointer;
-  user-select: none;
-}
-#controls label:has(:checked) {
-  color: var(--ink);
-  background: light-dark(#ffffff, #313a34);
-  box-shadow: 0 1px 3px light-dark(rgba(30, 50, 38, .25), rgba(0, 0, 0, .5));
-}
-#controls input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  margin: 0;
-  cursor: pointer;
-}
-
-#controls > button {
-  padding: .24rem .68rem;
-  border-radius: 999px;
-  border: 1px solid var(--glass-border);
-  background: light-dark(rgba(255, 255, 255, .35), rgba(0, 0, 0, .25));
-  box-shadow: inset 0 1px 0 var(--glass-rim-top);
-  color: var(--faint);
-  font: 550 .72rem var(--sans);
-  cursor: pointer;
-}
-#controls > button:hover { color: var(--ink); }
-
-kbd { font: 500 .68em var(--mono); color: var(--faint); }
 
 /* ---------- reading-width handle ---------- */
 
@@ -224,14 +134,14 @@ kbd { font: 500 .68em var(--mono); color: var(--faint); }
 main {
   max-width: var(--content-w);
   margin-inline: auto;
-  padding: 2.7rem 0 5rem;
+  padding: 2.4rem 0 4rem;
 }
 
 article > header {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: .6rem;
+  gap: .9rem;
   margin-bottom: 2.2rem;
 }
 
@@ -244,14 +154,13 @@ article > header time {
 }
 
 article > header a {
-  padding: .14rem .62rem;
+  padding: .1rem .55rem;
   border-radius: 999px;
   font: 550 .72rem var(--sans);
   color: var(--tag-ink);
-  background: var(--tag-bg);
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--hair);
 }
-article > header a:hover { text-decoration: none; filter: brightness(1.08); }
+article > header a:hover { text-decoration: none; border-color: currentColor; }
 
 h1 {
   font-size: clamp(1.75rem, 4.5vw, 2.35rem);
@@ -262,12 +171,34 @@ h1 {
   text-wrap: balance;
 }
 
+/* ---------- headings with hover anchors in the left margin ---------- */
+
 h2 {
+  position: relative;
   font-size: 1.32rem;
   font-weight: 650;
   line-height: 1.25;
   letter-spacing: -.012em;
   margin: 2.6rem 0 .9rem;
+}
+
+h2 > a:last-child {
+  position: absolute;
+  left: -1.5em;
+  top: 0;
+  width: 1.3em;
+  text-align: center;
+  font: 550 .85em var(--sans);
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+h2:hover > a:last-child,
+h2 > a:last-child:focus-visible { opacity: 1; }
+h2 > a:last-child:hover { color: var(--violet); text-decoration: none; }
+@media (prefers-reduced-motion: reduce) { h2 > a:last-child { transition: none; } }
+@media (max-width: 52rem) {
+  h2 > a:last-child { position: static; margin-left: .4em; width: auto; }
 }
 
 p { margin-bottom: 1.15rem; }
@@ -279,13 +210,13 @@ p > code, li > code {
   border: 1px solid var(--code-hair);
 }
 
-/* ---------- blockquote with discreet copy-as-quote ---------- */
+/* ---------- blockquote: discreet quote + link actions ---------- */
 
 blockquote {
   position: relative;
   margin: 1.8rem 0;
   padding-left: 1.2rem;
-  padding-right: 4.5rem;
+  padding-right: 7.5rem;
   border-left: 2px solid var(--violet);
   font-style: italic;
   color: var(--soft);
@@ -296,10 +227,27 @@ blockquote footer {
   font-style: normal;
   color: var(--faint);
 }
-blockquote > button {
+blockquote > menu {
   position: absolute;
   top: .05rem;
   right: 0;
+  display: flex;
+  gap: .35rem;
+  padding: 0;
+  list-style: none;
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+blockquote:hover > menu,
+blockquote > menu:focus-within { opacity: 1; }
+@media (hover: none) { blockquote > menu { opacity: .7; } }
+@media (prefers-reduced-motion: reduce) { blockquote > menu { transition: none; } }
+@media (max-width: 40rem) {
+  blockquote { padding-right: 1rem; }
+  blockquote > menu { position: static; margin-top: .5rem; opacity: .7; }
+}
+
+blockquote button, pre > button {
   padding: .16rem .6rem;
   border-radius: 999px;
   border: 1px solid var(--hair);
@@ -308,16 +256,13 @@ blockquote > button {
   font: 550 .68rem var(--sans);
   font-style: normal;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity .15s ease, color .15s ease;
 }
-blockquote:hover > button,
-blockquote > button:focus-visible { opacity: 1; }
-blockquote > button:hover { color: var(--violet); border-color: var(--violet); }
-@media (hover: none) { blockquote > button { opacity: .7; } }
-@media (prefers-reduced-motion: reduce) { blockquote > button { transition: none; } }
+blockquote button:hover, pre > button:hover {
+  color: var(--violet);
+  border-color: var(--violet);
+}
 
-/* ---------- sidenotes: inline by default, margin when there is room ---------- */
+/* ---------- sidenotes: inline by default, right margin when room ---------- */
 
 sup {
   font: 650 .72em var(--sans);
@@ -352,9 +297,10 @@ html[data-sn="margin"] .sn {
   color: var(--faint);
 }
 
-/* ---------- code blocks ---------- */
+/* ---------- code blocks with copy button ---------- */
 
 pre {
+  position: relative;
   margin: 1.5rem 0;
   padding: 1rem 1.2rem;
   border-radius: 11px;
@@ -363,6 +309,18 @@ pre {
   overflow-x: auto;
 }
 pre code { font: .84rem/1.62 var(--mono); }
+pre > button {
+  position: absolute;
+  top: .55rem;
+  right: .6rem;
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+pre:hover > button,
+pre > button:focus-visible { opacity: 1; }
+@media (hover: none) { pre > button { opacity: .7; } }
+@media (prefers-reduced-motion: reduce) { pre > button { transition: none; } }
+
 code .kw { color: var(--hl-kw); font-weight: 600; }
 code .dt { color: var(--hl-dt); }
 code .st { color: var(--hl-st); }
@@ -379,17 +337,17 @@ aside {
   gap: .85rem;
   align-items: baseline;
   margin: 1.6rem 0;
-  padding: .85rem 1.1rem;
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
-  background: light-dark(rgba(88, 148, 106, .08), rgba(88, 148, 106, .10));
+  padding: .8rem 1.1rem;
+  border-left: 2px solid var(--note);
+  border-radius: 0 9px 9px 0;
+  background: var(--note-bg);
   font-size: .93rem;
 }
 aside > b {
   font: 700 .68rem var(--sans);
   letter-spacing: .12em;
   text-transform: uppercase;
-  color: light-dark(#3c6e4e, #9ecfae);
+  color: var(--note);
 }
 aside > p { margin: 0; color: var(--soft); }
 
@@ -402,15 +360,13 @@ figure > a {
   display: grid;
   place-items: center;
   aspect-ratio: 16 / 9;
-  border-radius: 12px;
+  border-radius: 10px;
   overflow: hidden;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--hair);
   background:
     radial-gradient(60rem 30rem at 80% -20%,
-      rgba(161, 35, 246, .35), rgba(161, 35, 246, 0) 60%),
-    radial-gradient(50rem 28rem at 10% 120%,
-      rgba(88, 148, 106, .45), rgba(88, 148, 106, 0) 60%),
-    linear-gradient(160deg, #232a26, #101412);
+      rgba(161, 35, 246, .30), rgba(161, 35, 246, 0) 60%),
+    linear-gradient(160deg, #262b28, #101412);
 }
 
 figure > a > span:first-child {
@@ -419,11 +375,8 @@ figure > a > span:first-child {
   width: 4rem;
   height: 4rem;
   border-radius: 50%;
-  background: rgba(255, 255, 255, .14);
-  backdrop-filter: blur(8px) saturate(160%);
-  -webkit-backdrop-filter: blur(8px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, .35);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4), 0 8px 24px rgba(0, 0, 0, .45);
+  background: rgba(10, 12, 11, .55);
+  border: 1px solid rgba(255, 255, 255, .3);
   transition: transform .18s ease;
 }
 figure > a:hover > span:first-child { transform: scale(1.07); }
@@ -462,7 +415,7 @@ figcaption code {
   border: 1px solid var(--code-hair);
 }
 
-/* ---------- entry footer & hint ---------- */
+/* ---------- entry footer ---------- */
 
 article > footer {
   margin-top: 3rem;
@@ -474,26 +427,60 @@ article > footer {
   gap: 1rem;
 }
 
-main > p:last-child {
-  margin-top: 2.5rem;
-  text-align: center;
+/* ---------- mockup-only controls, bottom ---------- */
+
+body > footer {
+  max-width: var(--content-w);
+  margin-inline: auto;
+  padding-bottom: 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: .75rem;
   font: .74rem var(--sans);
   color: var(--faint);
+  text-align: center;
 }
+
+body > footer fieldset {
+  display: inline-flex;
+  gap: .1rem;
+  padding: 2px;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+}
+body > footer label {
+  position: relative;
+  padding: .16rem .6rem;
+  border-radius: 999px;
+  font-weight: 550;
+  cursor: pointer;
+  user-select: none;
+}
+body > footer label:has(:checked) {
+  color: var(--ink);
+  background: var(--code-bg);
+}
+body > footer input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+kbd { font: 500 .95em var(--mono); }
 </style>
 </head>
 <body>
 
 <header>
-  <strong>esko<span>.bar</span></strong>
-  <nav><a href="#">&#8598; Timeline</a></nav>
-  <div id="controls">
-    <fieldset aria-label="Typeface">
-      <label><input type="radio" name="type" value="serif" checked>Serif</label>
-      <label><input type="radio" name="type" value="sans">Sans</label>
-    </fieldset>
-    <button id="theme" type="button" aria-label="Cycle theme">Auto</button>
-  </div>
+  <nav>
+    <a href="#">Timeline</a>
+    <a href="#">Best</a>
+    <a href="#">Everything</a>
+  </nav>
 </header>
 
 <div id="grip" role="slider" tabindex="0" aria-label="Reading width"
@@ -540,12 +527,15 @@ main > p:last-child {
   </aside>
 
   <blockquote>
-    <button type="button" aria-label="Copy as quote">&#10077; quote</button>
+    <menu>
+      <li><button type="button" aria-label="Copy quote with attribution">&#10077; quote</button></li>
+      <li><button type="button" aria-label="Copy link to this quote">link</button></li>
+    </menu>
     <p>Cool URIs don&rsquo;t change.</p>
     <footer>— Tim Berners-Lee, 1998</footer>
   </blockquote>
 
-  <h2>Written in AsciiDoc</h2>
+  <h2 id="written-in-asciidoc">Written in AsciiDoc<a href="#written-in-asciidoc" aria-label="Link to this section">#</a></h2>
 
   <p>
     This page is a single <code>.adoc</code> file, rendered by Asciidoctor.
@@ -565,7 +555,7 @@ main > p:last-child {
       <code>video::RvRhUHTV_8k[youtube]</code></figcaption>
   </figure>
 
-  <h2>And code, of course</h2>
+  <h2 id="and-code-of-course">And code, of course<a href="#and-code-of-course" aria-label="Link to this section">#</a></h2>
 
   <p>
     Source blocks are highlighted the same way in every format — Pandoc and
@@ -586,51 +576,40 @@ main > p:last-child {
     <a href="#">timeline</a>
   </footer>
 </article>
-
-<p>
-  drag the edge handle to set your reading width (double-click resets)
-  &nbsp;&middot;&nbsp; <kbd>t</kbd> typeface &nbsp;&middot;&nbsp;
-  <kbd>d</kbd> theme &nbsp;&middot;&nbsp;
-  sidenotes move to the margin when there is room
-</p>
 </main>
+
+<footer>
+  <fieldset aria-label="Typeface (mockup control)">
+    <label><input type="radio" name="type" value="serif" checked>Serif</label>
+    <label><input type="radio" name="type" value="sans">Sans</label>
+  </fieldset>
+  <span>
+    drag the edge handle for reading width (double-click resets)
+    &nbsp;&middot;&nbsp; <kbd>t</kbd> typeface
+    &nbsp;&middot;&nbsp; dark mode follows the OS
+  </span>
+</footer>
 
 <script>
 (() => {
   const root = document.documentElement;
   const store = window.localStorage;
-  const themes = ["auto", "light", "dark"];
-  const themeBtn = document.getElementById("theme");
-  const grip = document.getElementById("grip");
   const main = document.querySelector("main");
+  const grip = document.getElementById("grip");
 
-  /* ---------- typeface & theme ---------- */
+  /* ---------- typeface (mockup-only control) ---------- */
 
   const setType = v => {
     root.dataset.type = v;
     document.querySelector(`input[name=type][value=${v}]`).checked = true;
     store.setItem("mock-type", v);
   };
-  const setTheme = v => {
-    root.style.colorScheme = v === "auto" ? "light dark" : v;
-    themeBtn.textContent = v[0].toUpperCase() + v.slice(1);
-    store.setItem("mock-theme", v);
-  };
-
   setType(store.getItem("mock-type") || "serif");
-  setTheme(store.getItem("mock-theme") || "auto");
-
   document.querySelectorAll("input[name=type]").forEach(i =>
     i.addEventListener("change", () => setType(i.value)));
-  themeBtn.addEventListener("click", () => {
-    const cur = store.getItem("mock-theme") || "auto";
-    setTheme(themes[(themes.indexOf(cur) + 1) % themes.length]);
-  });
-
   document.addEventListener("keydown", e => {
     if (e.target.closest("input, textarea, [role=slider]") || e.metaKey || e.ctrlKey) return;
     if (e.key === "t") setType(root.dataset.type === "serif" ? "sans" : "serif");
-    else if (e.key === "d") themeBtn.click();
   });
 
   /* ---------- reader-adjustable content width ---------- */
@@ -642,8 +621,7 @@ main > p:last-child {
 
   const updateSidenotes = () => {
     const w = main.getBoundingClientRect().width;
-    const margin = (window.innerWidth - w) / 2;
-    root.dataset.sn = margin >= 330 ? "margin" : "inline";
+    root.dataset.sn = (window.innerWidth - w) / 2 >= 330 ? "margin" : "inline";
   };
 
   const apply = () => {
@@ -690,7 +668,7 @@ main > p:last-child {
   window.addEventListener("resize", apply);
   apply();
 
-  /* ---------- copy as quote ---------- */
+  /* ---------- copy helpers ---------- */
 
   const copyText = async text => {
     try {
@@ -707,22 +685,43 @@ main > p:last-child {
     }
   };
 
-  document.querySelectorAll("blockquote").forEach(bq => {
-    const btn = bq.querySelector("button");
-    if (!btn) return;
+  const flash = (btn, done) => {
     const original = btn.innerHTML;
-    btn.addEventListener("click", async () => {
-      const lines = [...bq.querySelectorAll("p")].map(p => p.textContent.trim());
+    btn.textContent = done;
+    setTimeout(() => { btn.innerHTML = original; }, 1400);
+  };
+
+  /* ---------- blockquote: copy quote / copy deep link ---------- */
+
+  document.querySelectorAll("blockquote").forEach(bq => {
+    const [quoteBtn, linkBtn] = bq.querySelectorAll("button");
+    const lines = () => [...bq.querySelectorAll("p")].map(p => p.textContent.trim());
+    const deepLink = () =>
+      location.href.split("#")[0] + "#:~:text=" + encodeURIComponent(lines()[0]);
+
+    quoteBtn?.addEventListener("click", async () => {
       const cite = bq.querySelector("footer")?.textContent.trim();
-      const base = location.href.split("#")[0];
-      const url = base + "#:~:text=" + encodeURIComponent(lines[0]);
-      const text = "“" + lines.join("\n") + "”"
-        + (cite ? "\n" + cite : "")
-        + "\nvia " + url;
-      await copyText(text);
-      btn.textContent = "copied ✓";
-      setTimeout(() => { btn.innerHTML = original; }, 1400);
+      await copyText("“" + lines().join("\n") + "”" + (cite ? "\n" + cite : ""));
+      flash(quoteBtn, "copied ✓");
     });
+    linkBtn?.addEventListener("click", async () => {
+      await copyText(deepLink());
+      flash(linkBtn, "copied ✓");
+    });
+  });
+
+  /* ---------- code blocks: copy button ---------- */
+
+  document.querySelectorAll("pre > code").forEach(code => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "copy";
+    btn.setAttribute("aria-label", "Copy code");
+    btn.addEventListener("click", async () => {
+      await copyText(code.textContent);
+      flash(btn, "copied ✓");
+    });
+    code.parentElement.append(btn);
   });
 })();
 </script>

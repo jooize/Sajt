@@ -19,8 +19,12 @@ Tagline: **"Tag it `public` — it's published."**
 - Fail closed: nothing is published by accident. Security over convenience,
   then engineer the convenience back.
 - Native approaches on every platform: Finder, Files.app, share sheet, tags,
-  real file dates. No custom apps required to publish (a Share Extension may
-  come later as an accelerator).
+  real file dates. The site never re-implements UI the OS provides (no theme
+  switcher, no share buttons); dark mode follows the system.
+- A high-quality, serious website: plain, typography-first presentation
+  built on current web platform features (`light-dark()`, text fragments,
+  `:has()`), always with graceful fallbacks so old browsers get a readable
+  page rather than a broken one.
 
 ## Content model
 
@@ -47,9 +51,8 @@ An entry is a file **or a folder** in the single content directory.
 
 ### Visibility — tags are the only gate
 
-**DECIDED 2026-07-03 (supersedes the brief `public/`-folder idea from earlier
-the same day): one flat content folder; the `public` xattr tag is the only
-publish gate.** No moving files, no special folders — tags over folders,
+**DECIDED 2026-07-03: one flat content folder; the `public` xattr tag is the
+only publish gate.** No moving files, no special folders — tags over folders,
 consistently. Files.app on iPhone tags well now, so the flow is native on
 both platforms.
 
@@ -57,29 +60,59 @@ Why this is not a recipe for disaster: the default stays fail-closed, so
 every failure mode points the safe direction. An untagged entry is invisible.
 A tag lost in a bad sync *unpublishes* — annoying, never a leak. There is no
 state in which something private goes live without a deliberate tagging act.
-(The dangerous design would have been publish-by-default; that stays dead.)
 
 - **`public` tag** = published for all. Anything else = not served.
-- **`private` tag** = gated / access-controlled (shows as a "gated" state,
-  not a topic pill) — for the future authenticated area.
+- **`private` tag** = gated / access-controlled — a future authenticated
+  area. Until that exists, `private` entries are simply never served.
 - **`personal` tag** = descriptive, orthogonal to visibility (an entry can be
   personal+public).
 - Unpublishing (tag removed after being live) answers **410 Gone**.
 
-Deferred: per-link expiring capability URLs for sharing gated entries.
+**Access to `private` entries — ideas (PROPOSED, for later):**
+- **Passkeys (WebAuthn)** — the native answer: no passwords, synced by
+  iCloud Keychain, phishing-resistant. A tiny allowlist of enrolled passkeys
+  unlocks gated entries. Best long-term fit.
+- **Expiring capability links** — per-entry signed URLs (1 day / 1 week /
+  permanent) to hand to one person without them creating an account.
+  Previously discussed and deferred; still the right second step.
+- **Network-scoped preview** — requests from localhost (or the tailnet/VPN)
+  may see unpublished entries, clearly bannered as "unpublished preview".
+  Zero auth machinery; useful for preflighting a post before tagging it.
 
 ### Action tags (`Do` prefix)
 
 xattr tags the server executes and removes: `DoRename` (stamp timestamp name),
 `DoDate`, `DoPublish` (apply `public`), `DoGenerate` (run `.prompt`).
 
-### Identity & index
+### Identity, index, renames
 
-SHA-256 content hashing for dedup, rename detection, version detection. The
-server index (SQLite or JSON) additionally records **first-seen date per
-entry** — required by clean-named folders/files — and **which labels were
-ever public** (needed to answer 410 vs 404 honestly). The index is a
-cache/ledger, never the source of truth for content.
+SHA-256 content hashing gives every entry a durable identity independent of
+its name. The server index (SQLite or JSON) records per identity: content
+hash(es), **first-seen date**, and **every label the entry has ever been
+public under**. The index is a cache/ledger, never the source of truth for
+content.
+
+**How renames keep URLs alive:** rename a file or folder freely in Finder —
+the server sees the same content hash under a new name (and FSEvents reports
+the rename directly), so it updates the current label and keeps the old one
+in the ledger. Every former label answers **301 Moved Permanently** to the
+current URL, forever. Edge cases: if a rename and a content edit happen in
+the same sync batch, the FSEvents rename event still ties old to new; if a
+new entry later claims an old label, the explicit current entry wins and the
+redirect is dropped in its favor (logged loudly).
+
+### Media privacy — metadata stripping
+
+**DECIDED 2026-07-03: strip on the fly, never touch originals.** Served
+images are cleaned at request time and the cleaned bytes are cached (keyed by
+content hash, alongside the existing embed cache); the files on disk keep
+their EXIF forever. What gets removed: EXIF (GPS, serial numbers, owner
+name), IPTC, XMP, thumbnails in metadata, for JPEG/PNG/WebP/AVIF/HEIC; for
+video, QuickTime/MP4 location atoms (`com.apple.quicktime.location.*`).
+Color profiles and orientation are preserved (orientation is applied or kept,
+never lost). **Fail closed: a format the stripper cannot confidently clean is
+not served raw** — it renders through the viewer or is refused, never leaked
+with metadata intact.
 
 ## URL scheme
 
@@ -87,6 +120,8 @@ Labels are primary; dates are for timeline filtering only.
 
 ```
 esko.bar/                     timeline (newest first)
+esko.bar/best                 curated: highest-graded entries
+esko.bar/everything           complete compact archive
 esko.bar/open-source-licenses entry (file or folder), label = URL
 esko.bar/open-source-licenses/report.pdf   asset inside a bundle
 esko.bar/2026-03/             listing: March 2026
@@ -120,75 +155,90 @@ Old date+label URLs 301-redirect to label-only.
 
 ## Presentation
 
-Structure and typography carry the plainness; a restrained glass chrome
-carries the cool. Heavy effects are gone.
+**DECIDED 2026-07-03: no glass, anywhere.** Plain, typography-first, serious.
+Structure carries the beauty. Reference realization:
+`static/entry-page-mockup.html`.
 
-- **Entry pages** — **DECIDED 2026-07-03: plain.** The entry body is pure
-  typography on the page background — no card, no material. Reference
-  realization: `static/entry-page-mockup.html`.
-- **Header** — **DECIDED 2026-07-03**: one small sticky glass bar that stays
-  **within the content column** (floating pill, not full-bleed), containing
-  brand + timeline link. As few menus as possible; no sidebars — the side
-  space belongs to sidenotes.
-- **Reader-adjustable width** — **DECIDED 2026-07-03**: a discreet drag
-  handle at the edge of the content column lets the reader set their own
-  reading width (keyboard: arrow keys; double-click resets; persisted in
-  localStorage). Sidenotes move between margin and inline automatically based
-  on available space.
-- **Sidenotes** — footnotes render as Tufte-style margin notes when there is
-  room, inline note blocks otherwise. Implemented as a Pandoc Lua filter /
-  Asciidoctor postprocess over standard footnote syntax — authors just write
-  footnotes.
-- **Copy as quote** — **DECIDED 2026-07-03**: blockquotes get a discreet
-  copy button (visible on hover/focus) that copies the quote, attribution,
-  and a deep link using a text fragment (`#:~:text=…`) so the link highlights
-  the quoted passage for the recipient.
-- **Effects** — **DECIDED 2026-07-03: drop rain, snow, WebGL glass, dynamic
-  weather sky.** Keep one calm, battery-friendly glass treatment for chrome
-  (tinted, sufficiently opaque, `saturate(180%)`, asymmetric rim highlights).
-  Honor `prefers-reduced-transparency`, `prefers-reduced-motion`,
-  `prefers-contrast`, and provide solid fallbacks where `backdrop-filter` is
-  unsupported.
-- **Timeline** — floating glass cards, month-grouped, website-first (no fake
-  macOS chrome): `static/entries-site.html` is the reference realization.
-  Esko violet `#a123f6` accent. Relative pairwise grading (percentile → grade
-  meter, "Top" filter) set at publish time.
+- **Entry pages** — pure typography on the page background. No cards, no
+  materials, no backdrop filters.
+- **Site nav** — a static row of plain text links at the top of the content
+  column (not full-bleed, not floating, not sticky): **Timeline · Best ·
+  Everything**. No site title — the domain is the brand. Nothing else.
+- **Dark mode** — follows the OS via `prefers-color-scheme` /
+  `light-dark()`. **No theme UI** (DECIDED 2026-07-03; the switcher was
+  removed from the live templates). The site never duplicates UI the OS
+  provides — no share buttons either.
+- **Sidenotes (right)** — footnotes render as Tufte-style margin notes when
+  there is room, inline note blocks otherwise. Authors just write standard
+  footnote syntax; a Pandoc Lua filter / Asciidoctor postprocess does the
+  rest.
+- **Heading anchors (left)** — a `#` appears in the left margin on
+  hover/focus of a heading, linking to it. **DECIDED (direction)
+  2026-07-03: the left margin stays otherwise empty** — anchors are the only
+  thing that lives there, mirroring sidenotes on the right. (A collapsed
+  "on this page" mini-TOC for very long entries is a possible later
+  exception — PROPOSED, not now.)
+- **Reader-adjustable width** — a discreet drag handle at the edge of the
+  content column (keyboard: arrows; double-click resets; persisted).
+  Sidenotes move between margin and inline automatically.
+- **Quote actions** — two discreet buttons on blockquote hover/focus:
+  **quote** copies the quotation with attribution; **link** copies a deep
+  link using a text fragment (`#:~:text=…`) that highlights the passage for
+  the recipient. Same pill style for the **code copy** button on source
+  blocks.
+- **Effects** — rain, snow, WebGL glass, gyro tilt, dynamic weather sky:
+  removed from the live templates 2026-07-03. Honor
+  `prefers-reduced-motion` and `prefers-contrast` in what remains.
+- **Timeline** — visual design is **OPEN again**: the floating-glass-cards
+  realization (`static/entries-site.html`) is visually obsolete now that
+  glass is dropped, but its *interaction model* stands: month grouping,
+  kind filter, sort, search (`/`), keyboard nav (`j`/`k`), relative pairwise
+  grading at publish time (percentile → grade meter, feeding `/best`).
+  Needs a plain re-realization in the mockup's language.
 - **Typeface** — **OPEN**: New York (ui-serif) vs SF (system-ui) for entry
   body text; toggle in the mockup. Chrome is always system sans.
 - **CSS conventions** — class-less (element selectors + structural
   combinators) in real templates; `color-scheme: light dark` with custom
-  properties; exceptions only for JS state and renderer highlight tokens.
+  properties; plain-value fallbacks before modern functions so old browsers
+  degrade to a readable page.
 
-## Smart features — PROPOSED
+## Smart features
 
-Curated to fit the philosophy (native, private, cool-URIs). Each is small;
-none blocks v0.1 except where noted in the roadmap.
+Curated to fit the philosophy (native, private, cool-URIs).
 
-Publishing hygiene:
-- **Atom + JSON Feed** at `/feed` (+ per-tag feeds like `/+design/feed`) —
-  a publishing site is not finished without feeds.
+Publishing hygiene (PROPOSED, accepted in spirit 2026-07-03):
+- **Atom + JSON Feed** at `/feed` (+ per-tag feeds like `/+design/feed`).
 - **sitemap.xml, robots.txt** — generated from public entries only.
-- **OpenGraph/Twitter meta on own entries** so esko.bar links unfurl nicely
-  elsewhere (title from label, description from first paragraph, image from
-  first image in entry/bundle).
-- **301 on rename** (content-hash identity, already designed) and **410 Gone**
-  for unpublished entries.
-- **404 with suggestions** — fuzzy-match the requested label against public
-  entries ("did you mean /open-source-licenses?").
+- **OpenGraph/Twitter meta on own entries** (title from label, description
+  from first paragraph, image from first image in entry/bundle).
+- **301 on rename, 410 Gone on unpublish** (see Identity above).
+- **404 with suggestions** — fuzzy-match against public labels.
 
 Privacy & safety:
-- **EXIF stripping on served images** — GPS coordinates and serials never
-  leave the server; originals untouched on disk. (Roadmap item — this is a
-  privacy requirement, not a nicety.)
-- **Zero third-party requests** for readers, ever — embeds are already cached
-  and served locally; keep it that way and add a CSP header that enforces it.
+- **Metadata stripping on the fly** — DECIDED, see Media privacy above.
+- **Zero third-party requests** for readers, ever — embeds are already
+  cached and served locally; enforce with a Content-Security-Policy header.
+- **Security headers** throughout (CSP, HSTS, X-Content-Type-Options).
 
 Reading experience:
-- **Heading anchors** — discreet `#` link on hover for deep-linking sections.
-- **Code copy button** — same discreet style as the quote button.
-- **Keyboard throughout** — `j`/`k` + arrows on the timeline, `/` focuses
-  search, `Esc` clears (mockup behavior, kept in production).
-- **Scroll restore** on the timeline (return where you left off).
+- **Heading anchors, code copy, quote/link actions** — DECIDED, in mockup.
+- **Keyboard throughout** — `j`/`k` + arrows on the timeline (already live),
+  `/` for search, `Esc` clears.
+- **Scroll restore** on the timeline.
+
+More ideas (PROPOSED):
+- **Content-addressed caching for free** — the SHA-256 already computed per
+  entry is a perfect strong ETag; raw files get `immutable` caching and
+  change URLs only when content changes.
+- **Dark-variant images** — if a bundle contains `diagram.png` and
+  `diagram-dark.png`, serve a `<picture>` that switches with the OS theme.
+  Native-feeling, zero configuration.
+- **Related entries** — a quiet "more like this" line in the entry footer,
+  from shared tags. No engagement machinery, just wayfinding.
+- **Updated dates** — when a file's content hash changes after first
+  publish, show "updated <date>" beside the original date.
+- **Print stylesheet** — sidenotes become real footnotes, nav disappears;
+  a serious site prints well.
 
 ## Publishing workflows (native only)
 
@@ -209,31 +259,31 @@ Reading experience:
    `index.*` rendering, asset URLs.
 3. **AsciiDoc via Asciidoctor** — fix the broken `.adoc` path; unified
    highlight theming; `video::` works.
-4. **Port the timeline** — `entries-site.html` → real templates (class-less).
-5. **Entry page** — port `entry-page-mockup.html`: plain body, confined glass
-   header, sidenotes filter, reader width, quote copy.
-6. **EXIF stripping** — before anything with photos goes public.
-7. **Prune** — remove the variant/effects system from `src/templates.rs`
-   together with the remaining effect assets it references
-   (`raindrop-fx.js`, `rain-bg.jpg`, `snow-*.js`). Standalone unreferenced
-   prototypes were already archived (git history keeps them).
-8. **Feeds + sitemap + OG meta**, then deploy behind Caddy; `rsync -avX`
-   content up; go live.
+4. **Port the plain design** — entry pages from `entry-page-mockup.html`
+   (plain body, top nav, sidenotes filter, anchors, reader width, quote/code
+   actions) and a plain timeline (interaction model from `entries-site.html`,
+   new visual language). Replaces the interim glass cards in templates.
+5. **Metadata stripping** — before anything with photos goes public.
+6. **Feeds + sitemap + OG meta + security headers**, then deploy behind
+   Caddy; `rsync -avX` content up; go live.
 
-Later: grading flow in production, Share Extension, gated-entry auth,
-expiring share links, `.prompt` generation polish, 404 suggestions.
+Done 2026-07-03: effects/variants/theme-switcher pruned from templates;
+unreferenced prototypes archived (git history keeps them).
+
+Later: grading flow in production, `/best` page, Share Extension, passkey
+auth for `private`, expiring share links, `.prompt` generation polish,
+404 suggestions, dark-variant images, related entries.
 
 ## Design files
 
 - `.claude-memory/design.md` — original full design (URL grammar, prompt
   files, hashing, action tags, sky variants history)
-- `.claude-memory/entry-list-design.md` — timeline layout finalists, grading
-  model, visibility tags
-- `.claude-memory/design-inspiration.md` — external references (siri4eu glass
-  nav, lucas.love)
+- `.claude-memory/entry-list-design.md` — timeline layout exploration,
+  grading model, visibility tags
+- `.claude-memory/design-inspiration.md` — external references
 - `.claude-memory/glass-effects.md`, `ux-laws.md` — technique research
 - `.claude-memory/snowfall-*.md`, `rain-*.md` — retired effects research
-  (kept for reference)
-- `static/entries-site.html` — timeline reference mockup
-- `static/entry-page-mockup.html` — entry page reference (plain, confined
-  header, sidenotes, quote copy, adjustable width)
+- `static/entries-site.html` — timeline interaction reference (visuals
+  obsolete: predates the no-glass decision)
+- `static/entry-page-mockup.html` — entry page reference (plain, top nav,
+  sidenotes, anchors, quote/link/code actions, adjustable width)
