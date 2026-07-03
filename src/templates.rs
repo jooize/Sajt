@@ -2,7 +2,7 @@ use crate::entry::Entry;
 
 const CSS: &str = r#"
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
 
   --color-bg: #fff;
   --sunset-bg: linear-gradient(180deg, #e8e0f0, #f5d5c8 60%, #fce4b8) fixed;
@@ -41,8 +41,8 @@ const CSS: &str = r#"
     0 10px 28px rgba(40, 50, 40, .05);
 }
 
-:root[data-theme="dark"] {
-    color-scheme: dark;
+@media (prefers-color-scheme: dark) {
+  :root {
     --color-bg: #151515;
     --sunset-bg: linear-gradient(180deg, #1a1525, #2a1a2e 60%, #2d1f1a) fixed;
     --color-fg: #d4d4d4;
@@ -78,61 +78,7 @@ const CSS: &str = r#"
       inset 0 1px 1px rgba(255, 255, 255, .07),
       0 2px 8px rgba(0, 0, 0, .28),
       0 10px 28px rgba(0, 0, 0, .22);
-}
-
-/* Variant 2: warm glass */
-:root[data-variant="2"] {
-  --color-card-bg: rgba(245, 222, 200, .5);
-  --glass-border: rgba(200, 140, 80, .2);
-}
-:root[data-theme="dark"][data-variant="2"] {
-  --color-card-bg: rgba(48, 32, 26, .44);
-  --glass-border: rgba(180, 120, 80, .18);
-}
-
-/* Variant 6: raindrop-fx with photo background */
-:root[data-variant="6"] {
-  --color-card-bg: rgba(22, 22, 32, .62);
-  --glass-border: rgba(120, 140, 180, .25);
-  --color-fg: #e0e4ea;
-  --color-muted: #bbb;
-  --color-faint: #999;
-  --color-date: #7ab;
-  --color-tag-bg: rgba(60, 80, 120, .6);
-  --color-tag-fg: #d0dae8;
-}
-:root[data-theme="dark"][data-variant="6"] {
-  --color-card-bg: rgba(10, 10, 18, .66);
-  --glass-border: rgba(80, 100, 140, .2);
-}
-
-/* Variants 9, 11: winter glass — cool blue-white */
-:root[data-variant="9"],
-:root[data-variant="11"] {
-  --color-card-bg: rgba(206, 224, 242, .52);
-  --glass-border: rgba(120, 160, 200, .2);
-  --color-tag-bg: rgba(100, 150, 200, .5);
-  --color-date: #4a8ab5;
-  --toggle-pill-bg: rgba(200, 220, 240, .3);
-  --toggle-pill-hover: rgba(180, 210, 235, .5);
-}
-:root[data-theme="dark"][data-variant="9"],
-:root[data-theme="dark"][data-variant="11"] {
-  --color-card-bg: rgba(18, 24, 40, .46);
-  --glass-border: rgba(100, 140, 190, .18);
-  --color-tag-bg: rgba(50, 80, 120, .55);
-  --color-date: #6aa0c5;
-  --toggle-pill-bg: rgba(40, 60, 90, .15);
-  --toggle-pill-hover: rgba(50, 80, 110, .25);
-}
-
-/* Snow variants: content above snow overlay, snow falls behind glass cards */
-:root[data-variant="9"] nav,
-:root[data-variant="11"] nav,
-:root[data-variant="9"] main,
-:root[data-variant="11"] main {
-  position: relative;
-  z-index: 3;
+  }
 }
 
 *, *::before, *::after {
@@ -262,101 +208,6 @@ body > nav > label[for="pos"]::after {
   content: "center \2192";
 }
 
-/* Theme toggle — sun/moon switcher */
-
-.theme-switcher {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  padding: 3px;
-  margin: 0;
-  border: none;
-  border-radius: 99em;
-  background-color: color-mix(in srgb, var(--color-card-bg), transparent 40%);
-  -webkit-backdrop-filter: blur(8px) saturate(150%);
-  backdrop-filter: blur(8px) saturate(150%);
-  box-shadow: var(--glass-shadow);
-  transition: background-color 400ms cubic-bezier(1, 0, .4, 1), box-shadow 400ms cubic-bezier(1, 0, .4, 1);
-  position: relative;
-}
-
-.theme-switcher legend {
-  position: absolute; width: 1px; height: 1px; margin: -1px;
-  border: 0; padding: 0; clip: rect(0 0 0 0); clip-path: inset(100%); overflow: hidden;
-}
-
-.theme-switcher input {
-  position: absolute; width: 1px; height: 1px;
-  clip: rect(0 0 0 0); clip-path: inset(100%); overflow: hidden;
-}
-
-.theme-switcher label {
-  display: flex; justify-content: center; align-items: center;
-  width: 28px; height: 28px;
-  border-radius: 99em;
-  cursor: pointer;
-  color: var(--color-faint);
-  transition: color 200ms;
-}
-
-.theme-switcher label:hover { color: var(--color-fg); }
-.theme-switcher label:has(input:checked) { color: var(--color-fg); cursor: default; }
-
-.theme-switcher label svg {
-  display: block; width: 18px; height: 18px;
-  transition: scale 200ms cubic-bezier(.5, 0, 0, 1);
-}
-.theme-switcher label:hover svg { scale: 1.15; }
-.theme-switcher label:has(input:checked) svg { scale: 1; }
-
-/* Sliding glass indicator */
-.theme-switcher::after {
-  content: "";
-  position: absolute;
-  left: 3px; top: 3px;
-  width: 28px; height: 28px;
-  border-radius: 99em;
-  background-color: color-mix(in srgb, var(--color-card-bg), transparent 10%);
-  z-index: -1;
-  box-shadow: var(--glass-shadow);
-  transition: translate 400ms cubic-bezier(1, 0, .4, 1), background-color 400ms cubic-bezier(1, 0, .4, 1), box-shadow 400ms cubic-bezier(1, 0, .4, 1);
-}
-
-.theme-switcher:has(input[value="light"]:checked)::after {
-  translate: 0 0;
-}
-.theme-switcher:has(input[value="dark"]:checked)::after {
-  translate: 28px 0;
-}
-
-body > nav > button.variant {
-  appearance: none;
-  border: none;
-  font-size: .75em;
-  padding: .2em .55em;
-  border-radius: 1em;
-  background-color: color-mix(in srgb, var(--color-card-bg), transparent 40%);
-  color: var(--color-faint);
-  cursor: pointer;
-  -webkit-backdrop-filter: blur(8px) saturate(150%);
-  backdrop-filter: blur(8px) saturate(150%);
-  box-shadow: var(--glass-shadow);
-  transition: box-shadow .15s, color .15s;
-  line-height: 1;
-}
-
-body > nav > button.variant:hover {
-  color: var(--color-fg);
-}
-
-body > nav > button.variant.active {
-  color: var(--color-fg);
-  font-weight: 700;
-  background-color: color-mix(in srgb, var(--color-card-bg), transparent 20%);
-}
-
-
-
 @media (max-width: 85ch) {
   body > nav > label[for="pos"] { display: none; }
 }
@@ -372,10 +223,7 @@ main > article {
   -webkit-backdrop-filter: blur(16px) saturate(125%);
   backdrop-filter: blur(16px) saturate(125%);
   box-shadow: var(--glass-shadow);
-  transition: box-shadow .15s, transform .3s ease-out;
-  will-change: transform;
-  transform: rotateX(0deg) rotateY(0deg);
-  transform-style: flat;
+  transition: box-shadow .15s;
 }
 
 main > article.selected {
@@ -386,7 +234,6 @@ main > article.selected {
 @media (min-width: 70ch) {
   main {
     padding: 1em;
-    perspective: 800px;
   }
 
   main > article.selected::before {
@@ -613,7 +460,8 @@ article > section pre > code {
   --hl-information: #b08000;
 }
 
-:root[data-theme="dark"] {
+@media (prefers-color-scheme: dark) {
+  :root {
     --hl-keyword: #cfcfc2;
     --hl-keyword-weight: 700;
     --hl-datatype: #2980b9;
@@ -641,6 +489,7 @@ article > section pre > code {
     --hl-documentation: #a43340;
     --hl-other: #27ae60;
     --hl-information: #c45b00;
+  }
 }
 
 div.sourceCode { position: relative; }
@@ -753,25 +602,6 @@ article > footer > a:hover {
   font-size: 1.1em;
 }
 
-/* Rain FX canvas — behind content, replaces body background */
-#rain-fx {
-  display: none;
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  z-index: -1;
-  pointer-events: none;
-}
-
-body.wx-rainfx {
-  background: none !important;
-}
-
-body.wx-rainfx #rain-fx {
-  display: block;
-}
-
 "#;
 
 /// Wrap content in a full HTML page shell.
@@ -789,22 +619,11 @@ pub fn page_shell(title: &str, body: &str, show_timeline: bool) -> String {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <style>{css}{embed_css}</style>
-<script>!function(){{var t=localStorage.getItem("theme");if(!t)t=matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light";document.documentElement.dataset.theme=t}}()</script>
 </head>
 <body>
 <input type="checkbox" id="pos" checked>
 <nav>
 {nav_link}
-<fieldset class="theme-switcher">
-<legend>Theme</legend>
-<label><input type="radio" name="theme" value="light"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 36 36"><path fill="currentColor" fill-rule="evenodd" d="M18 12a6 6 0 1 1 0 12 6 6 0 0 1 0-12Zm0 2a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" clip-rule="evenodd"/><path fill="currentColor" d="M17 6a1 1 0 1 1 2 0v3a1 1 0 0 1-2 0V6ZM24.2 7.7a1 1 0 1 1 1.6 1.2l-1.7 2.4a1 1 0 1 1-1.6-1.2l1.7-2.4ZM29.1 13.4a1 1 0 0 1 .6 1.9l-2.8.9a1 1 0 1 1-.7-1.9l2.9-.9ZM29.7 20.8a1 1 0 0 1-.6 1.9l-2.9-.9a1 1 0 1 1 .7-1.9l2.8.9ZM25.9 27.2a1 1 0 0 1-1.7 1.1l-1.7-2.4a1 1 0 1 1 1.6-1.2l1.8 2.5ZM19 30a1 1 0 0 1-2 0v-3a1 1 0 1 1 2 0v3ZM11.8 28.3a1 1 0 0 1-1.7-1.1l1.8-2.5a1 1 0 1 1 1.6 1.2l-1.7 2.4ZM6.9 22.7a1 1 0 1 1-.6-1.9l2.8-.9a1 1 0 1 1 .7 1.9l-2.9.9ZM6.3 15.3a1 1 0 1 1 .6-1.9l2.9.9a1 1 0 1 1-.7 1.9l-2.8-.9ZM10.1 8.9a1 1 0 0 1 1.7-1.2l1.7 2.4a1 1 0 0 1-1.6 1.2l-1.8-2.4Z"/></svg></label>
-<label><input type="radio" name="theme" value="dark"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 36 36"><path fill="currentColor" d="M12.5 8.5a11 11 0 0 1 8.8-1 7.4 7.4 0 0 0-3.7 4.7l-.1.4A7.5 7.5 0 0 0 28.7 20.4a11 11 0 0 1-5.2 7.1l-.5.3c-5 2.6-11.2.9-14.2-3.8l-.3-.5C5.5 18.4 7.1 11.9 12 8.8l.5-.3Zm4.2.6a9 9 0 0 0-2.8.9l-.4.2A9 9 0 0 0 10.2 22.5l.2.4A9 9 0 0 0 22.5 25.8l.4-.3a9 9 0 0 0 2.2-2 9.4 9.4 0 0 1-2.8-.3c-5-1.4-8-6.5-6.7-11.6l.2-.5c.2-.7.6-1.4 1-2Z"/></svg></label>
-</fieldset>
-<button class="variant" data-v="1">1</button>
-<button class="variant" data-v="2">2</button>
-<button class="variant" data-v="6">6</button>
-<button class="variant" data-v="9">9</button>
-<button class="variant" data-v="11">11</button>
 <label for="pos"></label>
 </nav>
 <main>
@@ -815,172 +634,6 @@ pub fn page_shell(title: &str, body: &str, show_timeline: bool) -> String {
 var p=document.getElementById("pos"),s=localStorage.getItem("pos");
 if(s!==null)p.checked=s==="1";
 p.onchange=function(){{localStorage.setItem("pos",p.checked?"1":"0")}};
-var themeRadios=document.querySelectorAll('.theme-switcher input[name="theme"]');
-var curTheme=document.documentElement.dataset.theme||"light";
-themeRadios.forEach(function(r){{if(r.value===curTheme)r.checked=true;r.addEventListener("change",function(){{var d=document.documentElement,n=this.value;d.dataset.theme=n;localStorage.setItem("theme",n);var dk=n==="dark";if(snowCanvas)snowCanvas.setDark(dk);if(snowShader)snowShader.setDark(dk);if(cv==="9"||cv==="11")document.documentElement.style.setProperty("--sunset-bg",winterSky())}})}})
-var rainFx=null,rainLoaded=false;
-function rainFxBg(){{
-  var dk=document.documentElement.dataset.theme==="dark";
-  var c=document.createElement("canvas");c.width=256;c.height=512;
-  var ctx=c.getContext("2d");
-  var g=ctx.createLinearGradient(0,0,0,512);
-  if(dk){{
-    g.addColorStop(0,"rgb(15,18,35)");g.addColorStop(.25,"rgb(30,35,55)");g.addColorStop(.5,"rgb(50,45,65)");g.addColorStop(.75,"rgb(60,40,50)");g.addColorStop(1,"rgb(40,30,40)");
-  }}else{{
-    g.addColorStop(0,"rgb(110,135,175)");g.addColorStop(.25,"rgb(155,170,195)");g.addColorStop(.5,"rgb(190,195,210)");g.addColorStop(.75,"rgb(210,195,185)");g.addColorStop(1,"rgb(195,185,175)");
-  }}
-  ctx.fillStyle=g;ctx.fillRect(0,0,256,512);
-  return c;
-}}
-var rainGen=0,rainMode="";
-function rainFxBgSrc(mode){{
-  return mode==="photo"?"/static/rain-bg.jpg":null;
-}}
-function rainFxStart(mode){{
-  var m=mode||"gradient";
-  if(rainFx&&rainMode!==m){{
-    if(rainMode!=="gradient"&&m!=="gradient"){{
-      // Swap background texture, keep WebGL context alive
-      var src=rainFxBgSrc(m);
-      if(src){{
-        var img=new Image();img.onload=function(){{if(rainFx)rainFx.setBackground(img)}};img.src=src;
-      }}else{{
-        rainFx.setBackground(rainFxBg());
-      }}
-      rainMode=m;
-      return;
-    }}
-    // Gradient <-> photo: different options, full recreate with delay for WebGL cleanup
-    rainFxStop();
-    rainMode=m;
-    var gen=rainGen;
-    setTimeout(function(){{if(gen===rainGen)rainFxInit(m,gen)}},100);
-    return;
-  }}
-  if(rainFx)return;
-  var gen=++rainGen;
-  rainMode=m;
-  if(!rainLoaded){{
-    var sc=document.createElement("script");sc.src="/static/raindrop-fx.js";
-    sc.onload=function(){{rainLoaded=true;if(gen===rainGen)rainFxInit(m,gen)}};
-    document.head.appendChild(sc);
-  }}else{{rainFxInit(m,gen)}}
-}}
-function rainFxInit(mode,gen){{
-  if(typeof RaindropFX==="undefined"||gen!==rainGen)return;
-  var src=rainFxBgSrc(mode);
-  if(src){{
-    var img=new Image();
-    img.onload=function(){{if(gen===rainGen)rainFxCreate(mode,img,gen)}};
-    img.src=src;
-  }}else{{
-    rainFxCreate(mode,rainFxBg(),gen);
-  }}
-}}
-function rainFxCreate(mode,bg,gen){{
-  if(gen!==rainGen)return;
-  var cv=document.createElement("canvas");cv.id="rain-fx";
-  cv.style.display="none";
-  cv.width=window.innerWidth;cv.height=window.innerHeight;
-  document.body.insertBefore(cv,document.body.firstChild);
-  rainFx=new RaindropFX({{canvas:cv,background:bg}});
-  if(mode==="gradient"){{
-    rainFx.options.spawnInterval=[0.05,0.12];
-    rainFx.options.spawnSize=[40,100];
-    rainFx.options.spawnLimit=1500;
-    rainFx.options.mist=true;
-    rainFx.options.mistColor=[0.5,0.55,0.6,0.3];
-    rainFx.options.backgroundBlurSteps=4;
-  }}
-  rainFx.start();
-  setTimeout(function(){{
-    if(gen!==rainGen)return;
-    cv.style.display="";
-    document.body.classList.add("wx-rainfx");
-  }},150);
-  window.addEventListener("resize",rainFxResize);
-}}
-function rainFxResize(){{
-  var cv=document.getElementById("rain-fx");
-  if(rainFx&&cv){{cv.width=window.innerWidth;cv.height=window.innerHeight;rainFx.resize(window.innerWidth,window.innerHeight)}}
-}}
-function rainFxStop(){{
-  rainGen++;
-  rainMode="";
-  window.removeEventListener("resize",rainFxResize);
-  var el=document.getElementById("rain-fx");
-  if(el){{
-    try{{var gl=el.getContext("webgl2");if(gl){{var ext=gl.getExtension("WEBGL_lose_context");if(ext)ext.loseContext()}}}}catch(e){{}}
-    el.remove();
-  }}
-  document.body.classList.remove("wx-rainfx");
-  rainFx=null;
-}}
-/* Snow Canvas 2D (variant 9) */
-var snowCanvas=null,snowCanvasLoaded=false;
-function snowCanvasStart(){{
-  if(snowCanvas)return;
-  if(!snowCanvasLoaded){{
-    var sc=document.createElement("script");sc.src="/static/snow-canvas.js";
-    sc.onload=function(){{snowCanvasLoaded=true;snowCanvasCreate()}};
-    document.head.appendChild(sc);
-  }}else{{snowCanvasCreate()}}
-}}
-function snowCanvasCreate(){{
-  if(typeof SnowCanvas==="undefined")return;
-  var cv=document.createElement("canvas");cv.id="snow-canvas";
-  cv.style.cssText="position:fixed;inset:0;z-index:2;pointer-events:none";
-  cv.width=window.innerWidth;cv.height=window.innerHeight;
-  document.body.appendChild(cv);
-  var dk=document.documentElement.dataset.theme==="dark";
-  snowCanvas=new SnowCanvas(cv,{{dark:dk}});
-  snowCanvas.start();
-  window.addEventListener("resize",snowCanvasResize);
-}}
-function snowCanvasResize(){{
-  var cv=document.getElementById("snow-canvas");
-  if(snowCanvas&&cv){{cv.width=window.innerWidth;cv.height=window.innerHeight;snowCanvas.resize(window.innerWidth,window.innerHeight)}}
-}}
-function snowCanvasStop(){{
-  window.removeEventListener("resize",snowCanvasResize);
-  if(snowCanvas){{snowCanvas.stop();snowCanvas=null}}
-  var el=document.getElementById("snow-canvas");if(el)el.remove();
-}}
-/* Snow Shader 3D particles (variant 11) */
-var snowShader=null,snowShaderLoaded=false;
-function snowShaderStart(){{
-  if(snowShader)return;
-  if(!snowShaderLoaded){{
-    var sc=document.createElement("script");sc.src="/static/snow-shader.js?v=7";
-    sc.onload=function(){{snowShaderLoaded=true;snowShaderCreate()}};
-    document.head.appendChild(sc);
-  }}else{{snowShaderCreate()}}
-}}
-function snowShaderCreate(){{
-  if(typeof SnowShader==="undefined")return;
-  var holder=document.createElement("div");holder.id="snow-shader";
-  holder.style.cssText="position:fixed;inset:0;width:100vw;height:100vh;z-index:2;pointer-events:none;overflow:hidden";
-  document.body.appendChild(holder);
-  var dk=document.documentElement.dataset.theme==="dark";
-  snowShader=new SnowShader(holder,{{dark:dk}});
-  snowShader.start();
-  window.addEventListener("resize",snowShaderResize);
-}}
-function snowShaderResize(){{
-  if(snowShader)snowShader.resize();
-}}
-function snowShaderStop(){{
-  window.removeEventListener("resize",snowShaderResize);
-  if(snowShader){{snowShader.stop();snowShader=null}}
-  var el=document.getElementById("snow-shader");if(el)el.remove();
-}}
-var vbs=document.querySelectorAll("button.variant"),cv=localStorage.getItem("variant")||"1";
-document.documentElement.dataset.variant=cv;
-function winterSky(){{var dk=document.documentElement.dataset.theme==="dark";return dk?"linear-gradient(180deg, #1a1e2e, #202838 40%, #252d38 70%, #1e2228) fixed":"linear-gradient(180deg, #d0d8e8, #c5cfe0 40%, #b8c8d8 70%, #d0d0d5) fixed"}}
-function snowAllStop(){{snowCanvasStop();snowShaderStop()}}
-function setV(v){{cv=v;document.documentElement.dataset.variant=v;localStorage.setItem("variant",v);for(var i=0;i<vbs.length;i++)vbs[i].classList.toggle("active",vbs[i].dataset.v===v);if(v==="6"){{snowAllStop();document.documentElement.style.removeProperty("--sunset-bg");rainFxStart("photo")}}else if(v==="9"){{snowAllStop();rainFxStop();document.documentElement.style.setProperty("--sunset-bg",winterSky());snowCanvasStart()}}else if(v==="11"){{snowAllStop();rainFxStop();document.documentElement.style.setProperty("--sunset-bg",winterSky());snowShaderStart()}}else{{snowAllStop();rainFxStop();document.documentElement.style.removeProperty("--sunset-bg")}}}}
-setV(cv);
-for(var vi=0;vi<vbs.length;vi++)vbs[vi].onclick=function(){{setV(this.dataset.v)}};
 var arts=Array.from(document.querySelectorAll("main > article")),sel=-1;
 function pick(i){{
 if(sel>=0&&sel<arts.length){{arts[sel].classList.remove("selected");arts[sel].classList.remove("entering")}}
@@ -1009,52 +662,6 @@ e.preventDefault();history.back()
 }}
 }});
 window.addEventListener("pageshow",function(e){{if(e.persisted){{var el=document.querySelector(".entering");if(el)el.classList.remove("entering")}}}});
-
-/* Dynamic glass pane effect */
-var root=document.documentElement,raf=0,mql=matchMedia("(min-width:70ch)");
-function glassMove(cx,cy,ww,wh){{
-  for(var i=0;i<arts.length;i++){{
-    var r=arts[i].getBoundingClientRect();
-    var rx=(cx-(r.left+r.width/2))/r.width;
-    var ry=(cy-(r.top+r.height/2))/r.height;
-    rx=Math.max(-1,Math.min(1,rx));
-    ry=Math.max(-1,Math.min(1,ry));
-    arts[i].style.transform="rotateY("+(rx*.5)+"deg) rotateX("+(-ry*.5)+"deg)";
-  }}
-}}
-function glassReset(){{
-  for(var i=0;i<arts.length;i++){{
-    arts[i].style.transform="";
-  }}
-}}
-
-/* Mobile gyro glass effect */
-var gyroActive=false;
-function initGyro(){{
-  if(gyroActive)return;
-  gyroActive=true;
-  window.addEventListener("deviceorientation",function(e){{
-    if(raf)return;
-    raf=requestAnimationFrame(function(){{
-      raf=0;
-      var g=Math.max(-45,Math.min(45,e.gamma||0));
-      var b=Math.max(-45,Math.min(45,(e.beta||0)-45));
-      var nx=g/45,ny=b/45;
-      for(var i=0;i<arts.length;i++){{
-        arts[i].style.transform="rotateY("+(nx*.5)+"deg) rotateX("+(-ny*.5)+"deg)";
-      }}
-    }});
-  }});
-}}
-if(typeof DeviceOrientationEvent!=="undefined"&&typeof DeviceOrientationEvent.requestPermission==="function"){{
-  document.addEventListener("click",function once(){{
-    DeviceOrientationEvent.requestPermission().then(function(s){{if(s==="granted")initGyro()}});
-    document.removeEventListener("click",once);
-  }});
-}}else if("DeviceOrientationEvent" in window){{
-  initGyro();
-}}
-
 }}();
 </script>
 </body>
