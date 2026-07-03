@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="en" data-type="serif" data-sn="inline">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entry page — esko.bar</title>
+<style>
+/* ================================================================
+   Entry page design reference — plain pages, glass chrome
+   The header floats within the content column, not full-bleed.
+   Drag the edge handle to set reading width. t = typeface,
+   d = theme. Sidenotes move to the margin when there is room.
+   ================================================================ */
+
+:root {
+  color-scheme: light dark;
+
+  --violet: #a123f6;
+  --violet-soft: light-dark(rgba(161, 35, 246, .09), rgba(161, 35, 246, .14));
+
+  --bg:     light-dark(#f5f4f0, #121514);
+  --ink:    light-dark(#20231f, #d9ded9);
+  --soft:   light-dark(#43473f, #b4bab2);
+  --faint:  light-dark(#71766c, #8b918a);
+  --hair:   light-dark(rgba(46, 62, 50, .18), rgba(178, 205, 184, .16));
+
+  /* forest-green glass (chrome only) */
+  --glass-bg:        light-dark(rgba(247, 251, 248, .72), rgba(23, 30, 26, .62));
+  --glass-bg-solid:  light-dark(#f2f6f2, #1a211c);
+  --glass-border:    light-dark(rgba(63, 110, 78, .30), rgba(150, 205, 168, .22));
+  --glass-rim-top:   light-dark(rgba(255, 255, 255, .55), rgba(255, 255, 255, .09));
+  --glass-rim-bot:   light-dark(rgba(63, 110, 78, .10),  rgba(0, 0, 0, .25));
+  --glass-shadow:    light-dark(rgba(30, 50, 38, .30),   rgba(0, 0, 0, .55));
+
+  --tag-bg:     light-dark(rgba(50, 140, 160, .13), rgba(80, 175, 195, .13));
+  --tag-ink:    light-dark(#1f606e, #93d2de);
+
+  --code-bg:    light-dark(#f0efe9, #191e1a);
+  --code-hair:  light-dark(rgba(46, 62, 50, .14), rgba(178, 205, 184, .12));
+
+  /* pandoc highlight tokens — kate (light) / breezedark (dark) */
+  --hl-kw: light-dark(#1f1c1b, #cfcfc2);
+  --hl-dt: light-dark(#0057ae, #2980b9);
+  --hl-st: light-dark(#bf0303, #f44f4f);
+  --hl-co: light-dark(#898887, #7a7c7d);
+  --hl-fu: light-dark(#644a9b, #8e44ad);
+  --hl-dv: light-dark(#b08000, #f67400);
+  --hl-at: light-dark(#0057ae, #2980b9);
+
+  --serif: ui-serif, "New York", Georgia, "Times New Roman", serif;
+  --sans:  system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --content-w: 42rem;   /* reader-adjustable via the edge handle */
+}
+
+* { margin: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  line-height: 1.72;
+  padding-inline: 1.25rem;
+  -webkit-font-smoothing: antialiased;
+}
+html[data-type="sans"] body { font-family: var(--sans); letter-spacing: .001em; }
+
+:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection { background: rgba(161, 35, 246, .25); }
+
+a { color: var(--violet); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* ---------- floating glass header, confined to the content column ---------- */
+
+body > header {
+  position: sticky;
+  top: .75rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .5rem .85rem;
+  max-width: var(--content-w);
+  margin: .8rem auto 0;
+  padding: .48rem .55rem .48rem 1.05rem;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim-top),
+    inset 0 -1px 0 var(--glass-rim-bot),
+    0 12px 32px -14px var(--glass-shadow);
+  font-family: var(--sans);
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  body > header { background: var(--glass-bg-solid); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  body > header {
+    background: var(--glass-bg-solid);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+body > header > strong {
+  font-size: .95rem;
+  font-weight: 650;
+  letter-spacing: -.01em;
+}
+body > header > strong > span { color: var(--violet); }
+
+body > header > nav > a {
+  display: inline-block;
+  padding: .26rem .78rem;
+  border-radius: 999px;
+  font-size: .78rem;
+  font-weight: 550;
+  color: var(--violet);
+  background: var(--violet-soft);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-rim-top);
+}
+body > header > nav > a:hover { text-decoration: none; filter: brightness(1.06); }
+
+/* ---------- mockup controls ---------- */
+
+#controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .45rem;
+  margin-left: auto;
+}
+
+#controls fieldset {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: light-dark(rgba(255, 255, 255, .35), rgba(0, 0, 0, .25));
+  box-shadow: inset 0 1px 0 var(--glass-rim-top);
+}
+
+#controls label {
+  position: relative;
+  padding: .2rem .65rem;
+  border-radius: 999px;
+  font-size: .72rem;
+  font-weight: 550;
+  color: var(--faint);
+  cursor: pointer;
+  user-select: none;
+}
+#controls label:has(:checked) {
+  color: var(--ink);
+  background: light-dark(#ffffff, #313a34);
+  box-shadow: 0 1px 3px light-dark(rgba(30, 50, 38, .25), rgba(0, 0, 0, .5));
+}
+#controls input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+#controls > button {
+  padding: .24rem .68rem;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: light-dark(rgba(255, 255, 255, .35), rgba(0, 0, 0, .25));
+  box-shadow: inset 0 1px 0 var(--glass-rim-top);
+  color: var(--faint);
+  font: 550 .72rem var(--sans);
+  cursor: pointer;
+}
+#controls > button:hover { color: var(--ink); }
+
+kbd { font: 500 .68em var(--mono); color: var(--faint); }
+
+/* ---------- reading-width handle ---------- */
+
+#grip {
+  position: fixed;
+  top: 50%;
+  translate: 0 -50%;
+  left: calc(50% + var(--content-w) / 2 + .55rem);
+  width: 1.1rem;
+  height: 3.8rem;
+  display: grid;
+  place-items: center;
+  cursor: col-resize;
+  touch-action: none;
+  border-radius: 999px;
+}
+#grip::before {
+  content: "";
+  width: 4px;
+  height: 2.4rem;
+  border-radius: 999px;
+  background: var(--hair);
+  transition: background .15s ease, height .15s ease;
+}
+#grip:hover::before,
+#grip:focus-visible::before,
+#grip.active::before { background: var(--violet); height: 3.1rem; }
+@media (prefers-reduced-motion: reduce) { #grip::before { transition: none; } }
+@media (max-width: 52rem) { #grip { display: none; } }
+
+/* ---------- the entry ---------- */
+
+main {
+  max-width: var(--content-w);
+  margin-inline: auto;
+  padding: 2.7rem 0 5rem;
+}
+
+article > header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .6rem;
+  margin-bottom: 2.2rem;
+}
+
+article > header time {
+  font: 500 .74rem var(--mono);
+  font-feature-settings: "tnum";
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+article > header a {
+  padding: .14rem .62rem;
+  border-radius: 999px;
+  font: 550 .72rem var(--sans);
+  color: var(--tag-ink);
+  background: var(--tag-bg);
+  border: 1px solid var(--glass-border);
+}
+article > header a:hover { text-decoration: none; filter: brightness(1.08); }
+
+h1 {
+  font-size: clamp(1.75rem, 4.5vw, 2.35rem);
+  font-weight: 700;
+  line-height: 1.14;
+  letter-spacing: -.018em;
+  margin-bottom: 1.3rem;
+  text-wrap: balance;
+}
+
+h2 {
+  font-size: 1.32rem;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -.012em;
+  margin: 2.6rem 0 .9rem;
+}
+
+p { margin-bottom: 1.15rem; }
+p > code, li > code {
+  font: .86em var(--mono);
+  padding: .1em .35em;
+  border-radius: 5px;
+  background: var(--code-bg);
+  border: 1px solid var(--code-hair);
+}
+
+/* ---------- blockquote with discreet copy-as-quote ---------- */
+
+blockquote {
+  position: relative;
+  margin: 1.8rem 0;
+  padding-left: 1.2rem;
+  padding-right: 4.5rem;
+  border-left: 2px solid var(--violet);
+  font-style: italic;
+  color: var(--soft);
+}
+blockquote footer {
+  margin-top: .35rem;
+  font: .8rem var(--sans);
+  font-style: normal;
+  color: var(--faint);
+}
+blockquote > button {
+  position: absolute;
+  top: .05rem;
+  right: 0;
+  padding: .16rem .6rem;
+  border-radius: 999px;
+  border: 1px solid var(--hair);
+  background: var(--bg);
+  color: var(--faint);
+  font: 550 .68rem var(--sans);
+  font-style: normal;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s ease, color .15s ease;
+}
+blockquote:hover > button,
+blockquote > button:focus-visible { opacity: 1; }
+blockquote > button:hover { color: var(--violet); border-color: var(--violet); }
+@media (hover: none) { blockquote > button { opacity: .7; } }
+@media (prefers-reduced-motion: reduce) { blockquote > button { transition: none; } }
+
+/* ---------- sidenotes: inline by default, margin when there is room ---------- */
+
+sup {
+  font: 650 .72em var(--sans);
+  color: var(--violet);
+  line-height: 0;
+}
+
+.sn {
+  display: block;
+  margin: .95rem 0 1.15rem;
+  padding: .55rem .9rem .55rem 1rem;
+  border-left: 2px solid rgba(161, 35, 246, .55);
+  border-radius: 0 9px 9px 0;
+  background: var(--violet-soft);
+  font-size: .85rem;
+  line-height: 1.55;
+  color: var(--soft);
+  font-family: var(--sans);
+}
+.sn > sup { margin-right: .35em; }
+
+html[data-sn="margin"] .sn {
+  float: right;
+  clear: right;
+  width: 15.5rem;
+  margin: .15rem -18.5rem 1rem 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  font-size: .79rem;
+  color: var(--faint);
+}
+
+/* ---------- code blocks ---------- */
+
+pre {
+  margin: 1.5rem 0;
+  padding: 1rem 1.2rem;
+  border-radius: 11px;
+  background: var(--code-bg);
+  border: 1px solid var(--code-hair);
+  overflow-x: auto;
+}
+pre code { font: .84rem/1.62 var(--mono); }
+code .kw { color: var(--hl-kw); font-weight: 600; }
+code .dt { color: var(--hl-dt); }
+code .st { color: var(--hl-st); }
+code .co { color: var(--hl-co); font-style: italic; }
+code .fu { color: var(--hl-fu); }
+code .dv { color: var(--hl-dv); }
+code .at { color: var(--hl-at); }
+
+/* ---------- admonition (AsciiDoc NOTE) ---------- */
+
+aside {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: .85rem;
+  align-items: baseline;
+  margin: 1.6rem 0;
+  padding: .85rem 1.1rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  background: light-dark(rgba(88, 148, 106, .08), rgba(88, 148, 106, .10));
+  font-size: .93rem;
+}
+aside > b {
+  font: 700 .68rem var(--sans);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: light-dark(#3c6e4e, #9ecfae);
+}
+aside > p { margin: 0; color: var(--soft); }
+
+/* ---------- video figure ---------- */
+
+figure { margin: 1.7rem 0; }
+
+figure > a {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  background:
+    radial-gradient(60rem 30rem at 80% -20%,
+      rgba(161, 35, 246, .35), rgba(161, 35, 246, 0) 60%),
+    radial-gradient(50rem 28rem at 10% 120%,
+      rgba(88, 148, 106, .45), rgba(88, 148, 106, 0) 60%),
+    linear-gradient(160deg, #232a26, #101412);
+}
+
+figure > a > span:first-child {
+  display: grid;
+  place-items: center;
+  width: 4rem;
+  height: 4rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .14);
+  backdrop-filter: blur(8px) saturate(160%);
+  -webkit-backdrop-filter: blur(8px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, .35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4), 0 8px 24px rgba(0, 0, 0, .45);
+  transition: transform .18s ease;
+}
+figure > a:hover > span:first-child { transform: scale(1.07); }
+@media (prefers-reduced-motion: reduce) {
+  figure > a > span:first-child { transition: none; }
+}
+figure > a > span:first-child::before {
+  content: "";
+  margin-left: .35rem;
+  border-style: solid;
+  border-width: .72rem 0 .72rem 1.2rem;
+  border-color: rgba(0, 0, 0, 0) rgba(0, 0, 0, 0) rgba(0, 0, 0, 0) #fff;
+}
+
+figure > a > span:last-child {
+  position: absolute;
+  right: .7rem;
+  bottom: .6rem;
+  padding: .12rem .5rem;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, .55);
+  color: #eee;
+  font: 550 .72rem var(--mono);
+}
+
+figcaption {
+  margin-top: .55rem;
+  font: .8rem var(--sans);
+  color: var(--faint);
+}
+figcaption code {
+  font: .92em var(--mono);
+  padding: .08em .3em;
+  border-radius: 4px;
+  background: var(--code-bg);
+  border: 1px solid var(--code-hair);
+}
+
+/* ---------- entry footer & hint ---------- */
+
+article > footer {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--hair);
+  font: .82rem var(--sans);
+  color: var(--faint);
+  display: flex;
+  gap: 1rem;
+}
+
+main > p:last-child {
+  margin-top: 2.5rem;
+  text-align: center;
+  font: .74rem var(--sans);
+  color: var(--faint);
+}
+</style>
+</head>
+<body>
+
+<header>
+  <strong>esko<span>.bar</span></strong>
+  <nav><a href="#">&#8598; Timeline</a></nav>
+  <div id="controls">
+    <fieldset aria-label="Typeface">
+      <label><input type="radio" name="type" value="serif" checked>Serif</label>
+      <label><input type="radio" name="type" value="sans">Sans</label>
+    </fieldset>
+    <button id="theme" type="button" aria-label="Cycle theme">Auto</button>
+  </div>
+</header>
+
+<div id="grip" role="slider" tabindex="0" aria-label="Reading width"
+     aria-orientation="horizontal" aria-valuemin="480" aria-valuemax="1160"
+     aria-valuenow="672" title="Drag to set reading width. Double-click resets."></div>
+
+<main>
+<article>
+  <header>
+    <time datetime="2026-07-03">2026-07-03</time>
+    <a href="#">design</a>
+    <a href="#">meta</a>
+  </header>
+
+  <h1>Publish from a folder</h1>
+
+  <p>
+    Every entry on this site is a file — or a folder — sitting in one
+    directory that syncs through iCloud&nbsp;Drive. The folder&rsquo;s name is the
+    address<sup>1</sup>:
+    <span class="sn"><sup>1</sup>Clean names, native dates. The created date
+    is read from the filesystem the first time the server sees the entry and
+    remembered, so later syncs can&rsquo;t lose it. No timestamp prefixes.</span>
+    tag <code>open-source-licenses/</code> with <code>public</code> and
+    <a href="#">esko.bar/open-source-licenses</a> exists. Rename the folder and
+    the address follows; the old one redirects.
+  </p>
+
+  <p>
+    The whole pipeline is the operating system. Finder and Files.app are the
+    admin panel, tags are the taxonomy, and the creation date is the
+    publication date. Nothing goes live by accident<sup>2</sup> —
+    <span class="sn"><sup>2</sup>Fail closed: anything without the
+    <code>public</code> tag is invisible to the web, even if a sync client
+    misbehaves.</span>
+    the server only serves what carries the <code>public</code> tag.
+  </p>
+
+  <aside>
+    <b>Note</b>
+    <p>An entry is live only while it carries the <code>public</code> tag.
+    Remove the tag and the address answers 410 Gone — deliberately absent,
+    not broken.</p>
+  </aside>
+
+  <blockquote>
+    <button type="button" aria-label="Copy as quote">&#10077; quote</button>
+    <p>Cool URIs don&rsquo;t change.</p>
+    <footer>— Tim Berners-Lee, 1998</footer>
+  </blockquote>
+
+  <h2>Written in AsciiDoc</h2>
+
+  <p>
+    This page is a single <code>.adoc</code> file, rendered by Asciidoctor.
+    Admonitions, includes, and media macros work exactly as
+    written<sup>3</sup>:
+    <span class="sn"><sup>3</sup>CommonMark gets the same power a different
+    way: paste a bare URL on its own line and the embed system turns it into
+    a player or card.</span>
+  </p>
+
+<pre><code><span class="fu">video::</span>RvRhUHTV_8k<span class="at">[youtube]</span>
+<span class="fu">video::</span>demo.mp4<span class="at">[width=</span><span class="dv">640</span><span class="at">,start=</span><span class="dv">60</span><span class="at">,opts=autoplay]</span></code></pre>
+
+  <figure>
+    <a href="#" aria-label="Play video"><span></span><span>3:42</span></a>
+    <figcaption>How this site publishes itself. Source:
+      <code>video::RvRhUHTV_8k[youtube]</code></figcaption>
+  </figure>
+
+  <h2>And code, of course</h2>
+
+  <p>
+    Source blocks are highlighted the same way in every format — Pandoc and
+    Asciidoctor share one token palette, themed for light and dark:
+  </p>
+
+<pre><code><span class="co">/// Only entries tagged `public` are served.</span>
+<span class="kw">fn</span> <span class="fu">is_published</span>(entry: &amp;<span class="dt">Entry</span>) -&gt; <span class="dt">bool</span> {
+    entry.tags.<span class="fu">iter</span>().<span class="fu">any</span>(|tag| tag == <span class="st">"public"</span>)
+}</code></pre>
+
+  <p>
+    If you can tag a file, you can publish. That is the entire interface.
+  </p>
+
+  <footer>
+    <a href="#">source</a>
+    <a href="#">timeline</a>
+  </footer>
+</article>
+
+<p>
+  drag the edge handle to set your reading width (double-click resets)
+  &nbsp;&middot;&nbsp; <kbd>t</kbd> typeface &nbsp;&middot;&nbsp;
+  <kbd>d</kbd> theme &nbsp;&middot;&nbsp;
+  sidenotes move to the margin when there is room
+</p>
+</main>
+
+<script>
+(() => {
+  const root = document.documentElement;
+  const store = window.localStorage;
+  const themes = ["auto", "light", "dark"];
+  const themeBtn = document.getElementById("theme");
+  const grip = document.getElementById("grip");
+  const main = document.querySelector("main");
+
+  /* ---------- typeface & theme ---------- */
+
+  const setType = v => {
+    root.dataset.type = v;
+    document.querySelector(`input[name=type][value=${v}]`).checked = true;
+    store.setItem("mock-type", v);
+  };
+  const setTheme = v => {
+    root.style.colorScheme = v === "auto" ? "light dark" : v;
+    themeBtn.textContent = v[0].toUpperCase() + v.slice(1);
+    store.setItem("mock-theme", v);
+  };
+
+  setType(store.getItem("mock-type") || "serif");
+  setTheme(store.getItem("mock-theme") || "auto");
+
+  document.querySelectorAll("input[name=type]").forEach(i =>
+    i.addEventListener("change", () => setType(i.value)));
+  themeBtn.addEventListener("click", () => {
+    const cur = store.getItem("mock-theme") || "auto";
+    setTheme(themes[(themes.indexOf(cur) + 1) % themes.length]);
+  });
+
+  document.addEventListener("keydown", e => {
+    if (e.target.closest("input, textarea, [role=slider]") || e.metaKey || e.ctrlKey) return;
+    if (e.key === "t") setType(root.dataset.type === "serif" ? "sans" : "serif");
+    else if (e.key === "d") themeBtn.click();
+  });
+
+  /* ---------- reader-adjustable content width ---------- */
+
+  const MIN = 480;
+  const maxW = () => Math.min(1160, window.innerWidth - 64);
+  const clamp = v => Math.max(MIN, Math.min(maxW(), v));
+  let width = parseFloat(store.getItem("mock-width")) || null;
+
+  const updateSidenotes = () => {
+    const w = main.getBoundingClientRect().width;
+    const margin = (window.innerWidth - w) / 2;
+    root.dataset.sn = margin >= 330 ? "margin" : "inline";
+  };
+
+  const apply = () => {
+    if (width) root.style.setProperty("--content-w", clamp(width) + "px");
+    else root.style.removeProperty("--content-w");
+    grip.setAttribute("aria-valuenow",
+      Math.round(main.getBoundingClientRect().width));
+    grip.setAttribute("aria-valuemax", Math.round(maxW()));
+    updateSidenotes();
+  };
+
+  let dragging = false;
+  grip.addEventListener("pointerdown", e => {
+    dragging = true;
+    grip.classList.add("active");
+    grip.setPointerCapture(e.pointerId);
+  });
+  grip.addEventListener("pointermove", e => {
+    if (!dragging) return;
+    width = clamp((e.clientX - window.innerWidth / 2) * 2);
+    apply();
+  });
+  grip.addEventListener("pointerup", () => {
+    dragging = false;
+    grip.classList.remove("active");
+    if (width) store.setItem("mock-width", width);
+  });
+  grip.addEventListener("dblclick", () => {
+    width = null;
+    store.removeItem("mock-width");
+    apply();
+  });
+  grip.addEventListener("keydown", e => {
+    const cur = main.getBoundingClientRect().width;
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") width = clamp(cur + 24);
+    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") width = clamp(cur - 24);
+    else if (e.key === "Home") width = null;
+    else return;
+    e.preventDefault();
+    if (width) store.setItem("mock-width", width);
+    else store.removeItem("mock-width");
+    apply();
+  });
+  window.addEventListener("resize", apply);
+  apply();
+
+  /* ---------- copy as quote ---------- */
+
+  const copyText = async text => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.append(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+  };
+
+  document.querySelectorAll("blockquote").forEach(bq => {
+    const btn = bq.querySelector("button");
+    if (!btn) return;
+    const original = btn.innerHTML;
+    btn.addEventListener("click", async () => {
+      const lines = [...bq.querySelectorAll("p")].map(p => p.textContent.trim());
+      const cite = bq.querySelector("footer")?.textContent.trim();
+      const base = location.href.split("#")[0];
+      const url = base + "#:~:text=" + encodeURIComponent(lines[0]);
+      const text = "“" + lines.join("\n") + "”"
+        + (cite ? "\n" + cite : "")
+        + "\nvia " + url;
+      await copyText(text);
+      btn.textContent = "copied ✓";
+      setTimeout(() => { btn.innerHTML = original; }, 1400);
+    });
+  });
+})();
+</script>
+</body>
+</html>
