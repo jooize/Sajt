@@ -314,12 +314,16 @@ Structure carries the beauty. Reference realization:
     after two rejected takes the same day: an underline, a soft violet
     tint, then a solid-violet two-tone capsule — like Finder, a quiet
     grey capsule won): text, dot, and count all keep their colors; only
-    the background says "selected". The pill is drawn entirely with
-    box-shadow, which has zero layout effect — the padding/negative-
-    margin mirror still moved things a rounding pixel, box-shadow cannot.
-    The count rides a touch above the baseline (a visual-only nudge
-    shared by all cloud counts). `Esc` or a second click clears — the
-    margin "Esc clears" hint was tried and removed same-day (clutter).
+    the background says "selected". The pill is an absolutely positioned
+    `::after` behind the tag (`isolation: isolate`, negative z-index):
+    out of flow, so toggling cannot shift layout by even a pixel — the
+    padding/negative-margin mirror moved a rounding pixel, and box-shadow
+    spread flattened the capsule's ends; this construction has neither
+    flaw, with the radius rounding the pill's own box into true
+    semicircular ends. The count rides a touch above the baseline (a
+    visual-only nudge shared by all cloud counts). `Esc` or a second
+    click clears — the margin "Esc clears" hint was tried and removed
+    same-day (clutter).
 - **Three separate signals — DECIDED 2026-07-04** (the hybrid `/favorites`
   is rejected: one address showing different people different content is two
   features wearing one name):

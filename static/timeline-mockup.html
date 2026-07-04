@@ -12,8 +12,9 @@
    The cloud block sits left but wraps into centered lines within
    its own width — cloudy, not left-leaning. Clicking a topic
    filters the timeline in place; the selected topic wears a quiet
-   Finder-grey pill drawn with box-shadow (zero layout effect, so
-   nothing shifts a pixel on toggle; Esc or a second click clears).
+   Finder-grey pill drawn as an absolute ::after (out of flow, so
+   nothing shifts a pixel on toggle, and its capsule ends are true
+   semicircles; Esc or a second click clears).
    Below: the saved-bookmarks count hangs in the left margin
    (x-aligned with the entries' bookmark marks); the level control
    is a stepped-bars icon (lit to the current level, explained on
@@ -120,12 +121,19 @@ main {
 }
 #cloud a:hover { color: var(--violet) !important; text-decoration: none; }
 /* the selected topic wears a quiet Finder-grey pill; text, dot, and
-   count keep their colors. Drawn entirely with box-shadow, which has
-   zero layout effect — nothing can shift by even a pixel on toggle */
-#cloud a[aria-current="true"] {
-  background: var(--pill);
-  box-shadow: 0 0 0 .32em var(--pill);
+   count keep their colors. The pill is an absolutely positioned
+   ::after — out of flow, so nothing can shift by even a pixel on
+   toggle, and the radius rounds the pill's own box, so its ends are
+   true semicircles (box-shadow spread flattened them) */
+#cloud a { position: relative; }
+#cloud a[aria-current="true"] { isolation: isolate; }
+#cloud a[aria-current="true"]::after {
+  content: "";
+  position: absolute;
+  inset: -.14em -.6em;
+  z-index: -1;
   border-radius: 999px;
+  background: var(--pill);
 }
 #cloud a::before {
   content: "";
