@@ -6,20 +6,22 @@
 <title>esko.bar — Timeline</title>
 <style>
 /* ================================================================
-   Timeline design reference, v4.1.
+   Timeline design reference, v4.2.
    The tag cloud IS the header — no site nav at all (the timeline
    is the site root; a "Timeline" link on the timeline is noise).
    The cloud is narrow, so it wraps into a few centered lines —
    grouped to the middle, cloud-shaped. Clicking a topic filters
-   the timeline in place; the selected topic wears a pill (name |
-   count, hairline split) and a quiet "Esc clears" sits in the
-   margin left of the cloud. Below: the saved-bookmarks count
-   hangs in the left margin (x-aligned with the entries' bookmark
-   marks), a macOS-style filter mark (three shrinking lines) leads
-   everything/notable/best/favorites, and search is a magnifier on
-   its own line, under "everything", expanding on focus.
+   the timeline in place; the selected topic wears a two-tone
+   pill: solid violet capsule, count split into a lighter segment
+   (Esc or a second click clears — no hint text). Below: the
+   saved-bookmarks count hangs in the left margin (x-aligned with
+   the entries' bookmark marks); the level control is a stepped-
+   bars icon (lit to the current level) plus a segmented control —
+   everything/notable/best — with ★ favorites as an independent
+   toggle that composes with the level; search is a magnifier on
+   its own line, flush left under the bars, expanding on focus.
    Month headings are sentence case, slightly larger, bold.
-   Alternative filter-control shapes: filter-control-mockup.html.
+   The full shape comparison lives in filter-control-mockup.html.
    Rows unchanged from v3: uniform titles, hairline quality meter
    with threshold ticks, hanging ★/bookmark, vertical tags.
    Keyboard: ? shows all shortcuts.
@@ -100,7 +102,7 @@ main {
   justify-content: center;
   column-gap: 1.4rem;
   row-gap: .5rem;
-  padding: 1rem .5rem 1.8rem;
+  padding: 1rem .5rem 2.6rem;
   line-height: 1.25;
 }
 
@@ -112,20 +114,28 @@ main {
   letter-spacing: -.011em;
 }
 #cloud a:hover { color: var(--violet) !important; text-decoration: none; }
-/* the selected topic wears a pill: name | count, split by a hairline */
+/* the selected topic wears a two-tone pill: solid violet capsule,
+   the count split off into its own lighter segment */
 #cloud a[aria-current="true"] {
-  color: var(--violet) !important;
-  background: var(--violet-soft);
+  color: #fff !important;
+  background: var(--violet);
   border-radius: 999px;
-  /* padding mirrored by negative margin so neighbors don't reflow */
-  padding: .14em .6em;
-  margin: -.14em -.6em;
+  overflow: hidden;
+  /* padding mirrored by negative margin so neighbors don't reflow
+     (the count segment supplies the right-side padding) */
+  padding: .18em 0 .18em .6em;
+  margin: -.18em -.6em;
 }
+#cloud a[aria-current="true"]:hover { color: #fff !important; }
+#cloud a[aria-current="true"]::before { background: #fff; }
 #cloud a[aria-current="true"] > small {
-  margin-left: .12em;
-  padding-left: .5em;
-  border-left: 1px solid var(--hair);
-  color: var(--faint);
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  margin-block: -.18em;
+  padding-inline: .55em .6em;
+  background: light-dark(rgba(255, 255, 255, .3), rgba(255, 255, 255, .18));
+  color: #fff;
 }
 #cloud a::before {
   content: "";
@@ -146,23 +156,6 @@ main {
   font-feature-settings: "tnum";
 }
 
-/* the quiet way out, in the margin left of the cloud */
-#cloud > button {
-  position: absolute;
-  right: 100%;
-  margin-right: 1.2rem;
-  top: 50%;
-  translate: 0 -50%;
-  padding: 0;
-  border: none;
-  background: none;
-  font: 500 .7rem var(--sans);
-  color: var(--faint);
-  white-space: nowrap;
-  cursor: pointer;
-}
-#cloud > button:hover { color: var(--violet); }
-#cloud > button[hidden] { display: none; }
 
 /* ---------- controls: one quiet line, no rule ---------- */
 
@@ -181,8 +174,8 @@ main > form {
 #navsaved {
   position: absolute;
   left: -3.4rem;
-  /* centered on the first control line (search sits on the second) */
-  top: .6rem;
+  /* centered on the segmented control's line (search sits below) */
+  top: .95rem;
   translate: 0 -50%;
   display: inline-flex;
   align-items: center;
@@ -212,15 +205,18 @@ main > form p {
   gap: .55rem;
   align-items: center;
 }
-/* the filter mark, macOS-style: three shrinking lines */
+/* the stepped bars: a staircase that echoes the current level */
 main > form p > svg {
-  width: .85rem;
-  height: .85rem;
+  width: .9rem;
+  height: .9rem;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.7;
+  stroke-width: 2;
   stroke-linecap: round;
 }
+main > form p > svg path { opacity: .3; }
+main > form p > svg path[data-on] { opacity: 1; }
+
 main > form p button {
   padding: 0;
   border: none;
@@ -236,11 +232,41 @@ main > form p button[aria-pressed="true"] {
   box-shadow: 0 2px 0 -.5px var(--violet);
 }
 
+/* segmented control: a sliding thumb in a quiet capsule */
+main > form p > span {
+  position: relative;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding: 2px;
+  border-radius: 999px;
+  background: light-dark(rgba(46, 62, 50, .07), rgba(178, 205, 184, .09));
+}
+main > form p > span > u {
+  position: absolute;
+  inset-block: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / 3);
+  border-radius: 999px;
+  background: light-dark(#fff, rgba(178, 205, 184, .14));
+  box-shadow: 0 1px 3px light-dark(rgba(20, 24, 20, .16), rgba(0, 0, 0, .4));
+  transition: left .18s ease;
+}
+main > form p > span > button {
+  position: relative;
+  padding: .3em .9em;
+  border-radius: 999px;
+}
+main > form p > span > button[aria-pressed="true"] {
+  color: var(--ink);
+  box-shadow: none;
+}
+
 /* search: a magnifier that expands on focus (or while it holds text).
-   Its own line, indented so the icon sits under "everything". */
+   Its own line, flush with the left edge — under the stepped bars. */
 main > form search {
   flex-basis: 100%;
-  margin: .35rem 0 0 1.4rem;
+  margin: .4rem 0 0;
   display: inline-flex;
   align-items: center;
   gap: .35rem;
@@ -429,10 +455,6 @@ main article aside > button[aria-pressed="true"] svg { fill: currentColor; }
   main article aside > button,
   main > form search input { transition: none; }
 }
-@media (max-width: 56rem) {
-  /* no margin for the hint to live in; tapping the pill clears instead */
-  #cloud > button { display: none; }
-}
 
 /* --- content: every title the same size ---------------------- */
 
@@ -563,11 +585,14 @@ body > footer button:hover { color: var(--violet); }
       <output>0</output>
     </a>
     <p aria-label="How much to show">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7.5 12h9M11 17h2"/></svg>
-      <button type="button" data-pick="0" aria-pressed="true">everything</button>
-      <button type="button" data-pick="1" aria-pressed="false">notable</button>
-      <button type="button" data-pick="2" aria-pressed="false">best</button>
-      <button type="button" data-pick="fav" aria-pressed="false"><b>★</b> favorites</button>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 17.5v-3"/><path d="M12 17.5v-7"/><path d="M18 17.5v-11"/></svg>
+      <span>
+        <u></u>
+        <button type="button" data-level="0" aria-pressed="true">everything</button>
+        <button type="button" data-level="1" aria-pressed="false">notable</button>
+        <button type="button" data-level="2" aria-pressed="false">best</button>
+      </span>
+      <button type="button" id="favonly" aria-pressed="false"><b>★</b> favorites</button>
     </p>
     <search>
       <button type="button" id="qbtn" aria-label="Search">
@@ -667,7 +692,10 @@ body > footer button:hover { color: var(--violet); }
   const tier = q => q >= .78 ? 3 : q >= .5 ? 2 : 1;
   const pct = q => Math.max(1, Math.round((1 - q) * 100));
 
-  let pick = 0, query = '', view = 'all', activeTag = null, selected = -1;
+  /* favorites is its own axis, so it composes with the level:
+     "best" + ★ = my favorite best things */
+  let level = 0, favOnly = false, query = '', view = 'all',
+    activeTag = null, selected = -1;
 
   const mount = document.getElementById('mount');
   const cloud = document.getElementById('cloud');
@@ -681,7 +709,8 @@ body > footer button:hover { color: var(--violet); }
 
   const matches = e => {
     if (view === 'saved' && !saved.has(keyOf(e))) return false;
-    if (pick === 'fav' ? !e.fav : tier(e.q) < pick + 1) return false;
+    if (tier(e.q) < level + 1) return false;
+    if (favOnly && !e.fav) return false;
     if (activeTag && !e.tags.includes(activeTag)) return false;
     if (!query) return true;
     return [e.label ?? '', e.sub, e.kind, e.ext, ...e.tags]
@@ -721,14 +750,7 @@ body > footer button:hover { color: var(--violet); }
         style="--tag:${TAG[t] ?? 'var(--tag-gray)'};font-size:${sizeOf(s.n)}rem;${ink(s.last)}"
         title="${s.n} ${s.n === 1 ? 'entry' : 'entries'}, last active ${s.last}">${
         esc(t)} <small>${s.n}</small></a>`;
-    }).join('') +
-      '<button type="button" id="cleartag" hidden title="Clear the topic filter">' +
-      '<kbd>Esc</kbd> clears</button>';
-    document.getElementById('cleartag').addEventListener('click', () => {
-      activeTag = null;
-      selected = -1;
-      paint();
-    });
+    }).join('');
   }
 
   const row = (e, i) => `
@@ -779,19 +801,34 @@ body > footer button:hover { color: var(--violet); }
     navsaved.setAttribute('aria-current', view === 'saved' ? 'page' : 'false');
     cloud.querySelectorAll('a').forEach(a =>
       a.setAttribute('aria-current', a.dataset.tag === activeTag ? 'true' : 'false'));
-    document.getElementById('cleartag').hidden = !activeTag;
   }
 
   /* ---------- controls ---------- */
 
-  document.querySelectorAll('[data-pick]').forEach(b =>
+  /* segmented control: thumb slides under the pick; the stepped
+     bars beside it light up to match */
+  const thumb = document.querySelector('main > form p > span > u');
+  const stair = [...document.querySelectorAll('main > form p > svg path')];
+  const echo = () => stair.forEach((p, i) => p.toggleAttribute('data-on', i <= level));
+  document.querySelectorAll('[data-level]').forEach(b =>
     b.addEventListener('click', () => {
-      pick = b.dataset.pick === 'fav' ? 'fav' : +b.dataset.pick;
-      document.querySelectorAll('[data-pick]').forEach(x =>
+      level = +b.dataset.level;
+      document.querySelectorAll('[data-level]').forEach(x =>
         x.setAttribute('aria-pressed', x === b));
+      thumb.style.left = `calc(2px + ${level} * (100% - 4px) / 3)`;
+      echo();
       selected = -1;
       paint();
     }));
+  echo();
+
+  const favbtn = document.getElementById('favonly');
+  favbtn.addEventListener('click', () => {
+    favOnly = !favOnly;
+    favbtn.setAttribute('aria-pressed', favOnly);
+    selected = -1;
+    paint();
+  });
 
   /* any topic — in the cloud or on a row — filters in place */
   document.addEventListener('click', ev => {

@@ -244,19 +244,21 @@ Structure carries the beauty. Reference realization:
   timeline; clicking a topic filters the timeline in place (click again or
   `Esc` to clear). Below it, quiet controls with **no rule under them**:
   the saved-bookmarks count hangs in the *left margin*, x-aligned with the
-  entries' own bookmark marks; a macOS-style filter mark (three shrinking
-  lines, the `line.3.horizontal.decrease` shape — the funnel glyph was
-  rejected 2026-07-04) leads **everything · notable · best · ★ favorites**
-  (favorites joined the filter row — it shows only ★-tagged entries);
-  **search is a magnifier icon on its own line, left, under
-  "everything"**, expanding on focus (accessible name "Search", `/` still
-  focuses it; it stays open while it holds a query). Rows carry over from
-  v3 unchanged. Reference: `static/timeline-mockup.html`.
-  - **OPEN: the filter control's shape.** The filter mark + words ships in
-    the mockup, but `static/filter-control-mockup.html` holds live
-    alternatives: words without the icon, a hairline slider speaking the
-    row meters' language, a macOS segmented control, stepped bars, and a
-    bare native range.
+  entries' own bookmark marks; the level control is **stepped bars + a
+  segmented control** (DECIDED 2026-07-04 from the shape comparison —
+  the funnel glyph, the macOS filter mark, and the plain word row were
+  all passed over): a small staircase icon whose bars light up to the
+  current level, beside a quiet macOS-style segmented capsule for
+  **everything · notable · best**. **★ favorites is an independent
+  toggle**, not a fourth segment — it is a different axis, so it composes
+  with the level ("best" + ★ = my favorite best things). **Search is a
+  magnifier icon on its own line, flush with the left edge under the
+  bars**, expanding on focus (accessible name "Search", `/` still focuses
+  it; it stays open while it holds a query). Rows carry over from v3
+  unchanged. Reference: `static/timeline-mockup.html`;
+  `static/filter-control-mockup.html` keeps the live shape comparison
+  that led here (words ± icon, hairline slider, segmented, stepped bars,
+  native range).
   - **Uniform rows, quality as a hairline meter** (v3, kept): every title
     the same size (v2's graded-density sizes rejected); quality is a 2px
     hairline under the date whose fill is the pairwise-grade percentile,
@@ -300,12 +302,13 @@ Structure carries the beauty. Reference realization:
   is removed** (DECIDED 2026-07-04) — the cloud on the timeline replaced
   it; its by-latest-activity list goes with it (git history is the
   archive).
-  - **Selected topic wears a pill** (DECIDED 2026-07-04, replacing the
-    underline): soft violet capsule around the tag, its count split off by
-    a hairline divider and kept grey. Padding is mirrored by negative
-    margin so neighbors don't reflow. A quiet "Esc clears" sits in the
-    margin left of the cloud while a topic is active (clickable; hidden on
-    narrow screens where tapping the pill clears instead).
+  - **Selected topic wears a two-tone pill** (DECIDED 2026-07-04,
+    replacing the underline; the soft single-tone tint was rejected
+    same-day as not obvious enough): a solid violet capsule with white
+    text and dot, the count split off into its own lighter segment (white
+    overlay on the violet). Padding is mirrored by negative margin so
+    neighbors don't reflow. `Esc` or a second click clears — the margin
+    "Esc clears" hint was tried and removed same-day (clutter).
 - **Three separate signals — DECIDED 2026-07-04** (the hybrid `/favorites`
   is rejected: one address showing different people different content is two
   features wearing one name):
@@ -437,16 +440,16 @@ dark-variant images, related entries, mini-TOC, print stylesheet.
 - `static/entry-page-mockup.html` — entry page reference (plain, top nav,
   sidenotes, anchors, quote/link/code actions, adjustable width, star,
   continue-reading flow)
-- `static/timeline-mockup.html` — timeline reference v4.1 (tag cloud as
-  header, middle-grouped, with in-place topic filtering and a pill on the
-  selected topic; no site nav, margin-hung bookmark count and "Esc clears"
-  hint, macOS-style filter mark before everything/notable/best/★favorites,
-  expanding search icon on its own line, sentence-case month headings;
-  v3 rows kept: uniform titles, hairline quality meter with threshold
-  ticks, ISO-date rail with vertical tags, hanging ★/bookmark marks, `?`
-  help dialog)
-- `static/filter-control-mockup.html` — live comparison of filter-control
-  shapes (words ± icon, hairline slider, segmented, stepped bars, native
-  range) for the OPEN decision above
+- `static/timeline-mockup.html` — timeline reference v4.2 (tag cloud as
+  header, middle-grouped, with in-place topic filtering and a two-tone
+  pill on the selected topic; no site nav, margin-hung bookmark count,
+  stepped bars + segmented control for everything/notable/best with an
+  independent ★ favorites toggle, expanding search icon flush left on its
+  own line, sentence-case month headings; v3 rows kept: uniform titles,
+  hairline quality meter with threshold ticks, ISO-date rail with
+  vertical tags, hanging ★/bookmark marks, `?` help dialog)
+- `static/filter-control-mockup.html` — the live shape comparison behind
+  the stepped-bars + segmented decision (words ± icon, hairline slider,
+  segmented, stepped bars, native range)
 - Topics page mockup removed 2026-07-04 (cloud lives on the timeline; git
   history is the archive)
