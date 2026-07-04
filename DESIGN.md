@@ -247,8 +247,9 @@ Structure carries the beauty. Reference realization:
   entries' own bookmark marks; the level control is **stepped bars + a
   segmented control** (DECIDED 2026-07-04 from the shape comparison —
   the funnel glyph, the macOS filter mark, and the plain word row were
-  all passed over): a small staircase icon whose bars light up to the
-  current level, beside a quiet macOS-style segmented capsule for
+  all passed over): a staircase of solid bars — chunky enough to read,
+  not a hairline glyph — that light up to the current level, beside a
+  quiet macOS-style segmented capsule for
   **everything · notable · best**. **★ favorites is an independent
   toggle**, not a fourth segment — it is a different axis, so it composes
   with the level ("best" + ★ = my favorite best things). **Search is a
@@ -302,13 +303,16 @@ Structure carries the beauty. Reference realization:
   is removed** (DECIDED 2026-07-04) — the cloud on the timeline replaced
   it; its by-latest-activity list goes with it (git history is the
   archive).
-  - **Selected topic wears a two-tone pill** (DECIDED 2026-07-04,
-    replacing the underline; the soft single-tone tint was rejected
-    same-day as not obvious enough): a solid violet capsule with white
-    text and dot, the count split off into its own lighter segment (white
-    overlay on the violet). Padding is mirrored by negative margin so
-    neighbors don't reflow. `Esc` or a second click clears — the margin
-    "Esc clears" hint was tried and removed same-day (clutter).
+  - **Selected topic wears a Finder-grey pill** (DECIDED 2026-07-04,
+    after two rejected takes the same day: an underline, a soft violet
+    tint, then a solid-violet two-tone capsule — like Finder, a quiet
+    grey capsule won): text, dot, and count all keep their colors; only
+    the background says "selected". Padding is mirrored by negative
+    margin so neighbors don't reflow on toggle, and the count rides a
+    touch above the baseline (a visual-only nudge shared by all cloud
+    counts, so it doesn't move either). `Esc` or a second click clears —
+    the margin "Esc clears" hint was tried and removed same-day
+    (clutter).
 - **Three separate signals — DECIDED 2026-07-04** (the hybrid `/favorites`
   is rejected: one address showing different people different content is two
   features wearing one name):
@@ -440,8 +444,8 @@ dark-variant images, related entries, mini-TOC, print stylesheet.
 - `static/entry-page-mockup.html` — entry page reference (plain, top nav,
   sidenotes, anchors, quote/link/code actions, adjustable width, star,
   continue-reading flow)
-- `static/timeline-mockup.html` — timeline reference v4.2 (tag cloud as
-  header, middle-grouped, with in-place topic filtering and a two-tone
+- `static/timeline-mockup.html` — timeline reference v4.3 (tag cloud as
+  header, middle-grouped, with in-place topic filtering and a Finder-grey
   pill on the selected topic; no site nav, margin-hung bookmark count,
   stepped bars + segmented control for everything/notable/best with an
   independent ★ favorites toggle, expanding search icon flush left on its

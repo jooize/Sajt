@@ -6,14 +6,15 @@
 <title>esko.bar — Timeline</title>
 <style>
 /* ================================================================
-   Timeline design reference, v4.2.
+   Timeline design reference, v4.3.
    The tag cloud IS the header — no site nav at all (the timeline
    is the site root; a "Timeline" link on the timeline is noise).
    The cloud is narrow, so it wraps into a few centered lines —
    grouped to the middle, cloud-shaped. Clicking a topic filters
-   the timeline in place; the selected topic wears a two-tone
-   pill: solid violet capsule, count split into a lighter segment
-   (Esc or a second click clears — no hint text). Below: the
+   the timeline in place; the selected topic wears a quiet
+   Finder-grey pill — text, dot, and count keep their colors, and
+   nothing reflows on toggle (Esc or a second click clears — no
+   hint text). Below: the
    saved-bookmarks count hangs in the left margin (x-aligned with
    the entries' bookmark marks); the level control is a stepped-
    bars icon (lit to the current level) plus a segmented control —
@@ -114,28 +115,14 @@ main {
   letter-spacing: -.011em;
 }
 #cloud a:hover { color: var(--violet) !important; text-decoration: none; }
-/* the selected topic wears a two-tone pill: solid violet capsule,
-   the count split off into its own lighter segment */
+/* the selected topic wears a quiet Finder-grey pill; text, dot, and
+   count keep their colors */
 #cloud a[aria-current="true"] {
-  color: #fff !important;
-  background: var(--violet);
+  background: light-dark(rgba(46, 62, 50, .1), rgba(178, 205, 184, .14));
   border-radius: 999px;
-  overflow: hidden;
-  /* padding mirrored by negative margin so neighbors don't reflow
-     (the count segment supplies the right-side padding) */
-  padding: .18em 0 .18em .6em;
+  /* padding mirrored by negative margin so neighbors don't reflow */
+  padding: .18em .6em;
   margin: -.18em -.6em;
-}
-#cloud a[aria-current="true"]:hover { color: #fff !important; }
-#cloud a[aria-current="true"]::before { background: #fff; }
-#cloud a[aria-current="true"] > small {
-  align-self: stretch;
-  display: inline-flex;
-  align-items: center;
-  margin-block: -.18em;
-  padding-inline: .55em .6em;
-  background: light-dark(rgba(255, 255, 255, .3), rgba(255, 255, 255, .18));
-  color: #fff;
 }
 #cloud a::before {
   content: "";
@@ -154,6 +141,9 @@ main {
   font-weight: 500;
   color: var(--faint);
   font-feature-settings: "tnum";
+  /* optically a touch above the baseline — visual only, so nothing
+     shifts when the pill toggles */
+  translate: 0 -.07em;
 }
 
 
@@ -205,17 +195,14 @@ main > form p {
   gap: .55rem;
   align-items: center;
 }
-/* the stepped bars: a staircase that echoes the current level */
+/* the stepped bars: a staircase of solid bars, lit to the level */
 main > form p > svg {
-  width: .9rem;
-  height: .9rem;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: currentColor;
 }
-main > form p > svg path { opacity: .3; }
-main > form p > svg path[data-on] { opacity: 1; }
+main > form p > svg rect { opacity: .3; }
+main > form p > svg rect[data-on] { opacity: 1; }
 
 main > form p button {
   padding: 0;
@@ -281,8 +268,8 @@ main > form search button {
 }
 main > form search button:hover { color: var(--violet); }
 main > form search button svg {
-  width: .9rem;
-  height: .9rem;
+  width: 1.05rem;
+  height: 1.05rem;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -585,7 +572,7 @@ body > footer button:hover { color: var(--violet); }
       <output>0</output>
     </a>
     <p aria-label="How much to show">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 17.5v-3"/><path d="M12 17.5v-7"/><path d="M18 17.5v-11"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="14" width="5.5" height="8" rx="2.4"/><rect x="9.25" y="8" width="5.5" height="14" rx="2.4"/><rect x="16.5" y="2" width="5.5" height="20" rx="2.4"/></svg>
       <span>
         <u></u>
         <button type="button" data-level="0" aria-pressed="true">everything</button>
@@ -808,7 +795,7 @@ body > footer button:hover { color: var(--violet); }
   /* segmented control: thumb slides under the pick; the stepped
      bars beside it light up to match */
   const thumb = document.querySelector('main > form p > span > u');
-  const stair = [...document.querySelectorAll('main > form p > svg path')];
+  const stair = [...document.querySelectorAll('main > form p > svg rect')];
   const echo = () => stair.forEach((p, i) => p.toggleAttribute('data-on', i <= level));
   document.querySelectorAll('[data-level]').forEach(b =>
     b.addEventListener('click', () => {
