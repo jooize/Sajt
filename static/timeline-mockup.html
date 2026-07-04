@@ -161,7 +161,7 @@ main > form search input:focus {
 
 /* ---------- month headings ---------- */
 
-main > section > h2 {
+main section > h2 {
   margin: 2.1rem 0 .7rem;
   font: 500 .74rem var(--mono);
   font-feature-settings: "tnum";
@@ -170,7 +170,7 @@ main > section > h2 {
   color: var(--faint);
 }
 
-main > section > ul { list-style: none; padding: 0; }
+main section > ul { list-style: none; margin: 0; padding: 0; }
 
 /* ---------- rows ---------- */
 
@@ -193,9 +193,9 @@ main article > aside {
   align-items: flex-start;
 }
 main article > aside > time {
-  /* nudged so the date baseline sits on the title baseline */
-  padding-top: .28rem;
   font: 500 .74rem var(--mono);
+  /* same 1.5rem line box as the title, so their baselines agree */
+  line-height: 1.5rem;
   font-feature-settings: "tnum";
   letter-spacing: .02em;
   color: var(--faint);
@@ -256,23 +256,28 @@ main article > aside > nav a::before {
   background: var(--tag, var(--tag-gray));
 }
 
-/* --- hanging marks, like footnotes: ★ nearest, bookmark outside it */
+/* --- hanging marks, like footnotes: ★ nearest, bookmark outside it.
+       Positioned against the article (aside is not positioned), on the
+       title line. They live in the rail markup so narrow screens can
+       reflow them inline. */
 
-main article > b {
+main article aside > b {
   position: absolute;
-  top: .78rem;
-  left: -1.35rem;
+  top: .75rem;
+  left: -1.4rem;
   color: var(--violet);
   font-size: .8rem;
   font-weight: 500;
-  line-height: 1.5;
+  line-height: 1.5rem;
 }
-main article > button {
+main article aside > button {
   position: absolute;
-  top: .85rem;
-  left: -2.9rem;
+  top: .75rem;
+  left: -2.8rem;
   display: inline-flex;
-  padding: .1rem;
+  align-items: center;
+  height: 1.5rem;
+  padding: 0 .1rem;
   border: none;
   background: none;
   color: var(--faint);
@@ -280,13 +285,13 @@ main article > button {
   opacity: 0;
   transition: opacity .15s ease;
 }
-main article:hover > button,
-main article.selected > button,
-main article > button:focus-visible,
-main article > button[aria-pressed="true"] { opacity: 1; }
-main article > button:hover { color: var(--violet); }
-main article > button[aria-pressed="true"] { color: var(--violet); }
-main article > button svg {
+main article:hover aside > button,
+main article.selected aside > button,
+main article aside > button:focus-visible,
+main article aside > button[aria-pressed="true"] { opacity: 1; }
+main article aside > button:hover { color: var(--violet); }
+main article aside > button[aria-pressed="true"] { color: var(--violet); }
+main article aside > button svg {
   width: .85rem;
   height: .85rem;
   fill: none;
@@ -294,9 +299,9 @@ main article > button svg {
   stroke-width: 1.8;
   stroke-linejoin: round;
 }
-main article > button[aria-pressed="true"] svg { fill: currentColor; }
+main article aside > button[aria-pressed="true"] svg { fill: currentColor; }
 @media (prefers-reduced-motion: reduce) {
-  main article > button { transition: none; }
+  main article aside > button { transition: none; }
 }
 
 /* --- content: every title the same size ---------------------- */
@@ -332,7 +337,7 @@ main article figure {
   border: 1px solid var(--hair);
 }
 
-main > p {
+#mount > p {
   padding: 3rem 0;
   text-align: center;
   font-size: .875rem;
@@ -343,11 +348,14 @@ main > p {
 
 dialog {
   min-width: min(21rem, calc(100vw - 3rem));
+  /* opens just above its trigger, the "? shortcuts" footer line */
+  margin: auto auto 4.4rem;
   border: 1px solid var(--hair);
   border-radius: 14px;
   padding: 1.3rem 1.5rem 1.4rem;
   background: var(--bg);
   color: var(--ink);
+  box-shadow: 0 12px 32px light-dark(rgba(20, 24, 20, .14), rgba(0, 0, 0, .5));
 }
 dialog::backdrop { background: rgba(10, 12, 11, .3); }
 dialog h2 {
@@ -394,16 +402,18 @@ body > footer button {
 }
 body > footer button:hover { color: var(--violet); }
 
-@media (max-width: 52rem) {
-  /* no margin to hang into: marks move into the rail, under the date */
-  main article > b, main article > button {
-    position: static;
-    padding: 0;
-    order: 3;
-  }
-  main article > aside { flex-direction: row; flex-wrap: wrap; column-gap: .6rem; }
+@media (max-width: 56rem) {
+  /* no margin to hang into: marks flow inline after the date */
+  main article aside > b,
+  main article aside > button { position: static; height: auto; }
   main article { grid-template-columns: 1fr; row-gap: .15rem; }
-  main article > aside > span { margin-top: .45rem; }
+  main article > aside {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: .6rem;
+  }
+  main article > aside > span { margin-top: 0; }
   main article > aside > nav { flex-direction: row; margin-top: 0; column-gap: .6rem; }
   main > form search { margin-left: 0; width: 100%; }
   main > form search input { width: 100%; }
@@ -553,12 +563,12 @@ body > footer button:hover { color: var(--violet); }
   const row = (e, i) => `
     <li>
       <article data-i="${i}"${i === selected ? ' class="selected"' : ''}>
-        ${e.fav ? '<b title="A favorite of mine">★</b>' : ''}
-        <button type="button" aria-pressed="${saved.has(keyOf(e))}"
-          aria-label="Save for later (stays in this browser)"
-          title="Save for later — stays in this browser">${BOOKMARK}</button>
         <aside>
           <time datetime="${e.date}">${e.date}</time>
+          ${e.fav ? '<b title="A favorite of mine">★</b>' : ''}
+          <button type="button" aria-pressed="${saved.has(keyOf(e))}"
+            aria-label="Save for later (stays in this browser)"
+            title="Save for later — stays in this browser">${BOOKMARK}</button>
           <span title="Graded top ${pct(e.q)}%" aria-label="Graded top ${pct(e.q)}%">
             <i style="width:${Math.round(e.q * 100)}%"></i></span>
           <nav aria-label="Tags">${e.tags.map(t =>
@@ -633,7 +643,7 @@ body > footer button:hover { color: var(--violet); }
   /* ---------- bookmarks (localStorage only — nothing leaves the browser) */
 
   mount.addEventListener('click', ev => {
-    const btn = ev.target.closest('article > button');
+    const btn = ev.target.closest('aside > button');
     if (!btn) return;
     const e = E[+btn.closest('article').dataset.i];
     saved.has(keyOf(e)) ? saved.delete(keyOf(e)) : saved.add(keyOf(e));
@@ -676,7 +686,7 @@ body > footer button:hover { color: var(--violet); }
         break;
       }
       case 'b': {
-        const btn = mount.querySelector('article.selected > button');
+        const btn = mount.querySelector('article.selected aside > button');
         if (btn) btn.click();
         break;
       }

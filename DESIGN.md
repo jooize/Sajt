@@ -285,8 +285,13 @@ Structure carries the beauty. Reference realization:
     violet ★ on the timeline rail, a topic on the Topics page, linkable as
     `/+favorite`. My taste, hand-picked.
   - **Reader bookmarks** — a bookmark icon on each row lets a reader keep
-    a read-later list; `localStorage` only, never transmitted, so the
-    server cannot know what anyone saved and no consent banner is needed
+    a read-later list; `localStorage` only, never transmitted. Explicitly
+    **not cookies** (DECIDED 2026-07-04): cookies ride along on every HTTP
+    request, which would hand the server exactly the list it must never
+    see — with localStorage the promise is structural, not policy. (Known
+    trade-off: Safari purges script-writable storage after ~7 days without
+    a visit; losing a read-later list is acceptable, leaking it is not.)
+    The server cannot know what anyone saved and no consent banner is needed
     (ePrivacy exempts storage strictly necessary for a function the user
     explicitly requested; no tracking, no identifiers). In the nav, a
     small **bookmark icon with a count** (not a "Saved" text link) appears
