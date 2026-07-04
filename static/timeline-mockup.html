@@ -6,14 +6,17 @@
 <title>esko.bar — Timeline</title>
 <style>
 /* ================================================================
-   Timeline design reference, v3.
-   Uniform rows: every title the same size. Quality is a hairline
-   meter under the date — gradual fill, ticks at the notable/best
-   thresholds (the same thresholds the everything/notable/best
-   control filters by). The left rail carries date (ISO), meter,
-   and tags stacked vertically. My ★ hangs outside the column like
-   a footnote mark; the reader's bookmark hangs outside the star
-   and appears on hover/selection. Bookmark count lives in the nav.
+   Timeline design reference, v4.
+   The tag cloud IS the header — no site nav at all (the timeline
+   is the site root; a "Timeline" link on the timeline is noise).
+   Clicking a topic filters the timeline in place. Below the cloud,
+   one quiet control line: the saved-bookmarks count hangs in the
+   left margin (vertically aligned with the entries' bookmark
+   marks), a filter icon leads everything/notable/best/favorites,
+   and search is a magnifier icon that expands on focus.
+   Month headings are sentence case, slightly larger, bold.
+   Rows unchanged from v3: uniform titles, hairline quality meter
+   with threshold ticks, hanging ★/bookmark, vertical tags.
    Keyboard: ? shows all shortcuts.
    ================================================================ */
 
@@ -70,64 +73,112 @@ body {
 a { color: #8318c9; color: var(--violet); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
-/* ---------- site nav ---------- */
-
-body > header {
-  max-width: var(--content-w);
-  margin-inline: auto;
-  padding: 1.15rem 0 .1rem;
-}
-
-body > header > nav {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 1.35rem;
-  font: 550 .8rem var(--sans);
-}
-
-body > header > nav > a { color: var(--faint); }
-body > header > nav > a:hover { color: var(--violet); text-decoration: none; }
-body > header > nav > a[aria-current="page"] { color: var(--ink); }
-body > header > nav > a[hidden] { display: none; }
-
-/* saved-bookmarks entry: icon + count */
-#navsaved {
-  display: inline-flex;
-  align-items: center;
-  gap: .3rem;
-}
-#navsaved svg {
-  width: .8rem;
-  height: .8rem;
-  fill: currentColor;
-  stroke: none;
-}
-#navsaved output {
-  font: 500 .74rem var(--mono);
-  font-feature-settings: "tnum";
-}
-
-/* ---------- controls: one quiet line ---------- */
-
 main {
   max-width: var(--content-w);
   margin-inline: auto;
-  padding: 1.7rem 0 4rem;
+  padding: 1.4rem 0 4rem;
 }
 
-main > form {
+/* ---------- the cloud is the header ----------
+   size = entries, ink = recency, dot = Finder color.
+   Click filters the timeline right here. */
+
+#cloud {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
+  justify-content: center;
+  column-gap: 1.5rem;
+  row-gap: .45rem;
+  padding: 1rem .5rem 1.8rem;
+  line-height: 1.25;
+}
+
+#cloud a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .38rem;
+  font-weight: 550;
+  letter-spacing: -.011em;
+}
+#cloud a:hover { color: var(--violet) !important; text-decoration: none; }
+#cloud a[aria-current="true"] {
+  color: var(--violet) !important;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+#cloud a::before {
+  content: "";
+  align-self: center;
+  width: .5em;
+  height: .5em;
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 50%;
+  background: var(--tag, var(--tag-gray));
+}
+#cloud a > small {
+  font-size: .68em;
+  font-weight: 500;
+  color: var(--faint);
+  font-feature-settings: "tnum";
+}
+
+/* ---------- controls: one quiet line, no rule ---------- */
+
+main > form {
+  position: relative;
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: .4rem 1.2rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--hair);
   font: 550 .8rem var(--sans);
   color: var(--faint);
 }
 
-main > form p { display: inline-flex; gap: .55rem; align-items: baseline; }
+/* saved bookmarks: hangs in the left margin, x-aligned with the
+   entries' bookmark marks (article edge -.6rem, mark -2.8rem) */
+#navsaved {
+  position: absolute;
+  left: -3.4rem;
+  top: 50%;
+  translate: 0 -50%;
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  padding: 0 .1rem;
+  color: var(--faint);
+}
+#navsaved:hover { color: var(--violet); text-decoration: none; }
+#navsaved[aria-current="page"] { color: var(--violet); }
+#navsaved svg {
+  width: .85rem;
+  height: .85rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+#navsaved[aria-current="page"] svg { fill: currentColor; }
+#navsaved output {
+  font: 500 .74rem var(--mono);
+  font-feature-settings: "tnum";
+}
+#navsaved[hidden] { display: none; }
+
+main > form p {
+  display: inline-flex;
+  gap: .55rem;
+  align-items: center;
+}
+main > form p > svg {
+  width: .85rem;
+  height: .85rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
 main > form p button {
   padding: 0;
   border: none;
@@ -136,15 +187,40 @@ main > form p button {
   font: inherit;
   cursor: pointer;
 }
+main > form p button > b { color: var(--violet); font-weight: 500; }
 main > form p button:hover { color: var(--violet); }
 main > form p button[aria-pressed="true"] {
   color: var(--ink);
   box-shadow: 0 2px 0 -.5px var(--violet);
 }
 
-main > form search { margin-left: auto; }
+/* search: a magnifier that expands on focus (or while it holds text) */
+main > form search {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+}
+main > form search button {
+  display: inline-flex;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+}
+main > form search button:hover { color: var(--violet); }
+main > form search button svg {
+  width: .9rem;
+  height: .9rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
 main > form search input {
-  width: 9rem;
+  width: 0;
+  opacity: 0;
   padding: .2rem 0;
   border: none;
   border-bottom: 1px solid var(--hair);
@@ -152,6 +228,12 @@ main > form search input {
   background: none;
   color: var(--ink);
   font: .85rem var(--sans);
+  transition: width .18s ease, opacity .18s ease;
+}
+main > form search:focus-within input,
+main > form search input:not(:placeholder-shown) {
+  width: 9rem;
+  opacity: 1;
 }
 main > form search input::placeholder { color: var(--faint); }
 main > form search input:focus {
@@ -159,15 +241,14 @@ main > form search input:focus {
   border-bottom-color: var(--violet);
 }
 
-/* ---------- month headings ---------- */
+/* ---------- month headings: sentence case, a touch larger, bold */
 
 main section > h2 {
-  margin: 2.1rem 0 .7rem;
-  font: 500 .74rem var(--mono);
+  margin: 2.3rem 0 .7rem;
+  font: 650 .95rem var(--sans);
   font-feature-settings: "tnum";
-  letter-spacing: .09em;
-  text-transform: uppercase;
-  color: var(--faint);
+  letter-spacing: -.011em;
+  color: var(--soft);
 }
 
 main section > ul { list-style: none; margin: 0; padding: 0; }
@@ -301,7 +382,8 @@ main article aside > button svg {
 }
 main article aside > button[aria-pressed="true"] svg { fill: currentColor; }
 @media (prefers-reduced-motion: reduce) {
-  main article aside > button { transition: none; }
+  main article aside > button,
+  main > form search input { transition: none; }
 }
 
 /* --- content: every title the same size ---------------------- */
@@ -403,7 +485,8 @@ body > footer button {
 body > footer button:hover { color: var(--violet); }
 
 @media (max-width: 56rem) {
-  /* no margin to hang into: marks flow inline after the date */
+  /* no margin to hang into: marks flow inline after the date,
+     and the saved count leads the control line */
   main article aside > b,
   main article aside > button { position: static; height: auto; }
   main article { grid-template-columns: 1fr; row-gap: .15rem; }
@@ -415,33 +498,33 @@ body > footer button:hover { color: var(--violet); }
   }
   main article > aside > span { margin-top: 0; }
   main article > aside > nav { flex-direction: row; margin-top: 0; column-gap: .6rem; }
-  main > form search { margin-left: 0; width: 100%; }
-  main > form search input { width: 100%; }
+  #navsaved { position: static; translate: none; }
+  #cloud { column-gap: 1.2rem; }
 }
 </style>
 </head>
 <body>
 
-<header>
-  <nav>
-    <a href="#" aria-current="page">Timeline</a>
-    <a href="topics-mockup.html">Topics</a>
-    <a href="#">Everything</a>
+<main>
+  <!-- the cloud is the header; built from the entries below -->
+  <nav id="cloud" aria-label="Topics"></nav>
+
+  <form>
     <a href="#saved" id="navsaved" hidden aria-label="Saved for later">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.5h11V21l-5.5-4-5.5 4z"/></svg>
       <output>0</output>
     </a>
-  </nav>
-</header>
-
-<main>
-  <form>
     <p aria-label="How much to show">
-      <button type="button" data-level="0" aria-pressed="true">everything</button>
-      <button type="button" data-level="1" aria-pressed="false">notable</button>
-      <button type="button" data-level="2" aria-pressed="false">best</button>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16l-6.2 7v6l-3.6-2.2v-3.8z"/></svg>
+      <button type="button" data-pick="0" aria-pressed="true">everything</button>
+      <button type="button" data-pick="1" aria-pressed="false">notable</button>
+      <button type="button" data-pick="2" aria-pressed="false">best</button>
+      <button type="button" data-pick="fav" aria-pressed="false"><b>★</b> favorites</button>
     </p>
     <search>
+      <button type="button" id="qbtn" aria-label="Search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="M14.7 14.7 20 20"/></svg>
+      </button>
       <input type="search" id="q" placeholder="Search" aria-label="Search entries">
     </search>
   </form>
@@ -536,9 +619,10 @@ body > footer button:hover { color: var(--violet); }
   const tier = q => q >= .78 ? 3 : q >= .5 ? 2 : 1;
   const pct = q => Math.max(1, Math.round((1 - q) * 100));
 
-  let level = 0, query = '', view = 'all', selected = -1;
+  let pick = 0, query = '', view = 'all', activeTag = null, selected = -1;
 
   const mount = document.getElementById('mount');
+  const cloud = document.getElementById('cloud');
   const navsaved = document.getElementById('navsaved');
   const count = navsaved.querySelector('output');
   const qInput = document.getElementById('q');
@@ -549,7 +633,8 @@ body > footer button:hover { color: var(--violet); }
 
   const matches = e => {
     if (view === 'saved' && !saved.has(keyOf(e))) return false;
-    if (tier(e.q) < level + 1) return false;
+    if (pick === 'fav' ? !e.fav : tier(e.q) < pick + 1) return false;
+    if (activeTag && !e.tags.includes(activeTag)) return false;
     if (!query) return true;
     return [e.label ?? '', e.sub, e.kind, e.ext, ...e.tags]
       .join(' ').toLowerCase().includes(query);
@@ -559,6 +644,37 @@ body > footer button:hover { color: var(--violet); }
     const [y, m] = e.date.split('-');
     return MONTHS[+m - 1] + ' ' + y;
   };
+
+  /* ---------- the cloud: derived from the entries ---------- */
+
+  function buildCloud() {
+    const stats = new Map();
+    E.forEach(e => e.tags.forEach(t => {
+      const s = stats.get(t) ?? { n: 0, last: '' };
+      s.n++;
+      if (e.date > s.last) s.last = e.date;
+      stats.set(t, s);
+    }));
+    const names = [...stats.keys()].sort();
+    const maxN = Math.max(...[...stats.values()].map(s => s.n));
+    const newest = [...stats.values()].map(s => s.last).sort().at(-1);
+    /* ink = recency: fresh topics dark and bold, dormant ones fade */
+    const ink = last => {
+      const days = (Date.parse(newest) - Date.parse(last)) / 864e5;
+      return days <= 14 ? 'color:var(--ink);font-weight:650'
+           : days <= 60 ? 'color:var(--soft);font-weight:550'
+           : 'color:var(--faint);font-weight:500';
+    };
+    const sizeOf = n =>
+      (0.82 + (maxN > 1 ? (n - 1) / (maxN - 1) : 0) * 0.43).toFixed(2);
+    cloud.innerHTML = names.map(t => {
+      const s = stats.get(t);
+      return `<a href="#/+${esc(t)}" data-tag="${esc(t)}"
+        style="--tag:${TAG[t] ?? 'var(--tag-gray)'};font-size:${sizeOf(s.n)}rem;${ink(s.last)}"
+        title="${s.n} ${s.n === 1 ? 'entry' : 'entries'}, last active ${s.last}">${
+        esc(t)} <small>${s.n}</small></a>`;
+    }).join('');
+  }
 
   const row = (e, i) => `
     <li>
@@ -572,7 +688,7 @@ body > footer button:hover { color: var(--violet); }
           <span title="Graded top ${pct(e.q)}%" aria-label="Graded top ${pct(e.q)}%">
             <i style="width:${Math.round(e.q * 100)}%"></i></span>
           <nav aria-label="Tags">${e.tags.map(t =>
-            `<a href="#/+${t}" style="--tag:${TAG[t] ?? 'var(--tag-gray)'}">${esc(t)}</a>`).join('')}
+            `<a href="#/+${esc(t)}" data-tag="${esc(t)}" style="--tag:${TAG[t] ?? 'var(--tag-gray)'}">${esc(t)}</a>`).join('')}
           </nav>
         </aside>
         <div>
@@ -606,21 +722,32 @@ body > footer button:hover { color: var(--violet); }
     navsaved.hidden = saved.size === 0 && view !== 'saved';
     count.textContent = saved.size;
     navsaved.setAttribute('aria-current', view === 'saved' ? 'page' : 'false');
-    document.querySelector('nav a[href="#"]')
-      .setAttribute('aria-current', view === 'all' ? 'page' : 'false');
+    cloud.querySelectorAll('a').forEach(a =>
+      a.setAttribute('aria-current', a.dataset.tag === activeTag ? 'true' : 'false'));
   }
 
   /* ---------- controls ---------- */
 
-  document.querySelectorAll('[data-level]').forEach(b =>
+  document.querySelectorAll('[data-pick]').forEach(b =>
     b.addEventListener('click', () => {
-      level = +b.dataset.level;
-      document.querySelectorAll('[data-level]').forEach(x =>
+      pick = b.dataset.pick === 'fav' ? 'fav' : +b.dataset.pick;
+      document.querySelectorAll('[data-pick]').forEach(x =>
         x.setAttribute('aria-pressed', x === b));
       selected = -1;
       paint();
     }));
 
+  /* any topic — in the cloud or on a row — filters in place */
+  document.addEventListener('click', ev => {
+    const a = ev.target.closest('a[data-tag]');
+    if (!a) return;
+    ev.preventDefault();
+    activeTag = activeTag === a.dataset.tag ? null : a.dataset.tag;
+    selected = -1;
+    paint();
+  });
+
+  document.getElementById('qbtn').addEventListener('click', () => qInput.focus());
   qInput.addEventListener('input', () => {
     query = qInput.value.trim().toLowerCase();
     selected = -1;
@@ -630,12 +757,6 @@ body > footer button:hover { color: var(--violet); }
   navsaved.addEventListener('click', ev => {
     ev.preventDefault();
     view = view === 'saved' ? 'all' : 'saved';
-    selected = -1;
-    paint();
-  });
-  document.querySelector('nav a[href="#"]').addEventListener('click', ev => {
-    ev.preventDefault();
-    view = 'all';
     selected = -1;
     paint();
   });
@@ -694,12 +815,14 @@ body > footer button:hover { color: var(--violet); }
       case '?': help.showModal(); break;
       case 'Escape':
         selected = -1;
+        activeTag = null;
         if (query) { qInput.value = ''; query = ''; }
         paint();
         break;
     }
   });
 
+  buildCloud();
   paint();
 })();
 </script>

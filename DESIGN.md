@@ -159,9 +159,8 @@ content-dir reads.
 Labels are primary; dates are for timeline filtering only.
 
 ```
-esko.bar/                     timeline (newest first, graded density)
-esko.bar/topics               all tags, humanly named ("Topics"): cloud + list
-esko.bar/everything           complete compact archive
+esko.bar/                     timeline (newest first), tag cloud as header
+esko.bar/topics               OPEN: by-latest-activity topic list, if kept
 esko.bar/saved                the reader's bookmarked entries (client-side)
 esko.bar/+favorite            my hand-picked favorites (a plain Finder tag)
 esko.bar/open-source-licenses entry (file or folder), label = URL
@@ -171,9 +170,9 @@ esko.bar/+design+rust         tag filter (AND); comma = OR
 esko.bar/sunset.md            raw source (extension = raw)
 ```
 
-Old date+label URLs 301-redirect to label-only. `/best` is retired
-(DECIDED 2026-07-04): quality lives on the timeline as graded density plus
-the everything/notable/best control — see Presentation.
+Old date+label URLs 301-redirect to label-only. `/best` and `/everything`
+are retired (DECIDED 2026-07-04): the timeline with its filter row
+(everything · notable · best · ★ favorites) covers both — see Presentation.
 
 ## Authoring formats
 
@@ -205,13 +204,13 @@ Structure carries the beauty. Reference realization:
 
 - **Entry pages** — pure typography on the page background. No cards, no
   materials, no backdrop filters.
-- **Site nav** — a static row of plain text links at the top of the content
-  column (not full-bleed, not floating, not sticky): **Timeline · Topics ·
-  Everything** — plus **Favorites**, which appears only after the visitor has
-  starred something (an empty favorites page advertised in the nav would be
-  noise). No site title — the domain is the brand. Nothing else.
-  (DECIDED 2026-07-04: the tags page is called **Topics** on the site —
-  "tags" is the mechanism, "topics" is what a reader is actually browsing.)
+- **Site nav — DECIDED 2026-07-04: there isn't one.** The timeline is the
+  site root, and its header is the tag cloud itself — a nav row saying
+  "Timeline" on the timeline is noise, and **Everything is dropped** (the
+  timeline with the everything filter *is* everything). No site title — the
+  domain is the brand. Entry pages keep a single quiet way back to the root.
+  (DECIDED 2026-07-04: tag pages are called **Topics** in copy — "tags" is
+  the mechanism, "topics" is what a reader is actually browsing.)
 - **Dark mode** — follows the OS via `prefers-color-scheme` /
   `light-dark()`. **No theme UI** (DECIDED 2026-07-03; the switcher was
   removed from the live templates). The site never duplicates UI the OS
@@ -239,45 +238,56 @@ Structure carries the beauty. Reference realization:
 - **Effects** — rain, snow, WebGL glass, gyro tilt, dynamic weather sky:
   removed from the live templates 2026-07-03. Honor
   `prefers-reduced-motion` and `prefers-contrast` in what remains.
-- **Timeline — DECIDED (v3) 2026-07-04: uniform rows, quality as a
-  hairline meter.** Every title the same size (v2's graded-density sizes
-  were rejected same-day: no size hierarchy in the timeline). Quality is a
-  subtle gradual meter under the date — a 2px hairline whose fill is the
-  pairwise-grade percentile, with tick marks at the two thresholds the
-  **everything · notable · best** control filters by (the meter and the
-  control speak the same language). Reference:
-  `static/timeline-mockup.html`.
+- **Timeline — DECIDED (v4) 2026-07-04: the tag cloud is the header.**
+  The cloud (same three axes as the Topics page) sits at the top of the
+  timeline; clicking a topic filters the timeline in place (click again or
+  `Esc` to clear). Below it, one quiet control line with **no rule under
+  it**: the saved-bookmarks count hangs in the *left margin*, x-aligned
+  with the entries' own bookmark marks; a small filter icon leads
+  **everything · notable · best · ★ favorites** (favorites joined the
+  filter row — it shows only ★-tagged entries); **search is a magnifier
+  icon that expands on focus** (accessible name "Search", `/` still
+  focuses it; it stays open while it holds a query). Rows carry over from
+  v3 unchanged. Reference: `static/timeline-mockup.html`.
+  - **Uniform rows, quality as a hairline meter** (v3, kept): every title
+    the same size (v2's graded-density sizes rejected); quality is a 2px
+    hairline under the date whose fill is the pairwise-grade percentile,
+    with ticks at the thresholds the filter control uses.
   - **Left rail**: ISO date (`2026-07-04`), meter, then tags stacked
     vertically — the date baseline aligns with the title baseline.
   - **Hanging marks, like footnotes**: my ★ (the `favorite` tag) hangs in
     the left margin outside the column; the reader's bookmark hangs outside
     the star and shows only on hover/selection (always when set).
+  - **Month headings**: sentence case ("May 2026" — the v3 all-caps mono
+    label was rejected 2026-07-04), slightly larger and bold, quiet color.
   - Titles show the extension (or folder `/`) at the **same size, slightly
     greyed** — filesystem-native type indication for free.
   - The everything/notable/best control replaces `/best`; the v1
-    kind-filter menu and range slider stay rejected as chrome.
-  - Month groups, search (`/`, plain "Search" placeholder), keyboard
-    (`j`/`k`, `Enter`, `b` bookmark) carry over, plus relative pairwise
-    grading at publish time. **Keyboard help lives behind `?`** — a small
-    plain dialog — instead of a cluttered hint line in the footer.
+    kind-filter menu, range slider, and the always-open search box stay
+    rejected as chrome.
+  - Month groups, keyboard (`j`/`k`, `Enter`, `b` bookmark, `/` search)
+    carry over, plus relative pairwise grading at publish time. **Keyboard
+    help lives behind `?`** — a small plain dialog above its trigger —
+    instead of a cluttered hint line in the footer.
 - **Types vs tags — DECIDED 2026-07-04**: photo, note, page, link, folder
   are **types**, derived from the file itself (extension/content type) —
   never tags. Search matches types, so typing "photo" filters to photos
-  with zero UI. Whether dedicated type filters belong somewhere
-  (`/everything` being the natural home for power filtering) is OPEN.
+  with zero UI. Whether dedicated type filters belong somewhere is OPEN —
+  with `/everything` retired, the timeline's filter icon is the natural
+  door if they ever earn a place.
 - **Finder tag colors — DECIDED 2026-07-04**: tags render with the color
   they carry in Finder (read from the macOS tag xattr, which stores a color
   index 0–7 per tag). The seven Finder colors are mapped to CSS custom
   properties tuned for light and dark. Tag = small colored dot + name;
   text stays ink for legibility.
-- **Topics page — DECIDED (v2) 2026-07-04: a legible tag cloud.** Three
-  readable axes: **size** = entry count, **ink** (weight/contrast) =
-  recency of last activity, **color dot** = the tag's Finder color.
-  Position stays alphabetical on purpose — scatter clouds read terribly;
-  legibility beats cleverness. Below the cloud, the same topics as a list
-  ordered by latest activity: ISO dates on the left rail aligned to the
-  topic-name baselines, **no color dots in the list** (the cloud already
-  said the colors). Reference: `static/topics-mockup.html`.
+- **Tag cloud — DECIDED (v2) 2026-07-04: legible, three readable axes.**
+  **Size** = entry count, **ink** (weight/contrast) = recency of last
+  activity, **color dot** = the tag's Finder color. Position stays
+  alphabetical on purpose — scatter clouds read terribly; legibility beats
+  cleverness. Since v4 the cloud lives at the top of the timeline as the
+  site header (`static/timeline-mockup.html`). OPEN: whether a standalone
+  `/topics` page still earns its keep — its by-latest-activity list
+  (`static/topics-mockup.html`) is the part the timeline doesn't replicate.
 - **Three separate signals — DECIDED 2026-07-04** (the hybrid `/favorites`
   is rejected: one address showing different people different content is two
   features wearing one name):
@@ -409,8 +419,13 @@ dark-variant images, related entries, mini-TOC, print stylesheet.
 - `static/entry-page-mockup.html` — entry page reference (plain, top nav,
   sidenotes, anchors, quote/link/code actions, adjustable width, star,
   continue-reading flow)
-- `static/timeline-mockup.html` — timeline reference v3 (uniform rows,
-  hairline quality meter with threshold ticks, ISO-date rail with vertical
-  tags, hanging ★/bookmark marks, nav bookmark count, `?` help dialog)
+- `static/timeline-mockup.html` — timeline reference v4 (tag cloud as
+  header with in-place topic filtering, no site nav, margin-hung bookmark
+  count, filter row with ★ favorites, expanding search icon, sentence-case
+  month headings; v3 rows kept: uniform titles, hairline quality meter
+  with threshold ticks, ISO-date rail with vertical tags, hanging
+  ★/bookmark marks, `?` help dialog)
 - `static/topics-mockup.html` — Topics reference v2 (legible tag cloud:
-  size = count, ink = recency, dot = Finder color; activity list below)
+  size = count, ink = recency, dot = Finder color; activity list below).
+  OPEN whether the standalone page survives v4 — the cloud moved to the
+  timeline; the activity list is what the timeline doesn't replicate
