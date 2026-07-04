@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>esko.bar — Filter control variants</title>
+<style>
+/* ================================================================
+   Filter control — competing shapes, side by side. All live: click
+   around. The question each variant answers: how does a reader set
+   "how much do I want to see" (everything / notable / best), and
+   where does ★ favorites sit relative to that?
+   A–B are text rows (with and without the filter mark). C–F are
+   sliders in different shapes: hairline (the row meter's language),
+   segmented thumb, stepped bars, and a bare native range.
+   ================================================================ */
+
+:root {
+  color-scheme: light dark;
+
+  --violet: #a123f6;
+  --violet-soft: light-dark(rgba(161, 35, 246, .08), rgba(161, 35, 246, .13));
+
+  --bg:     light-dark(#f5f4f0, #121514);
+  --ink:    light-dark(#20231f, #d9ded9);
+  --soft:   light-dark(#43473f, #b4bab2);
+  --faint:  light-dark(#71766c, #8b918a);
+  --hair:   light-dark(rgba(46, 62, 50, .18), rgba(178, 205, 184, .16));
+
+  --sans:  system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --content-w: 46rem;
+}
+
+* { margin: 0; box-sizing: border-box; }
+
+body {
+  background: #f5f4f0;
+  background: var(--bg);
+  color: #20231f;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1rem;
+  line-height: 1.5;
+  padding-inline: 1.25rem;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection { background: rgba(161, 35, 246, .25); }
+
+a { color: #8318c9; color: var(--violet); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+main {
+  max-width: var(--content-w);
+  margin-inline: auto;
+  padding: 2.2rem 0 4rem;
+}
+
+main > header h1 { font-size: 1.15rem; font-weight: 650; letter-spacing: -.011em; }
+main > header p { margin-top: .2rem; font-size: .875rem; color: var(--soft); }
+main > header a { font-size: .875rem; }
+
+main > section {
+  margin-top: 2.4rem;
+  padding-top: 1.6rem;
+  border-top: 1px solid var(--hair);
+}
+main > section > h2 {
+  font: 650 .95rem var(--sans);
+  letter-spacing: -.011em;
+  color: var(--soft);
+}
+main > section > p {
+  margin-top: .15rem;
+  font-size: .875rem;
+  color: var(--soft);
+  max-width: 38rem;
+}
+main > section > div {
+  margin-top: 1.1rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .5rem 1.2rem;
+  min-height: 1.6rem;
+  font: 550 .8rem var(--sans);
+  color: var(--faint);
+}
+
+/* shared bits: text buttons, the ★ toggle, icons */
+
+main button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--faint);
+  font: inherit;
+  cursor: pointer;
+}
+main button:hover { color: var(--violet); }
+main button > b { color: var(--violet); font-weight: 500; }
+main button[aria-pressed="true"] {
+  color: var(--ink);
+  box-shadow: 0 2px 0 -.5px var(--violet);
+}
+
+main svg {
+  width: .85rem;
+  height: .85rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
+main output {
+  font: 550 .8rem var(--sans);
+  color: var(--ink);
+  min-width: 4.6rem;
+}
+
+/* --- C: hairline slider — the row meter's own language ---------- */
+
+.hairline {
+  position: relative;
+  width: 9rem;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--hair);
+  cursor: pointer;
+}
+.hairline > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 1px;
+  background: var(--faint);
+  transition: width .15s ease;
+}
+.hairline::before,
+.hairline::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  width: 1px;
+  height: 6px;
+  background: var(--hair);
+}
+.hairline::before { left: 50%; }
+.hairline::after { left: 78%; }
+.hairline > u {
+  position: absolute;
+  top: 50%;
+  translate: -50% -50%;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--violet);
+  border: 2px solid var(--bg);
+  transition: left .15s ease;
+}
+
+/* --- D: segmented control, macOS-style sliding thumb ------------ */
+
+.segments {
+  position: relative;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding: 2px;
+  border-radius: 999px;
+  background: light-dark(rgba(46, 62, 50, .07), rgba(178, 205, 184, .09));
+}
+.segments > u {
+  position: absolute;
+  inset-block: 2px;
+  width: calc((100% - 4px) / 3);
+  border-radius: 999px;
+  background: light-dark(#fff, rgba(178, 205, 184, .14));
+  box-shadow: 0 1px 3px light-dark(rgba(20, 24, 20, .16), rgba(0, 0, 0, .4));
+  transition: left .18s ease;
+}
+.segments > button {
+  position: relative;
+  padding: .28em 1em;
+  border-radius: 999px;
+}
+.segments > button[aria-pressed="true"] { color: var(--ink); box-shadow: none; }
+
+/* --- E: stepped bars — strictness as a staircase ---------------- */
+
+.steps {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 14px;
+  cursor: pointer;
+}
+.steps > button {
+  width: 5px;
+  border-radius: 2px;
+  background: var(--hair);
+  box-shadow: none !important;
+}
+.steps > button:nth-child(1) { height: 6px; }
+.steps > button:nth-child(2) { height: 10px; }
+.steps > button:nth-child(3) { height: 14px; }
+.steps > button[data-on] { background: var(--violet); }
+
+/* --- F: native range, undressed ---------------------------------- */
+
+input[type="range"] {
+  width: 9rem;
+  accent-color: var(--violet);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hairline > i, .hairline > u, .segments > u { transition: none; }
+}
+</style>
+</head>
+<body>
+
+<main>
+  <header>
+    <h1>Filter control — variants</h1>
+    <p>How a reader sets "how much do I want to see". All live; the label to
+    the right echoes the current pick. Back to the
+    <a href="timeline-mockup.html">timeline</a>.</p>
+  </header>
+
+  <section>
+    <h2>A — text row with the filter mark</h2>
+    <p>What the timeline ships today: a macOS-style filter mark (three
+    shrinking lines) naming the row, then plain words. ★ favorites is a
+    fourth pick — it is a different axis (mine vs graded), but readers
+    don't care about taxonomy.</p>
+    <div data-variant="words">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7.5 12h9M11 17h2"/></svg>
+      <button type="button" data-pick="0" aria-pressed="true">everything</button>
+      <button type="button" data-pick="1" aria-pressed="false">notable</button>
+      <button type="button" data-pick="2" aria-pressed="false">best</button>
+      <button type="button" data-pick="fav" aria-pressed="false"><b>★</b> favorites</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>B — text row, no icon</h2>
+    <p>The words alone. Quieter; the pressed underline already says
+    "filter". The icon in A buys a label for screen-magnifier users and
+    costs one glyph of chrome.</p>
+    <div data-variant="words">
+      <button type="button" data-pick="0" aria-pressed="true">everything</button>
+      <button type="button" data-pick="1" aria-pressed="false">notable</button>
+      <button type="button" data-pick="2" aria-pressed="false">best</button>
+      <button type="button" data-pick="fav" aria-pressed="false"><b>★</b> favorites</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>C — hairline slider</h2>
+    <p>The same 2px hairline as every row's quality meter, ticks at the
+    same thresholds — the control and the data speak one language. The
+    thumb snaps to everything / notable / best. ★ stays a separate toggle
+    (favorites is not a point on the quality axis).</p>
+    <div data-variant="hairline">
+      <span class="hairline" role="slider" tabindex="0" aria-label="How much to show"
+            aria-valuemin="0" aria-valuemax="2" aria-valuenow="0" aria-valuetext="everything">
+        <i></i><u></u>
+      </span>
+      <output>everything</output>
+      <button type="button" data-fav aria-pressed="false"><b>★</b> favorites</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>D — segmented control</h2>
+    <p>The macOS shape: a sliding thumb in a quiet capsule. Familiar and
+    unmistakably a control — but it is the heaviest chrome on this page,
+    on a site that owns almost none.</p>
+    <div data-variant="segments">
+      <span class="segments">
+        <u style="left:2px"></u>
+        <button type="button" data-pick="0" aria-pressed="true">everything</button>
+        <button type="button" data-pick="1" aria-pressed="false">notable</button>
+        <button type="button" data-pick="2" aria-pressed="false">best</button>
+      </span>
+      <button type="button" data-fav aria-pressed="false"><b>★</b> favorites</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>E — stepped bars</h2>
+    <p>Strictness as a staircase: one bar shows everything, all three show
+    only the best. Tiny, but it needs its label to be learnable — alone it
+    reads as a signal-strength glyph.</p>
+    <div data-variant="steps">
+      <span class="steps" role="slider" tabindex="0" aria-label="How much to show"
+            aria-valuemin="0" aria-valuemax="2" aria-valuenow="0" aria-valuetext="everything">
+        <button type="button" data-pick="0" data-on tabindex="-1"></button>
+        <button type="button" data-pick="1" tabindex="-1"></button>
+        <button type="button" data-pick="2" tabindex="-1"></button>
+      </span>
+      <output>everything</output>
+      <button type="button" data-fav aria-pressed="false"><b>★</b> favorites</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>F — native range, undressed</h2>
+    <p>For honesty: what the platform gives away free. Accessible out of
+    the box, and it looks like a settings pane — which the timeline
+    is not.</p>
+    <div data-variant="range">
+      <input type="range" min="0" max="2" step="1" value="0" aria-label="How much to show">
+      <output>everything</output>
+      <button type="button" data-fav aria-pressed="false"><b>★</b> favorites</button>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const NAMES = ['everything', 'notable', 'best'];
+  /* thumb positions on the hairline: start, and the two meter ticks */
+  const STOPS = [0, 50, 78];
+
+  /* word rows (A, B) — includes the fav pick as a fourth word */
+  document.querySelectorAll('[data-variant="words"]').forEach(row => {
+    row.querySelectorAll('[data-pick]').forEach(b =>
+      b.addEventListener('click', () =>
+        row.querySelectorAll('[data-pick]').forEach(x =>
+          x.setAttribute('aria-pressed', x === b))));
+  });
+
+  /* separate ★ toggles (C–F) */
+  document.querySelectorAll('[data-fav]').forEach(b =>
+    b.addEventListener('click', () =>
+      b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') !== 'true')));
+
+  const say = (row, v) => { row.querySelector('output').textContent = NAMES[v]; };
+
+  /* C: hairline — click snaps to nearest stop; arrows step */
+  document.querySelectorAll('[data-variant="hairline"]').forEach(row => {
+    const track = row.querySelector('.hairline');
+    const fill = track.querySelector('i');
+    const thumb = track.querySelector('u');
+    const set = v => {
+      track.setAttribute('aria-valuenow', v);
+      track.setAttribute('aria-valuetext', NAMES[v]);
+      thumb.style.left = STOPS[v] + '%';
+      fill.style.width = STOPS[v] + '%';
+      say(row, v);
+    };
+    track.addEventListener('click', ev => {
+      const x = (ev.clientX - track.getBoundingClientRect().left)
+        / track.getBoundingClientRect().width * 100;
+      set(STOPS.reduce((b, s, i) =>
+        Math.abs(s - x) < Math.abs(STOPS[b] - x) ? i : b, 0));
+    });
+    track.addEventListener('keydown', ev => {
+      const v = +track.getAttribute('aria-valuenow');
+      if (ev.key === 'ArrowRight' || ev.key === 'ArrowUp') set(Math.min(2, v + 1));
+      if (ev.key === 'ArrowLeft' || ev.key === 'ArrowDown') set(Math.max(0, v - 1));
+    });
+    set(0);
+  });
+
+  /* D: segments — thumb slides under the pressed word */
+  document.querySelectorAll('[data-variant="segments"]').forEach(row => {
+    const thumb = row.querySelector('.segments > u');
+    row.querySelectorAll('[data-pick]').forEach(b =>
+      b.addEventListener('click', () => {
+        row.querySelectorAll('[data-pick]').forEach(x =>
+          x.setAttribute('aria-pressed', x === b));
+        thumb.style.left =
+          `calc(2px + ${+b.dataset.pick} * (100% - 4px) / 3)`;
+      }));
+  });
+
+  /* E: steps — bars up to the pick light up */
+  document.querySelectorAll('[data-variant="steps"]').forEach(row => {
+    const stair = row.querySelector('.steps');
+    const bars = [...stair.querySelectorAll('[data-pick]')];
+    const set = v => {
+      stair.setAttribute('aria-valuenow', v);
+      stair.setAttribute('aria-valuetext', NAMES[v]);
+      bars.forEach((b, i) => b.toggleAttribute('data-on', i <= v));
+      say(row, v);
+    };
+    bars.forEach(b => b.addEventListener('click', () => set(+b.dataset.pick)));
+    stair.addEventListener('keydown', ev => {
+      const v = +stair.getAttribute('aria-valuenow');
+      if (ev.key === 'ArrowRight' || ev.key === 'ArrowUp') set(Math.min(2, v + 1));
+      if (ev.key === 'ArrowLeft' || ev.key === 'ArrowDown') set(Math.max(0, v - 1));
+    });
+  });
+
+  /* F: native range */
+  document.querySelectorAll('[data-variant="range"]').forEach(row => {
+    const r = row.querySelector('input');
+    r.addEventListener('input', () => say(row, +r.value));
+  });
+})();
+</script>
+</body>
+</html>

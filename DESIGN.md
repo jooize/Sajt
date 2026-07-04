@@ -160,7 +160,6 @@ Labels are primary; dates are for timeline filtering only.
 
 ```
 esko.bar/                     timeline (newest first), tag cloud as header
-esko.bar/topics               OPEN: by-latest-activity topic list, if kept
 esko.bar/saved                the reader's bookmarked entries (client-side)
 esko.bar/+favorite            my hand-picked favorites (a plain Finder tag)
 esko.bar/open-source-licenses entry (file or folder), label = URL
@@ -207,10 +206,12 @@ Structure carries the beauty. Reference realization:
 - **Site nav — DECIDED 2026-07-04: there isn't one.** The timeline is the
   site root, and its header is the tag cloud itself — a nav row saying
   "Timeline" on the timeline is noise, and **Everything is dropped** (the
-  timeline with the everything filter *is* everything). No site title — the
-  domain is the brand. Entry pages keep a single quiet way back to the root.
-  (DECIDED 2026-07-04: tag pages are called **Topics** in copy — "tags" is
-  the mechanism, "topics" is what a reader is actually browsing.)
+  timeline with the everything filter *is* everything), and the standalone
+  Topics page is removed — the cloud on the timeline replaced it. No site
+  title — the domain is the brand. Entry pages keep a single quiet way back
+  to the root. (DECIDED 2026-07-04: tag pages are called **Topics** in
+  copy — "tags" is the mechanism, "topics" is what a reader is actually
+  browsing.)
 - **Dark mode** — follows the OS via `prefers-color-scheme` /
   `light-dark()`. **No theme UI** (DECIDED 2026-07-03; the switcher was
   removed from the live templates). The site never duplicates UI the OS
@@ -241,14 +242,21 @@ Structure carries the beauty. Reference realization:
 - **Timeline — DECIDED (v4) 2026-07-04: the tag cloud is the header.**
   The cloud (same three axes as the Topics page) sits at the top of the
   timeline; clicking a topic filters the timeline in place (click again or
-  `Esc` to clear). Below it, one quiet control line with **no rule under
-  it**: the saved-bookmarks count hangs in the *left margin*, x-aligned
-  with the entries' own bookmark marks; a small filter icon leads
-  **everything · notable · best · ★ favorites** (favorites joined the
-  filter row — it shows only ★-tagged entries); **search is a magnifier
-  icon that expands on focus** (accessible name "Search", `/` still
+  `Esc` to clear). Below it, quiet controls with **no rule under them**:
+  the saved-bookmarks count hangs in the *left margin*, x-aligned with the
+  entries' own bookmark marks; a macOS-style filter mark (three shrinking
+  lines, the `line.3.horizontal.decrease` shape — the funnel glyph was
+  rejected 2026-07-04) leads **everything · notable · best · ★ favorites**
+  (favorites joined the filter row — it shows only ★-tagged entries);
+  **search is a magnifier icon on its own line, left, under
+  "everything"**, expanding on focus (accessible name "Search", `/` still
   focuses it; it stays open while it holds a query). Rows carry over from
   v3 unchanged. Reference: `static/timeline-mockup.html`.
+  - **OPEN: the filter control's shape.** The filter mark + words ships in
+    the mockup, but `static/filter-control-mockup.html` holds live
+    alternatives: words without the icon, a hairline slider speaking the
+    row meters' language, a macOS segmented control, stepped bars, and a
+    bare native range.
   - **Uniform rows, quality as a hairline meter** (v3, kept): every title
     the same size (v2's graded-density sizes rejected); quality is a 2px
     hairline under the date whose fill is the pairwise-grade percentile,
@@ -282,12 +290,22 @@ Structure carries the beauty. Reference realization:
   text stays ink for legibility.
 - **Tag cloud — DECIDED (v2) 2026-07-04: legible, three readable axes.**
   **Size** = entry count, **ink** (weight/contrast) = recency of last
-  activity, **color dot** = the tag's Finder color. Position stays
+  activity, **color dot** = the tag's Finder color (dots ride a touch
+  below center, on the label's optical midline). Position stays
   alphabetical on purpose — scatter clouds read terribly; legibility beats
-  cleverness. Since v4 the cloud lives at the top of the timeline as the
-  site header (`static/timeline-mockup.html`). OPEN: whether a standalone
-  `/topics` page still earns its keep — its by-latest-activity list
-  (`static/topics-mockup.html`) is the part the timeline doesn't replicate.
+  cleverness. The cloud is deliberately narrow so it wraps into a few
+  centered lines — grouped to the middle, cloud-shaped, not stretched
+  edge to edge. Since v4 it lives at the top of the timeline as the site
+  header (`static/timeline-mockup.html`). **The standalone `/topics` page
+  is removed** (DECIDED 2026-07-04) — the cloud on the timeline replaced
+  it; its by-latest-activity list goes with it (git history is the
+  archive).
+  - **Selected topic wears a pill** (DECIDED 2026-07-04, replacing the
+    underline): soft violet capsule around the tag, its count split off by
+    a hairline divider and kept grey. Padding is mirrored by negative
+    margin so neighbors don't reflow. A quiet "Esc clears" sits in the
+    margin left of the cloud while a topic is active (clickable; hidden on
+    narrow screens where tapping the pill clears instead).
 - **Three separate signals — DECIDED 2026-07-04** (the hybrid `/favorites`
   is rejected: one address showing different people different content is two
   features wearing one name):
@@ -389,10 +407,10 @@ Content-hash dividends and quiet touches (DECIDED 2026-07-04):
 3. **AsciiDoc via Asciidoctor** — fix the broken `.adoc` path; unified
    highlight theming; `video::` works.
 4. **Port the plain design** — entry pages from `entry-page-mockup.html`
-   (plain body, top nav, sidenotes filter, anchors, reader width, quote/code
-   actions, continue-reading), timeline from `timeline-mockup.html` (quality
-   slider, favorites star), and Topics from `topics-mockup.html`. Replaces
-   the interim glass cards in templates.
+   (plain body, way back to root, sidenotes filter, anchors, reader width,
+   quote/code actions, continue-reading) and the timeline from
+   `timeline-mockup.html` (cloud header, filter row, bookmarks, quality
+   meter, ★ favorites). Replaces the interim glass cards in templates.
 5. **Metadata stripping** — before anything with photos goes public.
 6. **Feeds + sitemap + OG meta + security headers**, then deploy behind
    Caddy; `rsync -avX` content up; go live.
@@ -419,13 +437,16 @@ dark-variant images, related entries, mini-TOC, print stylesheet.
 - `static/entry-page-mockup.html` — entry page reference (plain, top nav,
   sidenotes, anchors, quote/link/code actions, adjustable width, star,
   continue-reading flow)
-- `static/timeline-mockup.html` — timeline reference v4 (tag cloud as
-  header with in-place topic filtering, no site nav, margin-hung bookmark
-  count, filter row with ★ favorites, expanding search icon, sentence-case
-  month headings; v3 rows kept: uniform titles, hairline quality meter
-  with threshold ticks, ISO-date rail with vertical tags, hanging
-  ★/bookmark marks, `?` help dialog)
-- `static/topics-mockup.html` — Topics reference v2 (legible tag cloud:
-  size = count, ink = recency, dot = Finder color; activity list below).
-  OPEN whether the standalone page survives v4 — the cloud moved to the
-  timeline; the activity list is what the timeline doesn't replicate
+- `static/timeline-mockup.html` — timeline reference v4.1 (tag cloud as
+  header, middle-grouped, with in-place topic filtering and a pill on the
+  selected topic; no site nav, margin-hung bookmark count and "Esc clears"
+  hint, macOS-style filter mark before everything/notable/best/★favorites,
+  expanding search icon on its own line, sentence-case month headings;
+  v3 rows kept: uniform titles, hairline quality meter with threshold
+  ticks, ISO-date rail with vertical tags, hanging ★/bookmark marks, `?`
+  help dialog)
+- `static/filter-control-mockup.html` — live comparison of filter-control
+  shapes (words ± icon, hairline slider, segmented, stepped bars, native
+  range) for the OPEN decision above
+- Topics page mockup removed 2026-07-04 (cloud lives on the timeline; git
+  history is the archive)

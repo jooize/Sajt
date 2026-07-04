@@ -6,15 +6,20 @@
 <title>esko.bar — Timeline</title>
 <style>
 /* ================================================================
-   Timeline design reference, v4.
+   Timeline design reference, v4.1.
    The tag cloud IS the header — no site nav at all (the timeline
    is the site root; a "Timeline" link on the timeline is noise).
-   Clicking a topic filters the timeline in place. Below the cloud,
-   one quiet control line: the saved-bookmarks count hangs in the
-   left margin (vertically aligned with the entries' bookmark
-   marks), a filter icon leads everything/notable/best/favorites,
-   and search is a magnifier icon that expands on focus.
+   The cloud is narrow, so it wraps into a few centered lines —
+   grouped to the middle, cloud-shaped. Clicking a topic filters
+   the timeline in place; the selected topic wears a pill (name |
+   count, hairline split) and a quiet "Esc clears" sits in the
+   margin left of the cloud. Below: the saved-bookmarks count
+   hangs in the left margin (x-aligned with the entries' bookmark
+   marks), a macOS-style filter mark (three shrinking lines) leads
+   everything/notable/best/favorites, and search is a magnifier on
+   its own line, under "everything", expanding on focus.
    Month headings are sentence case, slightly larger, bold.
+   Alternative filter-control shapes: filter-control-mockup.html.
    Rows unchanged from v3: uniform titles, hairline quality meter
    with threshold ticks, hanging ★/bookmark, vertical tags.
    Keyboard: ? shows all shortcuts.
@@ -84,12 +89,17 @@ main {
    Click filters the timeline right here. */
 
 #cloud {
+  position: relative;
+  /* narrow enough to wrap into a few centered lines — grouped to the
+     middle, not stretched edge to edge */
+  max-width: 30rem;
+  margin-inline: auto;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: center;
-  column-gap: 1.5rem;
-  row-gap: .45rem;
+  column-gap: 1.4rem;
+  row-gap: .5rem;
   padding: 1rem .5rem 1.8rem;
   line-height: 1.25;
 }
@@ -102,14 +112,26 @@ main {
   letter-spacing: -.011em;
 }
 #cloud a:hover { color: var(--violet) !important; text-decoration: none; }
+/* the selected topic wears a pill: name | count, split by a hairline */
 #cloud a[aria-current="true"] {
   color: var(--violet) !important;
-  text-decoration: underline;
-  text-underline-offset: 4px;
+  background: var(--violet-soft);
+  border-radius: 999px;
+  /* padding mirrored by negative margin so neighbors don't reflow */
+  padding: .14em .6em;
+  margin: -.14em -.6em;
+}
+#cloud a[aria-current="true"] > small {
+  margin-left: .12em;
+  padding-left: .5em;
+  border-left: 1px solid var(--hair);
+  color: var(--faint);
 }
 #cloud a::before {
   content: "";
   align-self: center;
+  /* optically a touch low, so the dot sits on the label's midline */
+  translate: 0 .09em;
   width: .5em;
   height: .5em;
   min-width: 6px;
@@ -123,6 +145,24 @@ main {
   color: var(--faint);
   font-feature-settings: "tnum";
 }
+
+/* the quiet way out, in the margin left of the cloud */
+#cloud > button {
+  position: absolute;
+  right: 100%;
+  margin-right: 1.2rem;
+  top: 50%;
+  translate: 0 -50%;
+  padding: 0;
+  border: none;
+  background: none;
+  font: 500 .7rem var(--sans);
+  color: var(--faint);
+  white-space: nowrap;
+  cursor: pointer;
+}
+#cloud > button:hover { color: var(--violet); }
+#cloud > button[hidden] { display: none; }
 
 /* ---------- controls: one quiet line, no rule ---------- */
 
@@ -141,7 +181,8 @@ main > form {
 #navsaved {
   position: absolute;
   left: -3.4rem;
-  top: 50%;
+  /* centered on the first control line (search sits on the second) */
+  top: .6rem;
   translate: 0 -50%;
   display: inline-flex;
   align-items: center;
@@ -171,13 +212,14 @@ main > form p {
   gap: .55rem;
   align-items: center;
 }
+/* the filter mark, macOS-style: three shrinking lines */
 main > form p > svg {
   width: .85rem;
   height: .85rem;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.6;
-  stroke-linejoin: round;
+  stroke-width: 1.7;
+  stroke-linecap: round;
 }
 main > form p button {
   padding: 0;
@@ -194,9 +236,11 @@ main > form p button[aria-pressed="true"] {
   box-shadow: 0 2px 0 -.5px var(--violet);
 }
 
-/* search: a magnifier that expands on focus (or while it holds text) */
+/* search: a magnifier that expands on focus (or while it holds text).
+   Its own line, indented so the icon sits under "everything". */
 main > form search {
-  margin-left: auto;
+  flex-basis: 100%;
+  margin: .35rem 0 0 1.4rem;
   display: inline-flex;
   align-items: center;
   gap: .35rem;
@@ -385,6 +429,10 @@ main article aside > button[aria-pressed="true"] svg { fill: currentColor; }
   main article aside > button,
   main > form search input { transition: none; }
 }
+@media (max-width: 56rem) {
+  /* no margin for the hint to live in; tapping the pill clears instead */
+  #cloud > button { display: none; }
+}
 
 /* --- content: every title the same size ---------------------- */
 
@@ -515,7 +563,7 @@ body > footer button:hover { color: var(--violet); }
       <output>0</output>
     </a>
     <p aria-label="How much to show">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16l-6.2 7v6l-3.6-2.2v-3.8z"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7.5 12h9M11 17h2"/></svg>
       <button type="button" data-pick="0" aria-pressed="true">everything</button>
       <button type="button" data-pick="1" aria-pressed="false">notable</button>
       <button type="button" data-pick="2" aria-pressed="false">best</button>
@@ -673,7 +721,14 @@ body > footer button:hover { color: var(--violet); }
         style="--tag:${TAG[t] ?? 'var(--tag-gray)'};font-size:${sizeOf(s.n)}rem;${ink(s.last)}"
         title="${s.n} ${s.n === 1 ? 'entry' : 'entries'}, last active ${s.last}">${
         esc(t)} <small>${s.n}</small></a>`;
-    }).join('');
+    }).join('') +
+      '<button type="button" id="cleartag" hidden title="Clear the topic filter">' +
+      '<kbd>Esc</kbd> clears</button>';
+    document.getElementById('cleartag').addEventListener('click', () => {
+      activeTag = null;
+      selected = -1;
+      paint();
+    });
   }
 
   const row = (e, i) => `
@@ -724,6 +779,7 @@ body > footer button:hover { color: var(--violet); }
     navsaved.setAttribute('aria-current', view === 'saved' ? 'page' : 'false');
     cloud.querySelectorAll('a').forEach(a =>
       a.setAttribute('aria-current', a.dataset.tag === activeTag ? 'true' : 'false'));
+    document.getElementById('cleartag').hidden = !activeTag;
   }
 
   /* ---------- controls ---------- */
