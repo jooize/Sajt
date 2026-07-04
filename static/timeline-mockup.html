@@ -6,14 +6,15 @@
 <title>esko.bar — Timeline</title>
 <style>
 /* ================================================================
-   Timeline design reference, v2 — graded density.
-   Quality is shown as PROMINENCE, newspaper-style: the best entries
-   are large with description and imagery, good ones are regular,
-   the rest are compact single lines. No meters, no slider.
-   All metadata lives on a left rail (date, author's star, reader's
-   bookmark) so the eyes travel one straight line down.
-   Tags carry their Finder colors. Bookmarks stay in this browser.
-   Keyboard: j/k select, Enter open, b bookmark, / search, Esc clear.
+   Timeline design reference, v3.
+   Uniform rows: every title the same size. Quality is a hairline
+   meter under the date — gradual fill, ticks at the notable/best
+   thresholds (the same thresholds the everything/notable/best
+   control filters by). The left rail carries date (ISO), meter,
+   and tags stacked vertically. My ★ hangs outside the column like
+   a footnote mark; the reader's bookmark hangs outside the star
+   and appears on hover/selection. Bookmark count lives in the nav.
+   Keyboard: ? shows all shortcuts.
    ================================================================ */
 
 :root {
@@ -41,7 +42,7 @@
   --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   --content-w: 46rem;
-  --rail: 5.2rem;
+  --rail: 5.6rem;
 }
 
 * { margin: 0; box-sizing: border-box; }
@@ -79,6 +80,7 @@ body > header {
 
 body > header > nav {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 1.35rem;
   font: 550 .8rem var(--sans);
@@ -88,6 +90,23 @@ body > header > nav > a { color: var(--faint); }
 body > header > nav > a:hover { color: var(--violet); text-decoration: none; }
 body > header > nav > a[aria-current="page"] { color: var(--ink); }
 body > header > nav > a[hidden] { display: none; }
+
+/* saved-bookmarks entry: icon + count */
+#navsaved {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+}
+#navsaved svg {
+  width: .8rem;
+  height: .8rem;
+  fill: currentColor;
+  stroke: none;
+}
+#navsaved output {
+  font: 500 .74rem var(--mono);
+  font-feature-settings: "tnum";
+}
 
 /* ---------- controls: one quiet line ---------- */
 
@@ -102,7 +121,7 @@ main > form {
   align-items: baseline;
   flex-wrap: wrap;
   gap: .4rem 1.2rem;
-  padding-bottom: .9rem;
+  padding-bottom: 1rem;
   border-bottom: 1px solid var(--hair);
   font: 550 .8rem var(--sans);
   color: var(--faint);
@@ -140,10 +159,10 @@ main > form search input:focus {
   border-bottom-color: var(--violet);
 }
 
-/* ---------- month headings sit on the rail ---------- */
+/* ---------- month headings ---------- */
 
 main > section > h2 {
-  margin: 2rem 0 .6rem;
+  margin: 2.1rem 0 .7rem;
   font: 500 .74rem var(--mono);
   font-feature-settings: "tnum";
   letter-spacing: .09em;
@@ -153,43 +172,107 @@ main > section > h2 {
 
 main > section > ul { list-style: none; padding: 0; }
 
-/* ---------- rows: left rail carries ALL metadata ---------- */
+/* ---------- rows ---------- */
 
 main article {
+  position: relative;
   display: grid;
   grid-template-columns: var(--rail) 1fr;
-  column-gap: 1.15rem;
-  padding: .5rem .55rem;
-  margin-inline: -.55rem;
+  column-gap: 1.25rem;
+  padding: .75rem .6rem;
+  margin-inline: -.6rem;
   border-radius: 10px;
 }
 main article.selected { background: var(--violet-soft); }
+
+/* --- left rail: date, quality meter, tags — one straight scan line */
 
 main article > aside {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: .15rem;
-  padding-top: .2rem;
 }
 main article > aside > time {
+  /* nudged so the date baseline sits on the title baseline */
+  padding-top: .28rem;
   font: 500 .74rem var(--mono);
   font-feature-settings: "tnum";
-  letter-spacing: .06em;
+  letter-spacing: .02em;
   color: var(--faint);
   white-space: nowrap;
 }
-/* the author's star: a favorite of mine (the `favorite` Finder tag) */
-main article > aside > b {
+
+/* quality: a hairline meter — gradual fill, ticks at the
+   notable/best thresholds the view control also uses */
+main article > aside > span {
+  position: relative;
+  width: 2.9rem;
+  height: 2px;
+  margin-top: .55rem;
+  border-radius: 1px;
+  background: var(--hair);
+}
+main article > aside > span > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 1px;
+  background: var(--faint);
+}
+main article:hover > aside > span > i,
+main article.selected > aside > span > i { background: var(--violet); }
+main article > aside > span::before,
+main article > aside > span::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  width: 1px;
+  height: 6px;
+  background: var(--hair);
+}
+main article > aside > span::before { left: 50%; }
+main article > aside > span::after { left: 78%; }
+
+/* tags: vertical, in their Finder colors */
+main article > aside > nav {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .18rem;
+  margin-top: .6rem;
+}
+main article > aside > nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  font: 550 .74rem var(--sans);
+  color: var(--soft);
+}
+main article > aside > nav a:hover { color: var(--violet); text-decoration: none; }
+main article > aside > nav a::before {
+  content: "";
+  width: .42rem;
+  height: .42rem;
+  border-radius: 50%;
+  background: var(--tag, var(--tag-gray));
+}
+
+/* --- hanging marks, like footnotes: ★ nearest, bookmark outside it */
+
+main article > b {
+  position: absolute;
+  top: .78rem;
+  left: -1.35rem;
   color: var(--violet);
   font-size: .8rem;
   font-weight: 500;
-  line-height: 1.3;
+  line-height: 1.5;
 }
-/* the reader's bookmark: saved in this browser only */
-main article > aside > button {
+main article > button {
+  position: absolute;
+  top: .85rem;
+  left: -2.9rem;
   display: inline-flex;
-  padding: .1rem .15rem 0 0;
+  padding: .1rem;
   border: none;
   background: none;
   color: var(--faint);
@@ -197,13 +280,13 @@ main article > aside > button {
   opacity: 0;
   transition: opacity .15s ease;
 }
-main article:hover > aside > button,
-main article.selected > aside > button,
-main article > aside > button:focus-visible,
-main article > aside > button[aria-pressed="true"] { opacity: 1; }
-main article > aside > button:hover { color: var(--violet); }
-main article > aside > button[aria-pressed="true"] { color: var(--violet); }
-main article > aside > button svg {
+main article:hover > button,
+main article.selected > button,
+main article > button:focus-visible,
+main article > button[aria-pressed="true"] { opacity: 1; }
+main article > button:hover { color: var(--violet); }
+main article > button[aria-pressed="true"] { color: var(--violet); }
+main article > button svg {
   width: .85rem;
   height: .85rem;
   fill: none;
@@ -211,23 +294,26 @@ main article > aside > button svg {
   stroke-width: 1.8;
   stroke-linejoin: round;
 }
-main article > aside > button[aria-pressed="true"] svg { fill: currentColor; }
-@media (hover: none) { main article > aside > button { opacity: .55; } }
+main article > button[aria-pressed="true"] svg { fill: currentColor; }
 @media (prefers-reduced-motion: reduce) {
-  main article > aside > button { transition: none; }
+  main article > button { transition: none; }
 }
 
+/* --- content: every title the same size ---------------------- */
+
 main article h3 {
+  font-size: 1rem;
   font-weight: 650;
   letter-spacing: -.011em;
-  line-height: 1.3;
+  line-height: 1.5;
 }
 main article h3 a { color: var(--ink); }
 main article h3 a:hover { color: var(--violet); text-decoration: none; }
 main article h3 small {
-  font-size: .78em;
-  font-weight: 450;
-  color: var(--faint);
+  /* extension / folder slash: same size, slightly greyed */
+  font-size: 1em;
+  font-weight: inherit;
+  color: var(--soft);
 }
 main article h3 i { font-weight: 450; color: var(--faint); }
 
@@ -237,59 +323,14 @@ main article > div > p {
   color: var(--soft);
 }
 
-/* tags in their Finder colors: dot + name */
-main article footer {
-  display: flex;
-  flex-wrap: wrap;
-  gap: .15rem .9rem;
-  margin-top: .3rem;
-}
-main article footer a {
-  display: inline-flex;
-  align-items: center;
-  gap: .35rem;
-  font: 550 .74rem var(--sans);
-  color: var(--soft);
-}
-main article footer a:hover { color: var(--violet); text-decoration: none; }
-main article footer a::before {
-  content: "";
-  width: .45rem;
-  height: .45rem;
-  border-radius: 50%;
-  background: var(--tag, var(--tag-gray));
-}
-
 /* imagery: placeholder gradients here; real thumbnails on the site */
 main article figure {
-  margin-top: .55rem;
+  margin-top: .6rem;
+  max-width: 24rem;
+  aspect-ratio: 5 / 1.9;
   border-radius: 10px;
   border: 1px solid var(--hair);
 }
-
-/* ----- graded density: quality is prominence, not a meter ----- */
-
-/* tier 3 — the best: large, described, pictured */
-main article[data-tier="3"] { margin-block: .35rem; }
-main article[data-tier="3"] h3 { font-size: 1.22rem; font-weight: 700; }
-main article[data-tier="3"] > div > p { font-size: .92rem; margin-top: .15rem; }
-main article[data-tier="3"] figure { aspect-ratio: 5 / 2.4; }
-
-/* tier 2 — good: regular */
-main article[data-tier="2"] h3 { font-size: 1rem; }
-main article[data-tier="2"] figure {
-  aspect-ratio: 5 / 1.6;
-  max-width: 24rem;
-}
-
-/* tier 1 — the rest: one compact line */
-main article[data-tier="1"] { padding-block: .3rem; }
-main article[data-tier="1"] h3 { font-size: .89rem; font-weight: 550; }
-main article[data-tier="1"] h3 a { color: var(--soft); }
-main article[data-tier="1"] h3 a:hover { color: var(--violet); }
-main article[data-tier="1"] > div > p,
-main article[data-tier="1"] figure,
-main article[data-tier="1"] footer { display: none; }
 
 main > p {
   padding: 3rem 0;
@@ -298,7 +339,42 @@ main > p {
   color: var(--soft);
 }
 
-/* ---------- mockup hints, bottom ---------- */
+/* ---------- help dialog (?) ---------- */
+
+dialog {
+  min-width: min(21rem, calc(100vw - 3rem));
+  border: 1px solid var(--hair);
+  border-radius: 14px;
+  padding: 1.3rem 1.5rem 1.4rem;
+  background: var(--bg);
+  color: var(--ink);
+}
+dialog::backdrop { background: rgba(10, 12, 11, .3); }
+dialog h2 {
+  font-size: .95rem;
+  font-weight: 650;
+  margin-bottom: .8rem;
+}
+dialog dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: .4rem 1rem;
+  font-size: .85rem;
+  color: var(--soft);
+}
+dialog dt { text-align: right; }
+dialog p {
+  margin-top: 1rem;
+  padding-top: .8rem;
+  border-top: 1px solid var(--hair);
+  font-size: .8rem;
+  color: var(--soft);
+}
+dialog p b { color: var(--violet); font-weight: 500; }
+
+kbd { font: 500 .95em var(--mono); }
+
+/* ---------- mockup footer: just the door to the help ---------- */
 
 body > footer {
   max-width: var(--content-w);
@@ -308,11 +384,27 @@ body > footer {
   color: var(--soft);
   text-align: center;
 }
+body > footer button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+body > footer button:hover { color: var(--violet); }
 
-kbd { font: 500 .95em var(--mono); }
-
-@media (max-width: 40rem) {
-  :root { --rail: 3.6rem; }
+@media (max-width: 52rem) {
+  /* no margin to hang into: marks move into the rail, under the date */
+  main article > b, main article > button {
+    position: static;
+    padding: 0;
+    order: 3;
+  }
+  main article > aside { flex-direction: row; flex-wrap: wrap; column-gap: .6rem; }
+  main article { grid-template-columns: 1fr; row-gap: .15rem; }
+  main article > aside > span { margin-top: .45rem; }
+  main article > aside > nav { flex-direction: row; margin-top: 0; column-gap: .6rem; }
   main > form search { margin-left: 0; width: 100%; }
   main > form search input { width: 100%; }
 }
@@ -325,7 +417,10 @@ kbd { font: 500 .95em var(--mono); }
     <a href="#" aria-current="page">Timeline</a>
     <a href="topics-mockup.html">Topics</a>
     <a href="#">Everything</a>
-    <a href="#saved" id="navsaved" hidden>Saved</a>
+    <a href="#saved" id="navsaved" hidden aria-label="Saved for later">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.5h11V21l-5.5-4-5.5 4z"/></svg>
+      <output>0</output>
+    </a>
   </nav>
 </header>
 
@@ -345,18 +440,29 @@ kbd { font: 500 .95em var(--mono); }
 </main>
 
 <footer>
-  <kbd>j</kbd>/<kbd>k</kbd> select &middot; <kbd>Enter</kbd> open
-  &middot; <kbd>b</kbd> save for later &middot; <kbd>/</kbd> search
-  &middot; <kbd>Esc</kbd> clear &middot; ★ my favorites
-  &middot; bookmarks stay in this browser
+  <button type="button" id="helpbtn"><kbd>?</kbd> shortcuts</button>
 </footer>
+
+<dialog id="help" aria-label="Keyboard shortcuts">
+  <h2>Keyboard</h2>
+  <dl>
+    <dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>select next / previous</dd>
+    <dt><kbd>Enter</kbd></dt><dd>open the selected entry</dd>
+    <dt><kbd>b</kbd></dt><dd>save for later</dd>
+    <dt><kbd>/</kbd></dt><dd>search</dd>
+    <dt><kbd>Esc</kbd></dt><dd>clear, close</dd>
+    <dt><kbd>?</kbd></dt><dd>this help</dd>
+  </dl>
+  <p><b>★</b> marks my favorites. Bookmarks are yours — they never leave
+  this browser.</p>
+</dialog>
 
 <script>
 (() => {
   /* Finder tag colors travel with the tags (read from the xattr). */
   const TAG = {
     design:   'var(--tag-purple)',
-    photo:    'var(--tag-yellow)',
+    travel:   'var(--tag-green)',
     dev:      'var(--tag-blue)',
     meme:     'var(--tag-orange)',
     writing:  'var(--tag-green)',
@@ -367,42 +473,44 @@ kbd { font: 500 .95em var(--mono); }
     intro:    'var(--tag-gray)',
   };
 
-  /* fav = my `favorite` Finder tag; art = placeholder imagery (real
-     thumbnails on the site); q = pairwise grade -> tier -> prominence */
+  /* kind is the TYPE (from the file itself, not a tag): photo, note,
+     page, link, folder. Search matches it, so typing "photo" filters.
+     fav = my `favorite` Finder tag; art = placeholder imagery;
+     q = pairwise grade, drawn as the rail meter */
   const E = [
-    { label:'hello-world', ext:'.md', date:'2026-03-03', q:.82, tags:['intro'],
+    { kind:'note', label:'hello-world', ext:'.md', date:'2026-03-03', q:.82, tags:['intro'],
       sub:'This is the first post on esko.bar — what it is, why it exists, and how a folder became a website.' },
-    { label:'sunset', ext:'.jpg', date:'2026-03-03', q:.55, tags:['photo'],
+    { kind:'photo', label:'sunset', ext:'.jpg', date:'2026-03-03', q:.55, tags:[],
       sub:'Golden hour over the bay.',
       art:'linear-gradient(160deg,#f6b26b,#e06666 55%,#674ea7)' },
-    { label:null, ext:'.txt', date:'2026-03-04', q:.20, tags:[],
+    { kind:'note', label:null, ext:'.txt', date:'2026-03-04', q:.20, tags:[],
       sub:'Just a plain text note.' },
-    { label:'code-highlighting', ext:'.md', date:'2026-03-05', q:.70, tags:['dev'],
+    { kind:'note', label:'code-highlighting', ext:'.md', date:'2026-03-05', q:.70, tags:['dev'],
       sub:'Fenced code blocks in Rust, Python, Bash, JS — one palette in light and dark.' },
-    { label:'cat-loaf', ext:'.gif', date:'2026-03-09', q:.62, tags:['meme'],
+    { kind:'photo', label:'cat-loaf', ext:'.gif', date:'2026-03-09', q:.62, tags:['meme'],
       sub:'When the deploy finally goes green.',
       art:'linear-gradient(140deg,#b7b7b7,#8d7350 70%,#5b4a36)' },
-    { label:'glass-tuner', ext:'.html', date:'2026-03-11', q:.90, fav:true, tags:['design','dev'],
+    { kind:'page', label:'glass-tuner', ext:'.html', date:'2026-03-11', q:.90, fav:true, tags:['design','dev'],
       sub:'An interactive SVG specular-light tuner — drag the highlight around and watch the glass respond.' },
-    { label:'rain-canvas', ext:'.html', date:'2026-03-14', q:.76, tags:['design'],
+    { kind:'page', label:'rain-canvas', ext:'.html', date:'2026-03-14', q:.76, tags:['design'],
       sub:'Lightweight Canvas 2D rain renderer.' },
-    { label:'things-3', ext:'.link', date:'2026-03-19', q:.35, tags:['apps'],
+    { kind:'link', label:'things-3', ext:'.link', date:'2026-03-19', q:.35, tags:['apps'],
       sub:'apps.apple.com · App Store' },
-    { label:'the-daily', ext:'.link', date:'2026-03-19', q:.40, tags:['audio'],
+    { kind:'link', label:'the-daily', ext:'.link', date:'2026-03-19', q:.40, tags:['audio'],
       sub:'podcasts.apple.com · Podcast' },
-    { label:'snow-test', ext:'.html', date:'2026-04-02', q:.68, tags:['design'],
+    { kind:'page', label:'snow-test', ext:'.html', date:'2026-04-02', q:.68, tags:['design'],
       sub:'Snowfall variant prototypes.' },
-    { label:'screenshot-bug', ext:'.png', date:'2026-04-18', q:.38, tags:['dev','meme'],
+    { kind:'photo', label:'screenshot-bug', ext:'.png', date:'2026-04-18', q:.38, tags:['dev','meme'],
       sub:'It works on my machine.' },
-    { label:'on-file-systems', ext:'.md', date:'2026-04-24', q:.88, fav:true, tags:['writing'],
+    { kind:'note', label:'on-file-systems', ext:'.md', date:'2026-04-24', q:.88, fav:true, tags:['writing'],
       sub:'Why folders lost to tags: a file lives in one place, a thought never does.' },
-    { label:'journal-2026-05', ext:'.md', date:'2026-05-02', q:.30, tags:['personal'],
+    { kind:'note', label:'journal-2026-05', ext:'.md', date:'2026-05-02', q:.30, tags:['personal'],
       sub:'A personal post — tagged personal, still public.' },
-    { label:'open-source-licenses', ext:'/', date:'2026-05-18', q:.72, tags:['meta'],
+    { kind:'folder', label:'open-source-licenses', ext:'/', date:'2026-05-18', q:.72, tags:['meta'],
       sub:'A folder as an entry — clean name, native date, assets addressable inside.' },
-    { label:'wireframe', ext:'.png', date:'2026-05-26', q:.45, tags:['design'],
+    { kind:'photo', label:'wireframe', ext:'.png', date:'2026-05-26', q:.45, tags:['design'],
       sub:'420 KB · 1600×1000' },
-    { label:'family-trip', ext:'.jpg', date:'2026-05-30', q:.84, tags:['photo'],
+    { kind:'photo', label:'family-trip', ext:'.jpg', date:'2026-05-30', q:.84, tags:['travel'],
       sub:'Twelve photos from the coast — fog in the morning, unreasonable blue by noon.',
       art:'linear-gradient(150deg,#76a5af,#45818e 45%,#134f5c 80%,#0b5394)' },
   ];
@@ -416,12 +524,15 @@ kbd { font: 500 .95em var(--mono); }
   const saved = new Set(JSON.parse(store.getItem('mock-saved') || '[]'));
   const keyOf = e => e.label ?? e.date + e.ext;
   const tier = q => q >= .78 ? 3 : q >= .5 ? 2 : 1;
+  const pct = q => Math.max(1, Math.round((1 - q) * 100));
 
   let level = 0, query = '', view = 'all', selected = -1;
 
   const mount = document.getElementById('mount');
   const navsaved = document.getElementById('navsaved');
+  const count = navsaved.querySelector('output');
   const qInput = document.getElementById('q');
+  const help = document.getElementById('help');
 
   const esc = s => s.replace(/[&<>"]/g,
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -430,39 +541,36 @@ kbd { font: 500 .95em var(--mono); }
     if (view === 'saved' && !saved.has(keyOf(e))) return false;
     if (tier(e.q) < level + 1) return false;
     if (!query) return true;
-    return [e.label ?? '', e.sub, ...e.tags].join(' ').toLowerCase().includes(query);
+    return [e.label ?? '', e.sub, e.kind, e.ext, ...e.tags]
+      .join(' ').toLowerCase().includes(query);
   };
 
   const monthKey = e => {
     const [y, m] = e.date.split('-');
     return MONTHS[+m - 1] + ' ' + y;
   };
-  const shortDate = e => {
-    const [, m, d] = e.date.split('-');
-    return MONTHS[+m - 1].slice(0, 3) + ' ' + (+d);
-  };
 
   const row = (e, i) => `
     <li>
-      <article data-i="${i}" data-tier="${tier(e.q)}"${
-        i === selected ? ' class="selected"' : ''}>
+      <article data-i="${i}"${i === selected ? ' class="selected"' : ''}>
+        ${e.fav ? '<b title="A favorite of mine">★</b>' : ''}
+        <button type="button" aria-pressed="${saved.has(keyOf(e))}"
+          aria-label="Save for later (stays in this browser)"
+          title="Save for later — stays in this browser">${BOOKMARK}</button>
         <aside>
-          <time datetime="${e.date}">${shortDate(e)}</time>
-          ${e.fav ? '<b title="A favorite of mine">★</b>' : ''}
-          <button type="button" aria-pressed="${saved.has(keyOf(e))}"
-            aria-label="Save for later (stays in this browser)"
-            title="Save for later — stays in this browser">${BOOKMARK}</button>
+          <time datetime="${e.date}">${e.date}</time>
+          <span title="Graded top ${pct(e.q)}%" aria-label="Graded top ${pct(e.q)}%">
+            <i style="width:${Math.round(e.q * 100)}%"></i></span>
+          <nav aria-label="Tags">${e.tags.map(t =>
+            `<a href="#/+${t}" style="--tag:${TAG[t] ?? 'var(--tag-gray)'}">${esc(t)}</a>`).join('')}
+          </nav>
         </aside>
         <div>
-          <h3><a href="#/${e.label ?? 'untitled'}"${
-            tier(e.q) === 1 ? ` title="${esc(e.sub)}"` : ''}>${e.label
-              ? esc(e.label) + '<small>' + esc(e.ext) + '</small>'
-              : '<i>(untitled)</i><small>' + esc(e.ext) + '</small>'}</a></h3>
+          <h3><a href="#/${e.label ?? 'untitled'}">${e.label
+            ? esc(e.label) + '<small>' + esc(e.ext) + '</small>'
+            : '<i>(untitled)</i><small>' + esc(e.ext) + '</small>'}</a></h3>
           <p>${esc(e.sub)}</p>
           ${e.art ? `<figure style="background:${e.art}" role="img" aria-label="Preview of ${esc(e.label ?? 'image')}"></figure>` : ''}
-          <footer>${e.tags.map(t =>
-            `<a href="#/+${t}" style="--tag:${TAG[t] ?? 'var(--tag-gray)'}">${esc(t)}</a>`).join('')}
-          </footer>
         </div>
       </article>
     </li>`;
@@ -486,6 +594,7 @@ kbd { font: 500 .95em var(--mono); }
           items.map(([e, i]) => row(e, i)).join('')}</ul></section>`).join('');
     }
     navsaved.hidden = saved.size === 0 && view !== 'saved';
+    count.textContent = saved.size;
     navsaved.setAttribute('aria-current', view === 'saved' ? 'page' : 'false');
     document.querySelector('nav a[href="#"]')
       .setAttribute('aria-current', view === 'all' ? 'page' : 'false');
@@ -524,13 +633,18 @@ kbd { font: 500 .95em var(--mono); }
   /* ---------- bookmarks (localStorage only — nothing leaves the browser) */
 
   mount.addEventListener('click', ev => {
-    const btn = ev.target.closest('aside > button');
+    const btn = ev.target.closest('article > button');
     if (!btn) return;
     const e = E[+btn.closest('article').dataset.i];
     saved.has(keyOf(e)) ? saved.delete(keyOf(e)) : saved.add(keyOf(e));
     store.setItem('mock-saved', JSON.stringify([...saved]));
     paint();
   });
+
+  /* ---------- help ---------- */
+
+  document.getElementById('helpbtn').addEventListener('click', () => help.showModal());
+  help.addEventListener('click', ev => { if (ev.target === help) help.close(); });
 
   /* ---------- keyboard ---------- */
 
@@ -552,7 +666,7 @@ kbd { font: 500 .95em var(--mono); }
       if (ev.key === 'Escape') { qInput.value = ''; query = ''; qInput.blur(); paint(); }
       return;
     }
-    if (ev.target.closest('input, textarea')) return;
+    if (ev.target.closest('input, textarea') || help.open) return;
     switch (ev.key) {
       case 'j': case 'ArrowDown': ev.preventDefault(); move(1); break;
       case 'k': case 'ArrowUp': ev.preventDefault(); move(-1); break;
@@ -562,11 +676,12 @@ kbd { font: 500 .95em var(--mono); }
         break;
       }
       case 'b': {
-        const btn = mount.querySelector('article.selected aside > button');
+        const btn = mount.querySelector('article.selected > button');
         if (btn) btn.click();
         break;
       }
       case '/': ev.preventDefault(); qInput.focus(); break;
+      case '?': help.showModal(); break;
       case 'Escape':
         selected = -1;
         if (query) { qInput.value = ''; query = ''; }

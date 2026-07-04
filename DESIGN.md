@@ -239,22 +239,32 @@ Structure carries the beauty. Reference realization:
 - **Effects** — rain, snow, WebGL glass, gyro tilt, dynamic weather sky:
   removed from the live templates 2026-07-03. Honor
   `prefers-reduced-motion` and `prefers-contrast` in what remains.
-- **Timeline — DECIDED (v2) 2026-07-04: graded density.** Quality is shown
-  as **prominence**, newspaper-style — no meters, no slider: top-graded
-  entries render large (bold title, description, imagery), good ones
-  regular, the rest as compact single lines. The grade does the layout;
-  curation is visible instead of labeled. Reference:
+- **Timeline — DECIDED (v3) 2026-07-04: uniform rows, quality as a
+  hairline meter.** Every title the same size (v2's graded-density sizes
+  were rejected same-day: no size hierarchy in the timeline). Quality is a
+  subtle gradual meter under the date — a 2px hairline whose fill is the
+  pairwise-grade percentile, with tick marks at the two thresholds the
+  **everything · notable · best** control filters by (the meter and the
+  control speak the same language). Reference:
   `static/timeline-mockup.html`.
-  - **Left rail**: date, ★ (author favorite), bookmark — *all* metadata on
-    the left so the eyes travel one straight line down; content to the
-    right of it.
-  - A quiet **everything · notable · best** text control filters by grade
-    tier (replaces `/best` — curation is a reader control, not a separate
-    address). The v1 kind-filter menu (All/Notes/Pages/…) and range slider
-    are dropped: rejected 2026-07-04 as chrome.
+  - **Left rail**: ISO date (`2026-07-04`), meter, then tags stacked
+    vertically — the date baseline aligns with the title baseline.
+  - **Hanging marks, like footnotes**: my ★ (the `favorite` tag) hangs in
+    the left margin outside the column; the reader's bookmark hangs outside
+    the star and shows only on hover/selection (always when set).
+  - Titles show the extension (or folder `/`) at the **same size, slightly
+    greyed** — filesystem-native type indication for free.
+  - The everything/notable/best control replaces `/best`; the v1
+    kind-filter menu and range slider stay rejected as chrome.
   - Month groups, search (`/`, plain "Search" placeholder), keyboard
-    (`j`/`k`, `Enter`, `b` bookmark) carry over from the glass prototype's
-    interaction model, plus relative pairwise grading at publish time.
+    (`j`/`k`, `Enter`, `b` bookmark) carry over, plus relative pairwise
+    grading at publish time. **Keyboard help lives behind `?`** — a small
+    plain dialog — instead of a cluttered hint line in the footer.
+- **Types vs tags — DECIDED 2026-07-04**: photo, note, page, link, folder
+  are **types**, derived from the file itself (extension/content type) —
+  never tags. Search matches types, so typing "photo" filters to photos
+  with zero UI. Whether dedicated type filters belong somewhere
+  (`/everything` being the natural home for power filtering) is OPEN.
 - **Finder tag colors — DECIDED 2026-07-04**: tags render with the color
   they carry in Finder (read from the macOS tag xattr, which stores a color
   index 0–7 per tag). The seven Finder colors are mapped to CSS custom
@@ -265,20 +275,22 @@ Structure carries the beauty. Reference realization:
   recency of last activity, **color dot** = the tag's Finder color.
   Position stays alphabetical on purpose — scatter clouds read terribly;
   legibility beats cleverness. Below the cloud, the same topics as a list
-  ordered by latest activity, dates on the left rail. Reference:
-  `static/topics-mockup.html`.
+  ordered by latest activity: ISO dates on the left rail aligned to the
+  topic-name baselines, **no color dots in the list** (the cloud already
+  said the colors). Reference: `static/topics-mockup.html`.
 - **Three separate signals — DECIDED 2026-07-04** (the hybrid `/favorites`
   is rejected: one address showing different people different content is two
   features wearing one name):
   - **★ Author favorites** — the `favorite` Finder tag, zero machinery: a
     violet ★ on the timeline rail, a topic on the Topics page, linkable as
     `/+favorite`. My taste, hand-picked.
-  - **Reader bookmarks ("Saved")** — a bookmark icon on each row lets a
-    reader keep a read-later list; `localStorage` only, never transmitted,
-    so the server cannot know what anyone saved and no consent banner is
-    needed (ePrivacy exempts storage strictly necessary for a function the
-    user explicitly requested; no tracking, no identifiers). The **Saved**
-    nav item appears only once something is saved.
+  - **Reader bookmarks** — a bookmark icon on each row lets a reader keep
+    a read-later list; `localStorage` only, never transmitted, so the
+    server cannot know what anyone saved and no consent banner is needed
+    (ePrivacy exempts storage strictly necessary for a function the user
+    explicitly requested; no tracking, no identifiers). In the nav, a
+    small **bookmark icon with a count** (not a "Saved" text link) appears
+    once something is saved and opens the list.
   - **Quality** — the dynamic pairwise grade; expressed as *prominence*,
     see graded density below.
 - **Continue reading (replaces the footer "timeline" link) — DECIDED
@@ -392,8 +404,8 @@ dark-variant images, related entries, mini-TOC, print stylesheet.
 - `static/entry-page-mockup.html` — entry page reference (plain, top nav,
   sidenotes, anchors, quote/link/code actions, adjustable width, star,
   continue-reading flow)
-- `static/timeline-mockup.html` — timeline reference v2 (graded density,
-  left metadata rail, Finder tag colors, ★ favorites, reader bookmarks,
-  everything/notable/best, search, keyboard nav)
+- `static/timeline-mockup.html` — timeline reference v3 (uniform rows,
+  hairline quality meter with threshold ticks, ISO-date rail with vertical
+  tags, hanging ★/bookmark marks, nav bookmark count, `?` help dialog)
 - `static/topics-mockup.html` — Topics reference v2 (legible tag cloud:
   size = count, ink = recency, dot = Finder color; activity list below)

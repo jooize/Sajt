@@ -12,7 +12,8 @@
    dormant ones fade), COLOR = the tag's own Finder color as a dot.
    Position stays alphabetical on purpose — scatter clouds look
    clever and read terribly. Below the cloud, the same topics as a
-   list with dates on the left rail, newest activity first.
+   list, newest activity first: ISO dates on the left rail aligned
+   to the topic names, no dots (the cloud already said the colors).
    Fully static — no JS on this page.
    ================================================================ */
 
@@ -39,7 +40,7 @@
   --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   --content-w: 46rem;
-  --rail: 5.2rem;
+  --rail: 5.6rem;
 }
 
 * { margin: 0; box-sizing: border-box; }
@@ -155,14 +156,15 @@ main > section > ul { list-style: none; padding: 0; }
 main > section li {
   display: grid;
   grid-template-columns: var(--rail) 1fr;
-  column-gap: 1.15rem;
-  padding: .45rem 0;
+  column-gap: 1.25rem;
+  padding: .65rem 0;
 }
 main > section li > time {
-  padding-top: .12rem;
+  /* nudged so the date baseline sits on the topic-name baseline */
+  padding-top: .26rem;
   font: 500 .74rem var(--mono);
   font-feature-settings: "tnum";
-  letter-spacing: .06em;
+  letter-spacing: .02em;
   color: var(--faint);
   white-space: nowrap;
 }
@@ -181,14 +183,6 @@ main > section li h3 a {
   color: var(--ink);
 }
 main > section li h3 a:hover { color: var(--violet); text-decoration: none; }
-main > section li h3 a::before {
-  content: "";
-  align-self: center;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--tag, var(--tag-gray));
-}
 main > section li h3 small {
   font-size: .74rem;
   font-weight: 500;
@@ -252,8 +246,8 @@ body > footer {
        title="1 entry, last active May 18">meta <small>1</small></a>
     <a href="#/+personal" style="--tag:var(--tag-red); font-size:.95rem; color:var(--soft); font-weight:550"
        title="1 entry, last active May 2">personal <small>1</small></a>
-    <a href="#/+photo" style="--tag:var(--tag-yellow); font-size:1.15rem; color:var(--ink); font-weight:650"
-       title="2 entries, last active May 30">photo <small>2</small></a>
+    <a href="#/+travel" style="--tag:var(--tag-green); font-size:.95rem; color:var(--ink); font-weight:650"
+       title="1 entry, last active May 30">travel <small>1</small></a>
     <a href="#/+writing" style="--tag:var(--tag-green); font-size:.95rem; color:var(--soft); font-weight:550"
        title="1 entry, last active Apr 24">writing <small>1</small></a>
   </nav>
@@ -262,81 +256,81 @@ body > footer {
     <h2>By latest activity</h2>
     <ul>
       <li>
-        <time datetime="2026-05-30">May 30</time>
+        <time datetime="2026-05-30">2026-05-30</time>
         <div>
-          <h3><a href="#/+photo" style="--tag:var(--tag-yellow)">photo <small>2</small></a></h3>
-          <p><a href="#/family-trip">family-trip</a> · <a href="#/sunset">sunset</a></p>
+          <h3><a href="#/+travel">travel <small>1</small></a></h3>
+          <p><a href="#/family-trip">family-trip</a></p>
         </div>
       </li>
       <li>
-        <time datetime="2026-05-26">May 26</time>
+        <time datetime="2026-05-26">2026-05-26</time>
         <div>
-          <h3><a href="#/+design" style="--tag:var(--tag-purple)">design <small>4</small></a></h3>
+          <h3><a href="#/+design">design <small>4</small></a></h3>
           <p><a href="#/wireframe">wireframe</a> · <a href="#/rain-canvas">rain-canvas</a> ·
              <a href="#/glass-tuner">glass-tuner</a> · <a href="#/snow-test">snow-test</a></p>
         </div>
       </li>
       <li>
-        <time datetime="2026-05-18">May 18</time>
+        <time datetime="2026-05-18">2026-05-18</time>
         <div>
-          <h3><a href="#/+meta" style="--tag:var(--tag-gray)">meta <small>1</small></a></h3>
+          <h3><a href="#/+meta">meta <small>1</small></a></h3>
           <p><a href="#/open-source-licenses">open-source-licenses</a></p>
         </div>
       </li>
       <li>
-        <time datetime="2026-05-02">May 2</time>
+        <time datetime="2026-05-02">2026-05-02</time>
         <div>
-          <h3><a href="#/+personal" style="--tag:var(--tag-red)">personal <small>1</small></a></h3>
+          <h3><a href="#/+personal">personal <small>1</small></a></h3>
           <p><a href="#/journal-2026-05">journal-2026-05</a></p>
         </div>
       </li>
       <li>
-        <time datetime="2026-04-24">Apr 24</time>
+        <time datetime="2026-04-24">2026-04-24</time>
         <div>
-          <h3><a href="#/+writing" style="--tag:var(--tag-green)">writing <small>1</small></a></h3>
+          <h3><a href="#/+writing">writing <small>1</small></a></h3>
           <p><a href="#/on-file-systems">on-file-systems</a></p>
         </div>
       </li>
       <li>
-        <time datetime="2026-04-24">Apr 24</time>
+        <time datetime="2026-04-24">2026-04-24</time>
         <div>
-          <h3><a href="#/+favorite" style="--tag:var(--violet)">favorite <small>2</small></a></h3>
+          <h3><a href="#/+favorite">favorite <small>2</small></a></h3>
           <p><a href="#/on-file-systems">on-file-systems</a> · <a href="#/glass-tuner">glass-tuner</a></p>
         </div>
       </li>
       <li>
-        <time datetime="2026-04-18">Apr 18</time>
+        <time datetime="2026-04-18">2026-04-18</time>
         <div>
-          <h3><a href="#/+dev" style="--tag:var(--tag-blue)">dev <small>3</small></a></h3>
+          <h3><a href="#/+dev">dev <small>3</small></a></h3>
           <p><a href="#/screenshot-bug">screenshot-bug</a> · <a href="#/glass-tuner">glass-tuner</a> ·
              <a href="#/code-highlighting">code-highlighting</a></p>
         </div>
       </li>
       <li>
-        <time datetime="2026-04-18">Apr 18</time>
+        <time datetime="2026-04-18">2026-04-18</time>
         <div>
-          <h3><a href="#/+meme" style="--tag:var(--tag-orange)">meme <small>2</small></a></h3>
+          <h3><a href="#/+meme">meme <small>2</small></a></h3>
           <p><a href="#/screenshot-bug">screenshot-bug</a> · <a href="#/cat-loaf">cat-loaf</a></p>
         </div>
       </li>
       <li>
-        <time datetime="2026-03-19">Mar 19</time>
+        <time datetime="2026-03-19">2026-03-19</time>
         <div>
-          <h3><a href="#/+audio" style="--tag:var(--tag-orange)">audio <small>1</small></a></h3>
+          <h3><a href="#/+audio">audio <small>1</small></a></h3>
           <p><a href="#/the-daily">the-daily</a></p>
         </div>
       </li>
       <li>
-        <time datetime="2026-03-19">Mar 19</time>
+        <time datetime="2026-03-19">2026-03-19</time>
         <div>
-          <h3><a href="#/+apps" style="--tag:var(--tag-blue)">apps <small>1</small></a></h3>
+          <h3><a href="#/+apps">apps <small>1</small></a></h3>
           <p><a href="#/things-3">things-3</a></p>
         </div>
       </li>
       <li>
-        <time datetime="2026-03-03">Mar 3</time>
+        <time datetime="2026-03-03">2026-03-03</time>
         <div>
-          <h3><a href="#/+intro" style="--tag:var(--tag-gray)">intro <small>1</small></a></h3>
+          <h3><a href="#/+intro">intro <small>1</small></a></h3>
           <p><a href="#/hello-world">hello-world</a></p>
         </div>
       </li>
@@ -345,8 +339,7 @@ body > footer {
 </main>
 
 <footer>
-  cloud: size = entries, ink = recency, dot = the tag's Finder color
-  &middot; dark mode follows the OS
+  size = entries &middot; ink = recency &middot; dot = Finder color
 </footer>
 
 </body>
