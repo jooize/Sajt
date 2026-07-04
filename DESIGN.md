@@ -250,13 +250,19 @@ Structure carries the beauty. Reference realization:
   all passed over): a staircase of solid bars — chunky enough to read,
   not a hairline glyph — that light up to the current level, beside a
   quiet macOS-style segmented capsule for
-  **everything · notable · best**. **★ favorites is an independent
-  toggle**, not a fourth segment — it is a different axis, so it composes
-  with the level ("best" + ★ = my favorite best things). **Search is a
-  magnifier icon on its own line, flush with the left edge under the
-  bars**, expanding on focus (accessible name "Search", `/` still focuses
-  it; it stays open while it holds a query). Rows carry over from v3
-  unchanged. Reference: `static/timeline-mockup.html`;
+  **everything · notable · best**; hovering the bars explains the current
+  level in words. **★ favorites is an independent toggle**, not a fourth
+  segment — it is a different axis, so it composes with the level ("best"
+  + ★ = my favorite best things). **Search is always visible** (the
+  expanding-icon version was tried and rejected same-day): magnifier and
+  field on their own line, the field starting exactly under the segmented
+  choices, `/` focuses. **The saved view never silently hides**: when
+  level/topic/search filters exclude bookmarked entries, a note names
+  them (linked) and offers a one-click "show them" that drops the
+  filters. **A row's hover zone extends into the left margin** its marks
+  hang in, so the bookmark appears when the pointer is anywhere that
+  belongs to the entry. Rows otherwise carry over from v3.
+  Reference: `static/timeline-mockup.html`;
   `static/filter-control-mockup.html` keeps the live shape comparison
   that led here (words ± icon, hairline slider, segmented, stepped bars,
   native range).
@@ -297,8 +303,9 @@ Structure carries the beauty. Reference realization:
   below center, on the label's optical midline). Position stays
   alphabetical on purpose — scatter clouds read terribly; legibility beats
   cleverness. The cloud is deliberately narrow so it wraps into a few
-  centered lines — grouped to the middle, cloud-shaped, not stretched
-  edge to edge. Since v4 it lives at the top of the timeline as the site
+  lines; the block sits at the left edge of the content column while the
+  lines stay centered within it (DECIDED 2026-07-04) — cloud-shaped, not
+  left-leaning, not stretched edge to edge. Since v4 it lives at the top of the timeline as the site
   header (`static/timeline-mockup.html`). **The standalone `/topics` page
   is removed** (DECIDED 2026-07-04) — the cloud on the timeline replaced
   it; its by-latest-activity list goes with it (git history is the
@@ -307,12 +314,12 @@ Structure carries the beauty. Reference realization:
     after two rejected takes the same day: an underline, a soft violet
     tint, then a solid-violet two-tone capsule — like Finder, a quiet
     grey capsule won): text, dot, and count all keep their colors; only
-    the background says "selected". Padding is mirrored by negative
-    margin so neighbors don't reflow on toggle, and the count rides a
-    touch above the baseline (a visual-only nudge shared by all cloud
-    counts, so it doesn't move either). `Esc` or a second click clears —
-    the margin "Esc clears" hint was tried and removed same-day
-    (clutter).
+    the background says "selected". The pill is drawn entirely with
+    box-shadow, which has zero layout effect — the padding/negative-
+    margin mirror still moved things a rounding pixel, box-shadow cannot.
+    The count rides a touch above the baseline (a visual-only nudge
+    shared by all cloud counts). `Esc` or a second click clears — the
+    margin "Esc clears" hint was tried and removed same-day (clutter).
 - **Three separate signals — DECIDED 2026-07-04** (the hybrid `/favorites`
   is rejected: one address showing different people different content is two
   features wearing one name):

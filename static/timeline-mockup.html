@@ -6,21 +6,24 @@
 <title>esko.bar — Timeline</title>
 <style>
 /* ================================================================
-   Timeline design reference, v4.3.
+   Timeline design reference, v4.4.
    The tag cloud IS the header — no site nav at all (the timeline
    is the site root; a "Timeline" link on the timeline is noise).
-   The cloud is narrow, so it wraps into a few centered lines —
-   grouped to the middle, cloud-shaped. Clicking a topic filters
-   the timeline in place; the selected topic wears a quiet
-   Finder-grey pill — text, dot, and count keep their colors, and
-   nothing reflows on toggle (Esc or a second click clears — no
-   hint text). Below: the
-   saved-bookmarks count hangs in the left margin (x-aligned with
-   the entries' bookmark marks); the level control is a stepped-
-   bars icon (lit to the current level) plus a segmented control —
-   everything/notable/best — with ★ favorites as an independent
-   toggle that composes with the level; search is a magnifier on
-   its own line, flush left under the bars, expanding on focus.
+   The cloud block sits left but wraps into centered lines within
+   its own width — cloudy, not left-leaning. Clicking a topic
+   filters the timeline in place; the selected topic wears a quiet
+   Finder-grey pill drawn with box-shadow (zero layout effect, so
+   nothing shifts a pixel on toggle; Esc or a second click clears).
+   Below: the saved-bookmarks count hangs in the left margin
+   (x-aligned with the entries' bookmark marks); the level control
+   is a stepped-bars icon (lit to the current level, explained on
+   hover) plus a segmented control — everything/notable/best —
+   with ★ favorites as an independent toggle that composes with
+   the level; search is always visible on its own line, the field
+   starting exactly under the segmented choices. In the saved
+   view, filters that hide bookmarked entries are called out by
+   name with a one-click "show them". A row's hover zone extends
+   into the margin its marks hang in.
    Month headings are sentence case, slightly larger, bold.
    The full shape comparison lives in filter-control-mockup.html.
    Rows unchanged from v3: uniform titles, hairline quality meter
@@ -39,6 +42,7 @@
   --soft:   light-dark(#43473f, #b4bab2);
   --faint:  light-dark(#71766c, #8b918a);
   --hair:   light-dark(rgba(46, 62, 50, .18), rgba(178, 205, 184, .16));
+  --pill:   light-dark(rgba(46, 62, 50, .1), rgba(178, 205, 184, .14));
 
   /* Finder tag colors, tuned per scheme */
   --tag-red:    light-dark(#e0383e, #ff6961);
@@ -93,10 +97,10 @@ main {
 
 #cloud {
   position: relative;
-  /* narrow enough to wrap into a few centered lines — grouped to the
-     middle, not stretched edge to edge */
+  /* narrow enough to wrap into a few lines; the block sits left but
+     the lines stay centered within it — cloudy, not left-leaning */
   max-width: 30rem;
-  margin-inline: auto;
+  margin-inline: 0 auto;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -116,13 +120,12 @@ main {
 }
 #cloud a:hover { color: var(--violet) !important; text-decoration: none; }
 /* the selected topic wears a quiet Finder-grey pill; text, dot, and
-   count keep their colors */
+   count keep their colors. Drawn entirely with box-shadow, which has
+   zero layout effect — nothing can shift by even a pixel on toggle */
 #cloud a[aria-current="true"] {
-  background: light-dark(rgba(46, 62, 50, .1), rgba(178, 205, 184, .14));
+  background: var(--pill);
+  box-shadow: 0 0 0 .32em var(--pill);
   border-radius: 999px;
-  /* padding mirrored by negative margin so neighbors don't reflow */
-  padding: .18em .6em;
-  margin: -.18em -.6em;
 }
 #cloud a::before {
   content: "";
@@ -249,14 +252,15 @@ main > form p > span > button[aria-pressed="true"] {
   box-shadow: none;
 }
 
-/* search: a magnifier that expands on focus (or while it holds text).
-   Its own line, flush with the left edge — under the stepped bars. */
+/* search: always visible. The magnifier shares the bars' 1.1rem box
+   and the same .55rem gap, so the field's left edge lands exactly
+   under where the segmented choices begin. */
 main > form search {
   flex-basis: 100%;
   margin: .4rem 0 0;
   display: inline-flex;
   align-items: center;
-  gap: .35rem;
+  gap: .55rem;
 }
 main > form search button {
   display: inline-flex;
@@ -268,16 +272,15 @@ main > form search button {
 }
 main > form search button:hover { color: var(--violet); }
 main > form search button svg {
-  width: 1.05rem;
-  height: 1.05rem;
+  width: 1.1rem;
+  height: 1.1rem;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.8;
+  stroke-width: 1.9;
   stroke-linecap: round;
 }
 main > form search input {
-  width: 0;
-  opacity: 0;
+  width: 11rem;
   padding: .2rem 0;
   border: none;
   border-bottom: 1px solid var(--hair);
@@ -285,12 +288,6 @@ main > form search input {
   background: none;
   color: var(--ink);
   font: .85rem var(--sans);
-  transition: width .18s ease, opacity .18s ease;
-}
-main > form search:focus-within input,
-main > form search input:not(:placeholder-shown) {
-  width: 9rem;
-  opacity: 1;
 }
 main > form search input::placeholder { color: var(--faint); }
 main > form search input:focus {
@@ -322,6 +319,18 @@ main article {
   border-radius: 10px;
 }
 main article.selected { background: var(--violet-soft); }
+
+/* the row's hover reaches into the margin its marks hang in, so the
+   bookmark appears when the pointer is anywhere that belongs to the
+   entry — including the empty spot where a star would be */
+main article::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3.4rem;
+  width: 3.4rem;
+}
 
 /* --- left rail: date, quality meter, tags — one straight scan line */
 
@@ -440,7 +449,7 @@ main article aside > button svg {
 main article aside > button[aria-pressed="true"] svg { fill: currentColor; }
 @media (prefers-reduced-motion: reduce) {
   main article aside > button,
-  main > form search input { transition: none; }
+  main > form p > span > u { transition: none; }
 }
 
 /* --- content: every title the same size ---------------------- */
@@ -482,6 +491,17 @@ main article figure {
   font-size: .875rem;
   color: var(--soft);
 }
+/* the "hidden by filters" note names the entries and offers the way out */
+#mount > p small { color: var(--soft); }
+#mount > p button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--violet);
+  font: inherit;
+  cursor: pointer;
+}
+#mount > p button:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 /* ---------- help dialog (?) ---------- */
 
@@ -546,6 +566,7 @@ body > footer button:hover { color: var(--violet); }
      and the saved count leads the control line */
   main article aside > b,
   main article aside > button { position: static; height: auto; }
+  main article::before { content: none; }
   main article { grid-template-columns: 1fr; row-gap: .15rem; }
   main article > aside {
     flex-direction: row;
@@ -572,7 +593,7 @@ body > footer button:hover { color: var(--violet); }
       <output>0</output>
     </a>
     <p aria-label="How much to show">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="14" width="5.5" height="8" rx="2.4"/><rect x="9.25" y="8" width="5.5" height="14" rx="2.4"/><rect x="16.5" y="2" width="5.5" height="20" rx="2.4"/></svg>
+      <svg viewBox="0 0 24 24"><title>Showing everything</title><rect x="2" y="14" width="5.5" height="8" rx="2.4"/><rect x="9.25" y="8" width="5.5" height="14" rx="2.4"/><rect x="16.5" y="2" width="5.5" height="20" rx="2.4"/></svg>
       <span>
         <u></u>
         <button type="button" data-level="0" aria-pressed="true">everything</button>
@@ -583,7 +604,7 @@ body > footer button:hover { color: var(--violet); }
     </p>
     <search>
       <button type="button" id="qbtn" aria-label="Search">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="M14.7 14.7 20 20"/></svg>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M15.2 15.2 21.5 21.5"/></svg>
       </button>
       <input type="search" id="q" placeholder="Search" aria-label="Search entries">
     </search>
@@ -765,13 +786,29 @@ body > footer button:hover { color: var(--violet); }
       </article>
     </li>`;
 
+  /* in the saved view, filters can hide bookmarked entries — say so,
+     name them, and offer the one-click way out */
+  const filteredNote = hidden => {
+    const links = hidden.map(e =>
+      `<a href="#/${e.label ?? 'untitled'}">${e.label
+        ? esc(e.label) : '(untitled)'}<small>${esc(e.ext)}</small></a>`).join(' · ');
+    const lead = hidden.length === 1
+      ? 'One saved entry is hidden by the current filters'
+      : `${hidden.length} saved entries are hidden by the current filters`;
+    return `<p>${lead}: ${links} —
+      <button type="button" id="unhide">show them</button></p>`;
+  };
+
   function paint() {
     const data = E.map((e, i) => [e, i]).filter(([e]) => matches(e))
       .sort(([a], [b]) => a.date < b.date ? 1 : -1);
+    const hidden = view === 'saved'
+      ? E.filter(e => saved.has(keyOf(e)) && !matches(e)) : [];
     if (!data.length) {
-      mount.innerHTML = `<p>${view === 'saved'
-        ? 'Nothing saved yet — the bookmark on any entry keeps it here, in this browser.'
-        : 'Nothing matches.'}</p>`;
+      mount.innerHTML = view === 'saved'
+        ? (hidden.length ? filteredNote(hidden)
+          : '<p>Nothing saved yet — the bookmark on any entry keeps it here, in this browser.</p>')
+        : '<p>Nothing matches.</p>';
     } else {
       const groups = [];
       data.forEach(([e, i]) => {
@@ -781,7 +818,8 @@ body > footer button:hover { color: var(--violet); }
       });
       mount.innerHTML = groups.map(([m, items]) =>
         `<section><h2>${m}</h2><ul>${
-          items.map(([e, i]) => row(e, i)).join('')}</ul></section>`).join('');
+          items.map(([e, i]) => row(e, i)).join('')}</ul></section>`).join('')
+        + (hidden.length ? filteredNote(hidden) : '');
     }
     navsaved.hidden = saved.size === 0 && view !== 'saved';
     count.textContent = saved.size;
@@ -793,29 +831,41 @@ body > footer button:hover { color: var(--violet); }
   /* ---------- controls ---------- */
 
   /* segmented control: thumb slides under the pick; the stepped
-     bars beside it light up to match */
+     bars beside it light up to match and explain themselves on hover */
   const thumb = document.querySelector('main > form p > span > u');
-  const stair = [...document.querySelectorAll('main > form p > svg rect')];
-  const echo = () => stair.forEach((p, i) => p.toggleAttribute('data-on', i <= level));
+  const stairSvg = document.querySelector('main > form p > svg');
+  const stair = [...stairSvg.querySelectorAll('rect')];
+  const favbtn = document.getElementById('favonly');
+  const LEVEL_TIP = [
+    'Showing everything',
+    'Showing notable and better — graded top 50%',
+    'Showing only the best — graded top 22%',
+  ];
+
+  function applyControls() {
+    document.querySelectorAll('[data-level]').forEach(x =>
+      x.setAttribute('aria-pressed', +x.dataset.level === level));
+    thumb.style.left = `calc(2px + ${level} * (100% - 4px) / 3)`;
+    stair.forEach((r, i) => r.toggleAttribute('data-on', i <= level));
+    stairSvg.querySelector('title').textContent = LEVEL_TIP[level];
+    favbtn.setAttribute('aria-pressed', favOnly);
+  }
+
   document.querySelectorAll('[data-level]').forEach(b =>
     b.addEventListener('click', () => {
       level = +b.dataset.level;
-      document.querySelectorAll('[data-level]').forEach(x =>
-        x.setAttribute('aria-pressed', x === b));
-      thumb.style.left = `calc(2px + ${level} * (100% - 4px) / 3)`;
-      echo();
+      applyControls();
       selected = -1;
       paint();
     }));
-  echo();
 
-  const favbtn = document.getElementById('favonly');
   favbtn.addEventListener('click', () => {
     favOnly = !favOnly;
-    favbtn.setAttribute('aria-pressed', favOnly);
+    applyControls();
     selected = -1;
     paint();
   });
+  applyControls();
 
   /* any topic — in the cloud or on a row — filters in place */
   document.addEventListener('click', ev => {
@@ -844,6 +894,18 @@ body > footer button:hover { color: var(--violet); }
   /* ---------- bookmarks (localStorage only — nothing leaves the browser) */
 
   mount.addEventListener('click', ev => {
+    if (ev.target.closest('#unhide')) {
+      /* drop every filter that can hide a saved entry */
+      level = 0;
+      favOnly = false;
+      activeTag = null;
+      query = '';
+      qInput.value = '';
+      applyControls();
+      selected = -1;
+      paint();
+      return;
+    }
     const btn = ev.target.closest('aside > button');
     if (!btn) return;
     const e = E[+btn.closest('article').dataset.i];
