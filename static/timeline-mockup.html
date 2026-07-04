@@ -130,7 +130,9 @@ main {
 #cloud a[aria-current="true"]::after {
   content: "";
   position: absolute;
-  inset: -.14em -.6em;
+  /* a couple of pixels down: text sits high in its line box, so the
+     centered capsule looked lifted off the label */
+  inset: calc(-.14em + 2px) -.6em calc(-.14em - 2px);
   z-index: -1;
   border-radius: 999px;
   background: var(--pill);
