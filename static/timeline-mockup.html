@@ -1200,6 +1200,24 @@ body > footer button:hover { color: var(--violet); }
   window.addEventListener('resize', applyWidth);
   applyWidth();
 
+  /* ---------- deep links from the entry page's shared header ----------
+     #/+tag  #saved  #level-N  #fav  #q=…  (combinable with &).
+     In production these are real URLs; the hash stands in here. */
+
+  (location.hash.slice(1).split("&")).forEach(part => {
+    part = decodeURIComponent(part);
+    if (part.startsWith("/+")) activeTag = part.slice(2);
+    else if (part === "saved") view = "saved";
+    else if (part.startsWith("level-"))
+      level = Math.min(2, Math.max(0, +part.slice(6) || 0));
+    else if (part === "fav") favOnly = true;
+    else if (part.startsWith("q=")) {
+      qInput.value = part.slice(2);
+      query = part.slice(2).toLowerCase();
+    }
+  });
+  applyControls();
+
   buildCloud();
   paint();
 })();

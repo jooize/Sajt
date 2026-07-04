@@ -116,9 +116,29 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   max-width: var(--content-w);
   margin-inline: auto;
   padding: 1.4rem 0 1.3rem;
-  border-bottom: 1px solid var(--hair);
   font-family: var(--sans);
 }
+
+/* ---------- crumbs: up-left on the post, visible without scrolling.
+   The way back, and the reminder that the menu is right above —
+   pressing it scrolls up instantly (never smooth). */
+#crumbs {
+  display: flex;
+  gap: 1.2rem;
+  margin-bottom: 2.1rem;
+  font: 550 .8rem var(--sans);
+}
+#crumbs a,
+#crumbs button {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--faint);
+  font: inherit;
+}
+#crumbs a:hover,
+#crumbs button:hover { color: var(--violet); text-decoration: none; }
 
 #cloud {
   position: relative;
@@ -469,8 +489,8 @@ h1 > a:last-child {
   height: 1.14em;   /* one h1 line box: centers the chain on the first line */
 }
 h1 > a:last-child svg {
-  width: .42em;
-  height: .42em;
+  width: .58em;
+  height: .58em;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.7;
@@ -880,16 +900,16 @@ kbd { font: 500 .95em var(--mono); }
        shared and built from the entries; from an entry, every control
        routes back to the (filtered) timeline. Static values here. -->
   <nav id="cloud" aria-label="Topics">
-    <a href="timeline-mockup.html" style="--tag:var(--tag-blue);font-size:.82rem;color:var(--faint);font-weight:500">apps <small>1</small></a>
-    <a href="timeline-mockup.html" style="--tag:var(--tag-orange);font-size:.82rem;color:var(--faint);font-weight:500">audio <small>1</small></a>
-    <a href="timeline-mockup.html" style="--tag:var(--tag-purple);font-size:1.25rem;color:var(--ink);font-weight:650">design <small>4</small></a>
-    <a href="timeline-mockup.html" style="--tag:var(--tag-blue);font-size:1.11rem;color:var(--soft);font-weight:550">dev <small>3</small></a>
-    <a href="timeline-mockup.html" style="--tag:var(--tag-gray);font-size:.82rem;color:var(--faint);font-weight:500">intro <small>1</small></a>
-    <a href="timeline-mockup.html" style="--tag:var(--tag-orange);font-size:.96rem;color:var(--soft);font-weight:550">meme <small>2</small></a>
-    <a href="timeline-mockup.html" style="--tag:var(--tag-gray);font-size:.82rem;color:var(--ink);font-weight:650">meta <small>1</small></a>
-    <a href="timeline-mockup.html" style="--tag:var(--tag-red);font-size:.82rem;color:var(--soft);font-weight:550">personal <small>1</small></a>
-    <a href="timeline-mockup.html" style="--tag:var(--tag-green);font-size:.82rem;color:var(--ink);font-weight:650">travel <small>1</small></a>
-    <a href="timeline-mockup.html" style="--tag:var(--tag-green);font-size:.82rem;color:var(--soft);font-weight:550">writing <small>1</small></a>
+    <a href="timeline-mockup.html#/+apps" style="--tag:var(--tag-blue);font-size:.82rem;color:var(--faint);font-weight:500">apps <small>1</small></a>
+    <a href="timeline-mockup.html#/+audio" style="--tag:var(--tag-orange);font-size:.82rem;color:var(--faint);font-weight:500">audio <small>1</small></a>
+    <a href="timeline-mockup.html#/+design" style="--tag:var(--tag-purple);font-size:1.25rem;color:var(--ink);font-weight:650">design <small>4</small></a>
+    <a href="timeline-mockup.html#/+dev" style="--tag:var(--tag-blue);font-size:1.11rem;color:var(--soft);font-weight:550">dev <small>3</small></a>
+    <a href="timeline-mockup.html#/+intro" style="--tag:var(--tag-gray);font-size:.82rem;color:var(--faint);font-weight:500">intro <small>1</small></a>
+    <a href="timeline-mockup.html#/+meme" style="--tag:var(--tag-orange);font-size:.96rem;color:var(--soft);font-weight:550">meme <small>2</small></a>
+    <a href="timeline-mockup.html#/+meta" style="--tag:var(--tag-gray);font-size:.82rem;color:var(--ink);font-weight:650">meta <small>1</small></a>
+    <a href="timeline-mockup.html#/+personal" style="--tag:var(--tag-red);font-size:.82rem;color:var(--soft);font-weight:550">personal <small>1</small></a>
+    <a href="timeline-mockup.html#/+travel" style="--tag:var(--tag-green);font-size:.82rem;color:var(--ink);font-weight:650">travel <small>1</small></a>
+    <a href="timeline-mockup.html#/+writing" style="--tag:var(--tag-green);font-size:.82rem;color:var(--soft);font-weight:550">writing <small>1</small></a>
   </nav>
   <form>
     <a href="timeline-mockup.html#saved" id="navsaved" hidden aria-label="Saved for later">
@@ -901,9 +921,9 @@ kbd { font: 500 .95em var(--mono); }
       <svg viewBox="0 0 24 24"><title>Showing everything</title><rect x="2" y="14" width="5.5" height="8" rx="2.4" data-on/><rect x="9.25" y="8" width="5.5" height="14" rx="2.4"/><rect x="16.5" y="2" width="5.5" height="20" rx="2.4"/></svg>
       <span>
         <u></u>
-        <button type="button" aria-pressed="true">everything</button>
-        <button type="button" aria-pressed="false">notable</button>
-        <button type="button" aria-pressed="false">best</button>
+        <button type="button" data-level="0" aria-pressed="true">everything</button>
+        <button type="button" data-level="1" aria-pressed="false">notable</button>
+        <button type="button" data-level="2" aria-pressed="false">best</button>
       </span>
       <button type="button" id="favonly" aria-pressed="false"><b>★</b> favorites</button>
     </p>
@@ -922,12 +942,16 @@ kbd { font: 500 .95em var(--mono); }
 <div id="readout" aria-hidden="true"></div>
 
 <main>
+<nav id="crumbs" aria-label="Site">
+  <a href="timeline-mockup.html">&larr; Timeline</a>
+  <button type="button" id="menubtn" title="Scroll up to the site menu">&uarr; Menu</button>
+</nav>
 <article data-label="publish-from-a-folder" data-title="Publish from a folder">
   <header>
     <time datetime="2026-07-03">2026-07-03</time>
     <span title="Graded top 10%" aria-label="Graded top 10%"><i style="width:90%"></i></span>
-    <a href="#" style="--tag: var(--tag-purple)">design</a>
-    <a href="#" style="--tag: var(--tag-gray)">meta</a>
+    <a href="timeline-mockup.html#/+design" style="--tag: var(--tag-purple)">design</a>
+    <a href="timeline-mockup.html#/+meta" style="--tag: var(--tag-gray)">meta</a>
   </header>
 
   <h1>Publish from a folder<a href="entry-page-mockup.html"
@@ -1045,8 +1069,8 @@ kbd { font: 500 .95em var(--mono); }
     <label><input type="radio" name="type" value="sans">Sans</label>
   </fieldset>
   <span>
-    the site header is the timeline's — the page lands on the post,
-    scroll up to reveal it
+    the site header is the timeline's — the page lands on the post;
+    scroll up (or press &uarr; Menu) to reveal it
     &nbsp;&middot;&nbsp; drag the edge handle for reading width
     (double-click resets)
     &nbsp;&middot;&nbsp; <kbd>t</kbd> typeface
@@ -1170,14 +1194,26 @@ kbd { font: 500 .95em var(--mono); }
   apply();
 
   /* ---------- site header: the timeline's chrome ----------
-     from an entry, every control routes back to the timeline; the
-     saved count reads the same store the timeline writes */
+     one click does the thing: every control deep-links into the
+     timeline with its filter already applied (the timeline reads
+     these from the hash on load). The saved count reads the same
+     store the timeline writes. */
 
-  const toTimeline = () => { location.href = "timeline-mockup.html"; };
-  document.querySelectorAll("#site form button").forEach(b =>
-    b.addEventListener("click", toTimeline));
-  document.getElementById("q").addEventListener("keydown", e => {
-    if (e.key === "Enter") { e.preventDefault(); toTimeline(); }
+  const TL = "timeline-mockup.html";
+  const qInput = document.getElementById("q");
+  document.querySelectorAll("#site [data-level]").forEach(b =>
+    b.addEventListener("click", () => {
+      location.href = +b.dataset.level ? `${TL}#level-${b.dataset.level}` : TL;
+    }));
+  document.getElementById("favonly").addEventListener("click", () => {
+    location.href = TL + "#fav";
+  });
+  document.getElementById("qbtn").addEventListener("click", () => qInput.focus());
+  qInput.addEventListener("keydown", e => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const q = qInput.value.trim();
+    location.href = q ? `${TL}#q=${encodeURIComponent(q)}` : TL;
   });
   const savedCount =
     JSON.parse(store.getItem("mock-saved") || "[]").length;
@@ -1185,10 +1221,25 @@ kbd { font: 500 .95em var(--mono); }
   navsaved.hidden = savedCount === 0;
   navsaved.querySelector("output").textContent = savedCount;
 
+  /* search field width-matched to the segmented control, same as on
+     the timeline, so the two headers render identically */
+  const segSpan = document.querySelector("#site form p > span");
+  const compact = window.matchMedia("(max-width: 52rem)");
+  const syncSearchWidth = () => {
+    if (compact.matches) { qInput.style.width = ""; return; }
+    qInput.style.width = segSpan.getBoundingClientRect().width + "px";
+  };
+  syncSearchWidth();
+  window.addEventListener("resize", syncSearchWidth);
+  compact.addEventListener("change", syncSearchWidth);
+
   /* the header lives above the post: land scrolled to the post, so
-     scrolling up is what reveals the site chrome */
+     scrolling up is what reveals the site chrome. The crumbs' Menu
+     button goes back up — instantly, never smooth. */
   if (!location.hash && window.scrollY === 0)
     requestAnimationFrame(() => window.scrollTo(0, main.offsetTop));
+  document.getElementById("menubtn").addEventListener("click", () =>
+    window.scrollTo(0, 0));
 
   /* ---------- anchor proximity glow ----------
      heading anchors rest dim and brighten by pointer nearness, like
