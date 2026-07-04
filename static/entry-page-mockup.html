@@ -3,13 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Entry page — esko.bar</title>
+<title>esko.bar — Publish from a folder</title>
 <style>
 /* ================================================================
    Entry page design reference — plain, typography-first, no glass.
    Static top nav confined to the content column. Dark mode follows
    the OS. Drag the edge handle for reading width. Sidenotes right,
-   heading anchors left. t = typeface (mockup control).
+   heading anchors left. Collapsed "On this page" mini-TOC (long
+   entries only). Post navigation is content: a Continue block after
+   the entry loads the next one inline; the URL follows whichever
+   entry owns most of the viewport; infinite scroll is opt-in.
+   t = typeface (mockup control).
    ================================================================ */
 
 :root {
@@ -415,7 +419,27 @@ figcaption code {
   border: 1px solid var(--code-hair);
 }
 
-/* ---------- entry footer ---------- */
+/* ---------- mini-TOC: collapsed, long entries only ---------- */
+
+article > details {
+  margin-bottom: 1.5rem;
+  font: .8rem var(--sans);
+  color: var(--faint);
+}
+article > details summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 550;
+}
+article > details summary:hover { color: var(--violet); }
+article > details ol {
+  margin: .45rem 0 0;
+  padding-left: 1.35rem;
+}
+article > details a { color: var(--soft); }
+article > details a:hover { color: var(--violet); }
+
+/* ---------- entry footer: quiet metadata only ---------- */
 
 article > footer {
   margin-top: 3rem;
@@ -424,8 +448,60 @@ article > footer {
   font: .82rem var(--sans);
   color: var(--faint);
   display: flex;
+  flex-wrap: wrap;
   gap: 1rem;
 }
+
+/* ---------- continue reading: post navigation as content ---------- */
+
+main > article + article {
+  margin-top: 3.2rem;
+  padding-top: 3.2rem;
+  border-top: 1px solid var(--hair);
+}
+
+#continue {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--hair);
+}
+#continue > p {
+  margin: 0 0 .55rem;
+  font: 500 .74rem var(--mono);
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+#continue > a { display: block; color: inherit; }
+#continue > a:hover { text-decoration: none; }
+#continue > a b {
+  font: 650 1rem var(--sans);
+  letter-spacing: -.011em;
+}
+#continue > a:hover b { color: var(--violet); }
+#continue > a time {
+  margin-left: .6rem;
+  font: 500 .74rem var(--mono);
+  letter-spacing: .06em;
+  color: var(--faint);
+}
+#continue > a span {
+  display: block;
+  margin-top: .1rem;
+  font: .875rem var(--sans);
+  color: var(--soft);
+}
+#continue > label {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  margin-top: 1rem;
+  font: 550 .78rem var(--sans);
+  color: var(--faint);
+  cursor: pointer;
+}
+#continue > label[hidden] { display: none; }
+#continue > label input { margin: 0; accent-color: var(--violet); }
 
 /* ---------- mockup-only controls, bottom ---------- */
 
@@ -477,8 +553,8 @@ kbd { font: 500 .95em var(--mono); }
 
 <header>
   <nav>
-    <a href="#">Timeline</a>
-    <a href="#">Best</a>
+    <a href="timeline-mockup.html">Timeline</a>
+    <a href="topics-mockup.html">Topics</a>
     <a href="#">Everything</a>
   </nav>
 </header>
@@ -488,7 +564,7 @@ kbd { font: 500 .95em var(--mono); }
      aria-valuenow="672" title="Drag to set reading width. Double-click resets."></div>
 
 <main>
-<article>
+<article data-label="publish-from-a-folder" data-title="Publish from a folder">
   <header>
     <time datetime="2026-07-03">2026-07-03</time>
     <a href="#">design</a>
@@ -496,6 +572,16 @@ kbd { font: 500 .95em var(--mono); }
   </header>
 
   <h1>Publish from a folder</h1>
+
+  <!-- mini-TOC: rendered only when an entry is long (several sections);
+       shown here for reference. Collapsed by default, plain links. -->
+  <details>
+    <summary>On this page</summary>
+    <ol>
+      <li><a href="#written-in-asciidoc">Written in AsciiDoc</a></li>
+      <li><a href="#and-code-of-course">And code, of course</a></li>
+    </ol>
+  </details>
 
   <p>
     Every entry on this site is a file — or a folder — sitting in one
@@ -573,9 +659,16 @@ kbd { font: 500 .95em var(--mono); }
 
   <footer>
     <a href="#">source</a>
-    <a href="#">timeline</a>
+    <span>more like this: <a href="#/on-file-systems">on-file-systems</a> ·
+      <a href="#/glass-tuner">glass-tuner</a></span>
   </footer>
 </article>
+
+<nav id="continue" aria-label="Continue reading">
+  <p>Continue</p>
+  <a href="#/on-file-systems"></a>
+  <label hidden><input type="checkbox" id="autoload"> keep loading as I scroll</label>
+</nav>
 </main>
 
 <footer>
@@ -587,6 +680,8 @@ kbd { font: 500 .95em var(--mono); }
     drag the edge handle for reading width (double-click resets)
     &nbsp;&middot;&nbsp; <kbd>t</kbd> typeface
     &nbsp;&middot;&nbsp; dark mode follows the OS
+    &nbsp;&middot;&nbsp; Continue loads the next entry inline; the address
+    follows your reading position
   </span>
 </footer>
 
@@ -723,6 +818,103 @@ kbd { font: 500 .95em var(--mono); }
     });
     code.parentElement.append(btn);
   });
+
+  /* ---------- continue reading: next entries load inline ----------
+     The Continue block is content, not chrome. Activating it loads the
+     next (older) entry below; after the first load, an opt-in toggle
+     keeps loading on scroll. The URL follows whichever entry owns the
+     most viewport (a URL can only name one entry, so majority wins). */
+
+  const NEXT = [
+    { label: "on-file-systems", title: "On file systems", date: "2026-04-24",
+      tags: ["writing"], sub: "Why folders lost to tags.",
+      body: `<p>A file can live in exactly one folder, but a thought never
+        has exactly one subject. Every filing system built on location
+        eventually forces a false choice — is the sunset photo in
+        <em>Photos</em>, <em>Travel</em>, or <em>2026</em>?</p>
+        <p>Tags answer the question by refusing it: the photo is all three,
+        and the folder stops mattering. That is why this site reads tags
+        and ignores hierarchy — the one folder it watches is flat.</p>` },
+    { label: "code-highlighting", title: "Code highlighting", date: "2026-03-05",
+      tags: ["dev"], sub: "Fenced code blocks in Rust, Python, Bash, JS.",
+      body: `<p>Every code block on this site is highlighted at render time —
+        no JavaScript highlighter runs in your browser. Pandoc and
+        Asciidoctor emit the same token classes, themed once for light and
+        dark.</p>
+        <p>The palette is kate in the light, breezedark after sundown, and
+        the switch follows the OS like everything else here.</p>` },
+  ];
+
+  const cont = document.getElementById("continue");
+  const teaser = cont.querySelector("a");
+  const autolabel = cont.querySelector("label");
+  const autoload = document.getElementById("autoload");
+  let current = "publish-from-a-folder";
+
+  const updateURL = () => {
+    let best = null, bestH = 0;
+    document.querySelectorAll("main > article").forEach(a => {
+      const r = a.getBoundingClientRect();
+      const h = Math.min(r.bottom, innerHeight) - Math.max(r.top, 0);
+      if (h > bestH) { bestH = h; best = a; }
+    });
+    if (best && best.dataset.label !== current) {
+      current = best.dataset.label;
+      try { history.replaceState(null, "", "#/" + current); } catch {}
+      document.title = "esko.bar — " + best.dataset.title;
+    }
+  };
+  const io = new IntersectionObserver(updateURL,
+    { threshold: [0, .2, .4, .6, .8, 1] });
+  io.observe(document.querySelector("main > article"));
+
+  const paintTeaser = () => {
+    const next = NEXT[0];
+    if (!next) {
+      teaser.remove();
+      autolabel.remove();
+      cont.querySelector("p").textContent = "That's everything";
+      return;
+    }
+    teaser.href = "#/" + next.label;
+    teaser.innerHTML = `<b>${next.title}</b>` +
+      `<time datetime="${next.date}">${next.date}</time>` +
+      `<span>${next.sub}</span>`;
+  };
+
+  const loadNext = () => {
+    const next = NEXT.shift();
+    if (!next) return;
+    const art = document.createElement("article");
+    art.dataset.label = next.label;
+    art.dataset.title = next.title;
+    art.innerHTML = `
+      <header>
+        <time datetime="${next.date}">${next.date}</time>
+        ${next.tags.map(t => `<a href="#">${t}</a>`).join("")}
+      </header>
+      <h1>${next.title}</h1>
+      ${next.body}
+      <footer><a href="#">source</a></footer>`;
+    cont.before(art);
+    io.observe(art);
+    autolabel.hidden = false;
+    paintTeaser();
+    updateURL();
+  };
+
+  teaser.addEventListener("click", e => { e.preventDefault(); loadNext(); });
+
+  autoload.checked = store.getItem("mock-autoload") === "1";
+  if (autoload.checked) autolabel.hidden = false;
+  autoload.addEventListener("change", () =>
+    store.setItem("mock-autoload", autoload.checked ? "1" : "0"));
+
+  new IntersectionObserver(entries => {
+    if (autoload.checked && entries.some(e => e.isIntersecting)) loadNext();
+  }, { rootMargin: "200px" }).observe(cont);
+
+  paintTeaser();
 })();
 </script>
 </body>
