@@ -6,7 +6,7 @@
 <title>esko.bar — Timeline</title>
 <style>
 /* ================================================================
-   Timeline design reference, v4.7.
+   Timeline design reference, v4.8.
    The tag cloud IS the header — no site nav at all (the timeline
    is the site root; a "Timeline" link on the timeline is noise).
    The cloud block sits left but wraps into centered lines within
@@ -1161,15 +1161,19 @@ body > footer button:hover { color: var(--violet); }
     syncSearchWidth();
   };
 
-  let dragging = false;
+  let dragging = false, grabDX = 0;
   grip.addEventListener('pointerdown', e => {
     dragging = true;
     grip.classList.add('active');
     grip.setPointerCapture(e.pointerId);
+    // remember where on the grip you grabbed, relative to the content edge,
+    // so the bar stays under the cursor instead of jumping to the edge
+    grabDX = e.clientX - mainEl.getBoundingClientRect().right;
   });
   grip.addEventListener('pointermove', e => {
     if (!dragging) return;
-    width = clampW((e.clientX - window.innerWidth / 2) * 2);
+    const right = e.clientX - grabDX;
+    width = clampW((right - window.innerWidth / 2) * 2);
     applyWidth();
   });
   grip.addEventListener('pointerup', () => {
