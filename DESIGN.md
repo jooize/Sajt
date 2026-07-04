@@ -455,16 +455,30 @@ dark-variant images, related entries, mini-TOC, print stylesheet.
 - `static/entry-page-mockup.html` — entry page reference (plain, top nav,
   sidenotes, anchors, quote/link/code actions, adjustable width, star,
   continue-reading flow)
-- `static/timeline-mockup.html` — timeline reference v4.3 (tag cloud as
+- `static/timeline-mockup.html` — timeline reference v4.5 (tag cloud as
   header, middle-grouped, with in-place topic filtering and a Finder-grey
   pill on the selected topic; no site nav, margin-hung bookmark count,
   stepped bars + segmented control for everything/notable/best with an
-  independent ★ favorites toggle, expanding search icon flush left on its
-  own line, sentence-case month headings; v3 rows kept: uniform titles,
+  independent ★ favorites toggle, a × between the bookmark mark and its
+  count, search on its own line with the field
+  width-matched to the segmented control so it sits centered under the
+  choices, sentence-case month headings; v3 rows kept: uniform titles,
   hairline quality meter with threshold ticks, ISO-date rail with
-  vertical tags, hanging ★/bookmark marks, `?` help dialog)
+  vertical tags, hanging ★/bookmark marks, `?` help dialog. Marks changed:
+  the bookmark is now a dim-always outline that brightens only by pointer
+  proximity, in two stages: within ~50px it lifts to full opacity but
+  stays grey, and landing directly on the icon turns it violet — never on
+  plain row hover — so nothing appears or vanishes and it stays
+  discoverable in compact mode where there is no hover margin. The
+  non-favorite rows carry no empty star (an empty ☆ was tried and rejected
+  as clutter — DECIDED 2026-07-04). A reading-width edge grip drives
+  `--content-w` and shares the entry page's `mock-width` store, so a width
+  set on either page is the site's width on both)
 - `static/filter-control-mockup.html` — the live shape comparison behind
   the stepped-bars + segmented decision (words ± icon, hairline slider,
   segmented, stepped bars, native range)
+- `static/marks-mockup.html` — the live comparison behind two mark
+  questions, now RESOLVED (2026-07-04): saved-count separator → × chosen;
+  empty ☆ on non-favorite rows → rejected as clutter (kept off)
 - Topics page mockup removed 2026-07-04 (cloud lives on the timeline; git
   history is the archive)

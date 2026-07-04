@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>esko.bar — Marks: saved count & the star</title>
+<style>
+/* ================================================================
+   Two small "show me" questions, live and side by side:
+
+   1. The saved-count mark — what, if anything, sits between the
+      bookmark glyph and the number (nothing / x / dot).
+   2. The star on non-favorites — the row's ★ means "a favorite of
+      mine" (the author's `favorite` Finder tag). It is information,
+      not a control a visitor can toggle. The question is only
+      whether an EMPTY star should sit on the other rows so the rail
+      reads as a steady column, or whether that is just clutter.
+      Toggle between: off (ship-today) / dim always / on hover.
+   ================================================================ */
+
+:root {
+  color-scheme: light dark;
+
+  --violet: #a123f6;
+  --violet-soft: light-dark(rgba(161, 35, 246, .08), rgba(161, 35, 246, .13));
+
+  --bg:     light-dark(#f5f4f0, #121514);
+  --ink:    light-dark(#20231f, #d9ded9);
+  --soft:   light-dark(#43473f, #b4bab2);
+  --faint:  light-dark(#71766c, #8b918a);
+  --hair:   light-dark(rgba(46, 62, 50, .18), rgba(178, 205, 184, .16));
+
+  --sans:  system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --content-w: 46rem;
+}
+
+* { margin: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  line-height: 1.5;
+  padding-inline: 1.25rem;
+  -webkit-font-smoothing: antialiased;
+}
+
+main { max-width: var(--content-w); margin-inline: auto; padding: 2.2rem 0 5rem; }
+
+header h1 { font-size: 1.15rem; font-weight: 650; letter-spacing: -.011em; }
+header p { margin-top: .2rem; font-size: .875rem; color: var(--soft); }
+header a { color: var(--violet); }
+
+section { margin-top: 2.6rem; padding-top: 1.6rem; border-top: 1px solid var(--hair); }
+section > h2 { font: 650 .95rem var(--sans); color: var(--soft); }
+section > p { margin-top: .2rem; font-size: .875rem; color: var(--soft); max-width: 40rem; }
+section > p b { color: var(--violet); font-weight: 500; }
+
+/* ---------- 1. saved-count variants ---------- */
+
+.counts { margin-top: 1.4rem; display: flex; flex-wrap: wrap; gap: 1.8rem 2.6rem; }
+.counts figure { display: flex; flex-direction: column; gap: .5rem; }
+.counts figcaption { font-size: .78rem; color: var(--faint); font-family: var(--mono); }
+
+.saved {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  color: var(--faint);
+}
+.saved svg {
+  width: .95rem;
+  height: .95rem;
+  fill: currentColor;      /* filled, as it is once you have saves */
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+.saved output { font: 500 .82rem var(--mono); font-feature-settings: "tnum"; }
+.saved var { font-style: normal; color: var(--hair); font-size: .8rem; }   /* the separator */
+.saved var.x { color: var(--faint); opacity: .5; font-size: .72rem; }
+
+/* ---------- 2. star-on-non-favorites ---------- */
+
+.starctl { margin-top: 1.3rem; display: inline-flex; gap: .3rem; padding: 2px;
+  border-radius: 999px; background: light-dark(rgba(46,62,50,.07), rgba(178,205,184,.09)); }
+.starctl button { padding: .3em .9em; border: none; background: none; border-radius: 999px;
+  font: 550 .8rem var(--sans); color: var(--faint); cursor: pointer; }
+.starctl button[aria-pressed="true"] { color: var(--ink);
+  background: light-dark(#fff, rgba(178,205,184,.14));
+  box-shadow: 0 1px 3px light-dark(rgba(20,24,20,.16), rgba(0,0,0,.4)); }
+
+.rows { margin: 1.4rem 0 0; padding-left: 3.4rem; list-style: none; }
+.rows li {
+  position: relative;
+  padding: .55rem 0;
+  border-top: 1px solid var(--hair);
+}
+.rows li:first-child { border-top: none; }
+.rows time { font: 500 .74rem var(--mono); color: var(--faint); margin-right: .8rem; }
+.rows h3 { display: inline; font-size: 1rem; font-weight: 650; letter-spacing: -.011em; color: var(--ink); }
+.rows small { color: var(--soft); font-weight: inherit; }
+
+/* the two hanging marks — star nearest the row, bookmark outside it */
+.rows b {          /* the author's favorite star */
+  position: absolute;
+  left: -1.5rem;
+  top: .55rem;
+  line-height: 1.5;
+  font-size: .82rem;
+  font-weight: 500;
+  color: var(--violet);
+}
+.rows button.bm {  /* the visitor's bookmark, dim-always like the timeline now is */
+  position: absolute;
+  left: -3rem;
+  top: .55rem;
+  border: none; background: none; padding: 0; cursor: pointer;
+  color: var(--faint); opacity: .32; transition: opacity .15s ease;
+}
+.rows li:hover button.bm { opacity: 1; }
+.rows button.bm svg { width: .85rem; height: .85rem; fill: none; stroke: currentColor;
+  stroke-width: 1.8; stroke-linejoin: round; display: block; }
+
+/* --- star treatment driven by the container's data-star --- */
+/* favorites always show the filled star (b lives only on fav rows). */
+/* non-favorites carry an empty star in b.empty, shown per mode.     */
+.rows b.empty { color: var(--faint); font-weight: 400; }
+
+[data-star="off"]    b.empty { display: none; }
+[data-star="always"] b.empty { display: block; opacity: .3; }
+[data-star="hover"]  b.empty { display: block; opacity: 0; transition: opacity .15s ease; }
+[data-star="hover"]  li:hover b.empty { opacity: .55; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Marks — two small questions</h1>
+    <p>Live. Back to the <a href="timeline-mockup.html">timeline</a>. The
+    bookmark here is already the timeline's new dim-always outline (hover a
+    row to see it lift).</p>
+  </header>
+
+  <section>
+    <h2>1 — Saved count: the separator</h2>
+    <p>The header's "saved for later" mark: a filled bookmark and how many
+    you've kept. What sits between them?</p>
+    <div class="counts">
+      <figure>
+        <span class="saved"><svg viewBox="0 0 24 24"><path d="M6.5 3.5h11V21l-5.5-4-5.5 4z"/></svg><output>3</output></span>
+        <figcaption>nothing (today)</figcaption>
+      </figure>
+      <figure>
+        <span class="saved"><svg viewBox="0 0 24 24"><path d="M6.5 3.5h11V21l-5.5-4-5.5 4z"/></svg><var class="x">&times;</var><output>3</output></span>
+        <figcaption>&times; between</figcaption>
+      </figure>
+      <figure>
+        <span class="saved"><svg viewBox="0 0 24 24"><path d="M6.5 3.5h11V21l-5.5-4-5.5 4z"/></svg><var>&middot;</var><output>3</output></span>
+        <figcaption>&middot; between</figcaption>
+      </figure>
+    </div>
+    <p style="margin-top:1.3rem"><b>Note.</b> &times; usually reads as
+    "multiply" or "close/remove" &mdash; next to a bookmark it can look like
+    "clear my saves". A middle dot is a quieter "N of them". Worth a look either way.</p>
+  </section>
+
+  <section data-star="off">
+    <h2>2 — The star on non-favorites</h2>
+    <p>★ marks <b>my</b> favorites &mdash; it's a label, not a button. The only
+    question is whether the other rows should carry an empty star so the rail
+    stays a steady column, or whether an always-there ☆ is just noise. (Hover a
+    row to feel the difference in "on hover".)</p>
+    <div class="starctl" role="group" aria-label="Empty-star treatment">
+      <button type="button" data-star="off" aria-pressed="true">off &mdash; ship today</button>
+      <button type="button" data-star="always" aria-pressed="false">dim always</button>
+      <button type="button" data-star="hover" aria-pressed="false">on hover</button>
+    </div>
+    <ul class="rows">
+      <li>
+        <button type="button" class="bm" aria-label="Save"><svg viewBox="0 0 24 24"><path d="M6.5 3.5h11V21l-5.5-4-5.5 4z"/></svg></button>
+        <b class="empty">☆</b>
+        <time>2026-03-03</time><h3>hello-world<small>.md</small></h3>
+      </li>
+      <li>
+        <button type="button" class="bm" aria-label="Save"><svg viewBox="0 0 24 24"><path d="M6.5 3.5h11V21l-5.5-4-5.5 4z"/></svg></button>
+        <b title="A favorite of mine">★</b>
+        <time>2026-03-11</time><h3>glass-tuner<small>.html</small></h3>
+      </li>
+      <li>
+        <button type="button" class="bm" aria-label="Save"><svg viewBox="0 0 24 24"><path d="M6.5 3.5h11V21l-5.5-4-5.5 4z"/></svg></button>
+        <b class="empty">☆</b>
+        <time>2026-03-14</time><h3>rain-canvas<small>.html</small></h3>
+      </li>
+      <li>
+        <button type="button" class="bm" aria-label="Save"><svg viewBox="0 0 24 24"><path d="M6.5 3.5h11V21l-5.5-4-5.5 4z"/></svg></button>
+        <b title="A favorite of mine">★</b>
+        <time>2026-04-24</time><h3>on-file-systems<small>.md</small></h3>
+      </li>
+      <li>
+        <button type="button" class="bm" aria-label="Save"><svg viewBox="0 0 24 24"><path d="M6.5 3.5h11V21l-5.5-4-5.5 4z"/></svg></button>
+        <b class="empty">☆</b>
+        <time>2026-05-02</time><h3>journal-2026-05<small>.md</small></h3>
+      </li>
+    </ul>
+  </section>
+</main>
+
+<script>
+  const stars = document.querySelector('[data-star]');
+  document.querySelectorAll('.starctl button').forEach(b =>
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.starctl button').forEach(x =>
+        x.setAttribute('aria-pressed', x === b));
+      stars.setAttribute('data-star', b.dataset.star);
+    }));
+</script>
+</body>
+</html>
