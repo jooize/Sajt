@@ -21,6 +21,11 @@ Tagline: **"Tag it `public` — it's published."**
 - Native approaches on every platform: Finder, Files.app, share sheet, tags,
   real file dates. The site never re-implements UI the OS provides (no theme
   switcher, no share buttons); dark mode follows the system.
+- The content folder contains only visible things — **no dotfiles, ever**
+  (DECIDED 2026-07-04). The server's index and caches live in the server's
+  own state directory, outside the content folder. Anything the server does
+  materialize alongside content is a plain visible file or symlink the user
+  can see, understand, and delete in Finder.
 - A high-quality, serious website: plain, typography-first presentation
   built on current web platform features (`light-dark()`, text fragments,
   `:has()`), always with graceful fallbacks so old browsers get a readable
@@ -101,6 +106,28 @@ the same sync batch, the FSEvents rename event still ties old to new; if a
 new entry later claims an old label, the explicit current entry wins and the
 redirect is dropped in its favor (logged loudly).
 
+**The ledger is real on the filesystem — DECIDED 2026-07-04: old labels
+become symlinks.** When an entry is renamed, the server creates a visible
+symlink `old-label -> current-name` in the content folder. The redirect map
+is thereby inspectable and editable in Finder: see every former address,
+delete a symlink to retire a redirect, or create one by hand to add an alias.
+The index still mirrors the ledger (for 410-vs-404 answers after deletion),
+but the folder is the truth.
+
+Rules, fail-closed:
+- A symlink is only ever a **301 source**, never served as content. The
+  target's own tags decide visibility — a symlink can never bypass the
+  `public` gate (target unpublished → the old label answers 410 like the
+  target does).
+- Symlinks must resolve, after canonicalization, to an entry **inside the
+  content root**; anything else (broken, escaping, chained too deep) is
+  ignored and logged loudly. No path traversal via crafted links.
+- Caveat to verify on the real setup: **iCloud Drive syncs symlinks poorly
+  or not at all.** If the content folder is the iCloud folder itself and
+  sync mangles them, the fallback is symlinks only in the server's deployed
+  copy (`rsync -avX` preserves them fine) with the index as the authority —
+  same behavior, less Finder visibility on the Mac.
+
 ### Media privacy — metadata stripping
 
 **DECIDED 2026-07-03: strip on the fly, never touch originals.** Served
@@ -114,14 +141,24 @@ never lost). **Fail closed: a format the stripper cannot confidently clean is
 not served raw** — it renders through the viewer or is refused, never leaked
 with metadata intact.
 
+**Architectural guarantee (DECIDED 2026-07-04): the unstripped original is
+unreachable by construction.** The HTTP layer for media has exactly one byte
+source — the cleaned cache. There is no code path from a request to an
+original file handle; a bug or human error in a handler can therefore serve
+the wrong *cleaned* bytes at worst, never raw ones. Cache miss = strip first,
+then serve from cache; strip failure = no cache entry = nothing to serve.
+Enforced with a test that greps/route-audits the media handlers for direct
+content-dir reads.
+
 ## URL scheme
 
 Labels are primary; dates are for timeline filtering only.
 
 ```
-esko.bar/                     timeline (newest first)
-esko.bar/best                 curated: highest-graded entries
+esko.bar/                     timeline (newest first, quality slider)
+esko.bar/topics               all tags, humanly named ("Topics"), with counts
 esko.bar/everything           complete compact archive
+esko.bar/favorites            the visitor's starred entries (client-side)
 esko.bar/open-source-licenses entry (file or folder), label = URL
 esko.bar/open-source-licenses/report.pdf   asset inside a bundle
 esko.bar/2026-03/             listing: March 2026
@@ -129,7 +166,9 @@ esko.bar/+design+rust         tag filter (AND); comma = OR
 esko.bar/sunset.md            raw source (extension = raw)
 ```
 
-Old date+label URLs 301-redirect to label-only.
+Old date+label URLs 301-redirect to label-only. `/best` is retired
+(DECIDED 2026-07-04): author-side quality lives on the timeline as a slider,
+and "Favorites" now means the *visitor's* own stars — see Presentation.
 
 ## Authoring formats
 
@@ -162,8 +201,12 @@ Structure carries the beauty. Reference realization:
 - **Entry pages** — pure typography on the page background. No cards, no
   materials, no backdrop filters.
 - **Site nav** — a static row of plain text links at the top of the content
-  column (not full-bleed, not floating, not sticky): **Timeline · Best ·
-  Everything**. No site title — the domain is the brand. Nothing else.
+  column (not full-bleed, not floating, not sticky): **Timeline · Topics ·
+  Everything** — plus **Favorites**, which appears only after the visitor has
+  starred something (an empty favorites page advertised in the nav would be
+  noise). No site title — the domain is the brand. Nothing else.
+  (DECIDED 2026-07-04: the tags page is called **Topics** on the site —
+  "tags" is the mechanism, "topics" is what a reader is actually browsing.)
 - **Dark mode** — follows the OS via `prefers-color-scheme` /
   `light-dark()`. **No theme UI** (DECIDED 2026-07-03; the switcher was
   removed from the live templates). The site never duplicates UI the OS
@@ -175,9 +218,11 @@ Structure carries the beauty. Reference realization:
 - **Heading anchors (left)** — a `#` appears in the left margin on
   hover/focus of a heading, linking to it. **DECIDED (direction)
   2026-07-03: the left margin stays otherwise empty** — anchors are the only
-  thing that lives there, mirroring sidenotes on the right. (A collapsed
-  "on this page" mini-TOC for very long entries is a possible later
-  exception — PROPOSED, not now.)
+  thing that lives there, mirroring sidenotes on the right.
+- **Mini-TOC — DECIDED 2026-07-04**: the one exception to the empty left
+  margin. Very long entries only (threshold: several `h2`s / long reading
+  time) get a collapsed "On this page" disclosure; short entries never show
+  it. Collapsed by default, plain text links, no scroll-spy machinery.
 - **Reader-adjustable width** — a discreet drag handle at the edge of the
   content column (keyboard: arrows; double-click resets; persisted).
   Sidenotes move between margin and inline automatically.
@@ -189,12 +234,36 @@ Structure carries the beauty. Reference realization:
 - **Effects** — rain, snow, WebGL glass, gyro tilt, dynamic weather sky:
   removed from the live templates 2026-07-03. Honor
   `prefers-reduced-motion` and `prefers-contrast` in what remains.
-- **Timeline** — visual design is **OPEN again**: the floating-glass-cards
-  realization (`static/entries-site.html`) is visually obsolete now that
-  glass is dropped, but its *interaction model* stands: month grouping,
-  kind filter, sort, search (`/`), keyboard nav (`j`/`k`), relative pairwise
-  grading at publish time (percentile → grade meter, feeding `/best`).
-  Needs a plain re-realization in the mockup's language.
+- **Timeline** — **DECIDED 2026-07-04: plain re-realization** in the entry
+  page's language; reference: `static/timeline-mockup.html`. Rows of pure
+  typography (no cards): label, date, one-line description, quiet tag/grade
+  meta. The interaction model from the glass prototype carries over: month
+  grouping, kind filter, search (`/`), keyboard nav (`j`/`k`, `Enter`,
+  `f` to star), relative pairwise grading at publish time.
+- **Quality slider (replaces `/best`)** — a discreet three-stop slider on
+  the timeline: **everything · better · best**, filtering by the pairwise
+  grade percentile. One page instead of two; curation becomes a reader
+  control, not a separate address.
+- **Visitor favorites — DECIDED 2026-07-04**: a small star on each timeline
+  row and in each entry header saves the entry to the *visitor's* favorites,
+  stored in `localStorage` only. Nothing is ever sent to the server — the
+  server cannot know what anyone starred, by design (privacy: favorites are
+  the reader's business). `/favorites` renders the starred list client-side.
+  **No cookie banner needed**: consent rules (ePrivacy) exempt storage that
+  is strictly necessary for a function the user explicitly requested —
+  clicking a star to save a favorite is exactly that; there is no tracking,
+  no identifier, and no transmission, so GDPR is never triggered either.
+- **Continue reading (replaces the footer "timeline" link) — DECIDED
+  2026-07-04**: post navigation is content, not chrome. After an entry's
+  footer, a quiet block teases the next (older) entry — label, date, first
+  line. Activating it loads that entry inline below, so multiple posts can
+  flow on one page. The URL bar follows the reading position: an
+  IntersectionObserver + `history.replaceState` sets the address to whichever
+  entry currently owns the most viewport (a URL can only name one entry, so
+  majority-of-viewport wins; title updates with it). After the first inline
+  load, an unobtrusive "keep loading as I scroll" toggle opts into infinite
+  scroll (opt-in, persisted, never default). The entry footer keeps only
+  quiet entry metadata: `source`, "more like this".
 - **Typeface** — **OPEN**: New York (ui-serif) vs SF (system-ui) for entry
   body text; toggle in the mockup. Chrome is always system sans.
 - **CSS conventions** — class-less (element selectors + structural
@@ -226,7 +295,7 @@ Reading experience:
   `/` for search, `Esc` clears.
 - **Scroll restore** on the timeline.
 
-More ideas (PROPOSED):
+Content-hash dividends and quiet touches (DECIDED 2026-07-04):
 - **Content-addressed caching for free** — the SHA-256 already computed per
   entry is a perfect strong ETag; raw files get `immutable` caching and
   change URLs only when content changes.
@@ -261,8 +330,9 @@ More ideas (PROPOSED):
    highlight theming; `video::` works.
 4. **Port the plain design** — entry pages from `entry-page-mockup.html`
    (plain body, top nav, sidenotes filter, anchors, reader width, quote/code
-   actions) and a plain timeline (interaction model from `entries-site.html`,
-   new visual language). Replaces the interim glass cards in templates.
+   actions, continue-reading), timeline from `timeline-mockup.html` (quality
+   slider, favorites star), and Topics from `topics-mockup.html`. Replaces
+   the interim glass cards in templates.
 5. **Metadata stripping** — before anything with photos goes public.
 6. **Feeds + sitemap + OG meta + security headers**, then deploy behind
    Caddy; `rsync -avX` content up; go live.
@@ -270,9 +340,10 @@ More ideas (PROPOSED):
 Done 2026-07-03: effects/variants/theme-switcher pruned from templates;
 unreferenced prototypes archived (git history keeps them).
 
-Later: grading flow in production, `/best` page, Share Extension, passkey
-auth for `private`, expiring share links, `.prompt` generation polish,
-404 suggestions, dark-variant images, related entries.
+Later: grading flow in production, symlink ledger, visitor favorites +
+infinite-scroll continue, Share Extension, passkey auth for `private`,
+expiring share links, `.prompt` generation polish, 404 suggestions,
+dark-variant images, related entries, mini-TOC, print stylesheet.
 
 ## Design files
 
@@ -284,6 +355,11 @@ auth for `private`, expiring share links, `.prompt` generation polish,
 - `.claude-memory/glass-effects.md`, `ux-laws.md` — technique research
 - `.claude-memory/snowfall-*.md`, `rain-*.md` — retired effects research
 - `static/entries-site.html` — timeline interaction reference (visuals
-  obsolete: predates the no-glass decision)
+  obsolete: predates the no-glass decision; kept for the grading dialog)
 - `static/entry-page-mockup.html` — entry page reference (plain, top nav,
-  sidenotes, anchors, quote/link/code actions, adjustable width)
+  sidenotes, anchors, quote/link/code actions, adjustable width, star,
+  continue-reading flow)
+- `static/timeline-mockup.html` — timeline reference (plain rows, month
+  groups, kind filter, quality slider, search, keyboard nav, favorites)
+- `static/topics-mockup.html` — Topics page reference (all tags with counts
+  and recent entries)
