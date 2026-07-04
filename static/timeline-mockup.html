@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>esko.bar — Timeline</title>
+<style>
+/* ================================================================
+   Timeline design reference — plain, typography-first, no glass.
+   Same language as entry-page-mockup.html. Rows of type, month
+   groups, kind filter, quality slider (replaces /best), visitor
+   favorites (localStorage only — never sent anywhere).
+   Keyboard: j/k select, Enter open, f favorite, / search, Esc clear.
+   ================================================================ */
+
+:root {
+  color-scheme: light dark;
+
+  --violet: #a123f6;
+  --violet-soft: light-dark(rgba(161, 35, 246, .08), rgba(161, 35, 246, .13));
+
+  --bg:     light-dark(#f5f4f0, #121514);
+  --ink:    light-dark(#20231f, #d9ded9);
+  --soft:   light-dark(#43473f, #b4bab2);
+  --faint:  light-dark(#71766c, #8b918a);
+  --hair:   light-dark(rgba(46, 62, 50, .18), rgba(178, 205, 184, .16));
+
+  --tag-ink:  light-dark(#1f606e, #93d2de);
+
+  --code-bg:    light-dark(#f0efe9, #191e1a);
+  --code-hair:  light-dark(rgba(46, 62, 50, .14), rgba(178, 205, 184, .12));
+
+  --sans:  system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --content-w: 42rem;
+}
+
+* { margin: 0; box-sizing: border-box; }
+
+body {
+  background: #f5f4f0;
+  background: var(--bg);
+  color: #20231f;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1rem;
+  line-height: 1.55;
+  padding-inline: 1.25rem;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection { background: rgba(161, 35, 246, .25); }
+
+a {
+  color: #8318c9;
+  color: var(--violet);
+  text-decoration: none;
+}
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* ---------- site nav ---------- */
+
+body > header {
+  max-width: var(--content-w);
+  margin-inline: auto;
+  padding: 1.15rem 0 .1rem;
+}
+
+body > header > nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.35rem;
+  font: 550 .8rem var(--sans);
+}
+
+body > header > nav > a { color: var(--faint); }
+body > header > nav > a:hover { color: var(--violet); text-decoration: none; }
+body > header > nav > a[aria-current="page"] { color: var(--ink); }
+body > header > nav > a[hidden] { display: none; }
+
+/* ---------- controls: filter, search, quality ---------- */
+
+main {
+  max-width: var(--content-w);
+  margin-inline: auto;
+  padding: 1.9rem 0 4rem;
+}
+
+main > form {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .4rem 1.1rem;
+  padding-bottom: 1.1rem;
+  border-bottom: 1px solid var(--hair);
+}
+
+main > form fieldset {
+  display: inline-flex;
+  gap: .9rem;
+  padding: 0;
+  border: none;
+}
+
+main > form fieldset button {
+  padding: .1rem 0;
+  border: none;
+  background: none;
+  color: var(--faint);
+  font: 550 .8rem var(--sans);
+  cursor: pointer;
+}
+main > form fieldset button:hover { color: var(--violet); }
+main > form fieldset button[aria-pressed="true"] {
+  color: var(--ink);
+  box-shadow: 0 2px 0 -.5px var(--violet);
+}
+
+main > form search { margin-left: auto; }
+main > form search input {
+  width: 9.5rem;
+  padding: .22rem .6rem;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  background: none;
+  color: var(--ink);
+  font: .8rem var(--sans);
+}
+main > form search input::placeholder { color: var(--faint); }
+main > form search input:focus { outline: 2px solid var(--violet); outline-offset: 1px; }
+
+main > form > label {
+  display: inline-flex;
+  align-items: center;
+  gap: .55rem;
+  font: 550 .8rem var(--sans);
+  color: var(--faint);
+}
+main > form > label input[type="range"] {
+  width: 5.2rem;
+  accent-color: var(--violet);
+}
+main > form > label output {
+  min-width: 4.6em;
+  color: var(--soft);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- month groups ---------- */
+
+main > section > h2 {
+  margin: 1.9rem 0 .35rem;
+  font: 500 .74rem var(--mono);
+  font-feature-settings: "tnum";
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+main > section > ul {
+  list-style: none;
+  padding: 0;
+}
+
+/* ---------- entry rows: pure typography ---------- */
+
+main article {
+  position: relative;
+  padding: .55rem .65rem .6rem;
+  margin-inline: -.65rem;
+  border-radius: 9px;
+}
+main article.selected { background: var(--violet-soft); }
+
+main article > h3 {
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -.011em;
+  line-height: 1.35;
+}
+main article > h3 > a { color: var(--ink); }
+main article > h3 > a:hover { color: var(--violet); text-decoration: none; }
+main article > h3 > a > small {
+  font-size: .82em;
+  font-weight: 450;
+  color: var(--faint);
+}
+main article > h3 > a > i { font-weight: 450; color: var(--faint); }
+
+main article > h3 > time {
+  margin-left: auto;
+  font: 500 .74rem var(--mono);
+  font-feature-settings: "tnum";
+  letter-spacing: .06em;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+main article > p {
+  margin-top: .05rem;
+  padding-right: 4.5rem;
+  font-size: .875rem;
+  color: var(--soft);
+}
+
+main article > footer {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  margin-top: .3rem;
+}
+
+main article > footer a {
+  padding: .04rem .5rem;
+  border-radius: 999px;
+  font: 550 .7rem var(--sans);
+  color: var(--tag-ink);
+  border: 1px solid var(--hair);
+}
+main article > footer a:hover { text-decoration: none; border-color: currentColor; }
+
+/* quiet grade meter (relative pairwise grade) */
+main article > footer span {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 10px;
+}
+main article > footer span i {
+  width: 3px;
+  border-radius: 1px;
+  background: var(--hair);
+}
+main article > footer span i:nth-child(1) { height: 4px; }
+main article > footer span i:nth-child(2) { height: 7px; }
+main article > footer span i:nth-child(3) { height: 10px; }
+main article > footer span i.on { background: var(--faint); }
+
+/* favorite star — the only server-invisible state on the site */
+main article > button {
+  position: absolute;
+  right: .55rem;
+  bottom: .5rem;
+  padding: .05rem .3rem;
+  border: none;
+  background: none;
+  color: var(--faint);
+  font-size: .95rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+main article:hover > button,
+main article.selected > button,
+main article > button:focus-visible { opacity: 1; }
+main article > button[aria-pressed="true"] {
+  color: var(--violet);
+  opacity: 1;
+}
+main article > button:hover { color: var(--violet); }
+@media (hover: none) { main article > button { opacity: .6; } }
+@media (prefers-reduced-motion: reduce) { main article > button { transition: none; } }
+
+main > p {
+  padding: 3rem 0;
+  text-align: center;
+  font-size: .85rem;
+  color: var(--faint);
+}
+
+/* ---------- mockup hints, bottom ---------- */
+
+body > footer {
+  max-width: var(--content-w);
+  margin-inline: auto;
+  padding-bottom: 3rem;
+  font: .74rem var(--sans);
+  color: var(--faint);
+  text-align: center;
+}
+
+kbd { font: 500 .95em var(--mono); }
+
+@media (max-width: 40rem) {
+  main > form search { margin-left: 0; width: 100%; }
+  main > form search input { width: 100%; }
+  main article > p { padding-right: 2rem; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <nav>
+    <a href="#" aria-current="page">Timeline</a>
+    <a href="topics-mockup.html">Topics</a>
+    <a href="#">Everything</a>
+    <a href="#favorites" id="navfav" hidden>Favorites</a>
+  </nav>
+</header>
+
+<main>
+  <form>
+    <fieldset aria-label="Kind">
+      <button type="button" data-kind="all" aria-pressed="true">All</button>
+      <button type="button" data-kind="note" aria-pressed="false">Notes</button>
+      <button type="button" data-kind="page" aria-pressed="false">Pages</button>
+      <button type="button" data-kind="link" aria-pressed="false">Links</button>
+      <button type="button" data-kind="media" aria-pressed="false">Media</button>
+    </fieldset>
+    <label title="Filter by relative grade">
+      Quality
+      <input type="range" id="quality" min="0" max="2" step="1" value="0"
+             aria-label="Quality threshold">
+      <output for="quality">everything</output>
+    </label>
+    <search>
+      <input type="search" id="q" placeholder="Search ( / )" aria-label="Search entries">
+    </search>
+  </form>
+
+  <div id="mount"></div>
+</main>
+
+<footer>
+  <kbd>j</kbd>/<kbd>k</kbd> select &middot; <kbd>Enter</kbd> open
+  &middot; <kbd>f</kbd> favorite &middot; <kbd>/</kbd> search
+  &middot; <kbd>Esc</kbd> clear &middot; dark mode follows the OS
+  &middot; favorites live in this browser only
+</footer>
+
+<script>
+(() => {
+  /* kind: note | page | link | media   ext shown faint after the label */
+  const E = [
+    { kind:'note',  ext:'.md',   label:'hello-world',       date:'2026-03-03', q:.82, sub:'This is the first post on esko.bar.', tags:['intro'] },
+    { kind:'media', ext:'.jpg',  label:'sunset',            date:'2026-03-03', q:.55, sub:'1.8 MB · 4032×3024', tags:['photo'] },
+    { kind:'note',  ext:'.txt',  label:null,                date:'2026-03-04', q:.20, sub:'Just a plain text note. Timestamps are all you need sometimes.', tags:[] },
+    { kind:'note',  ext:'.md',   label:'code-highlighting', date:'2026-03-05', q:.70, sub:'Fenced code blocks in Rust, Python, Bash, JS.', tags:['dev'] },
+    { kind:'media', ext:'.gif',  label:'cat-loaf',          date:'2026-03-09', q:.62, sub:'When the deploy finally goes green.', tags:['meme'] },
+    { kind:'page',  ext:'.html', label:'glass-tuner',       date:'2026-03-11', q:.90, sub:'Interactive SVG specular light tuner.', tags:['design'] },
+    { kind:'page',  ext:'.html', label:'rain-canvas',       date:'2026-03-14', q:.76, sub:'Lightweight Canvas 2D rain renderer.', tags:['design'] },
+    { kind:'link',  ext:'.link', label:'things-3',          date:'2026-03-19', q:.35, sub:'apps.apple.com · App Store', tags:['apps'] },
+    { kind:'link',  ext:'.link', label:'the-daily',         date:'2026-03-19', q:.40, sub:'podcasts.apple.com · Podcast', tags:['audio'] },
+    { kind:'page',  ext:'.html', label:'snow-test',         date:'2026-04-02', q:.68, sub:'Snowfall variant prototypes.', tags:['design'] },
+    { kind:'media', ext:'.png',  label:'screenshot-bug',    date:'2026-04-18', q:.38, sub:'It works on my machine.', tags:['dev','meme'] },
+    { kind:'note',  ext:'.md',   label:'on-file-systems',   date:'2026-04-24', q:.88, sub:'Why folders lost to tags.', tags:['writing'] },
+    { kind:'note',  ext:'.md',   label:'journal-2026-05',   date:'2026-05-02', q:.30, sub:'A personal post — tagged personal, still public.', tags:['personal'] },
+    { kind:'note',  ext:'/',     label:'open-source-licenses', date:'2026-05-18', q:.72, sub:'A folder as an entry — clean name, native date.', tags:['meta'] },
+    { kind:'media', ext:'.png',  label:'wireframe',         date:'2026-05-26', q:.45, sub:'420 KB · 1600×1000', tags:['design'] },
+    { kind:'media', ext:'.jpg',  label:'family-trip',       date:'2026-05-30', q:.60, sub:'12 photos from the coast.', tags:['photo'] },
+  ];
+
+  const MONTHS = ['January','February','March','April','May','June',
+    'July','August','September','October','November','December'];
+  const QUALITY = ['everything', 'better', 'best'];
+
+  const store = window.localStorage;
+  const favs = new Set(JSON.parse(store.getItem('mock-favs') || '[]'));
+  const keyOf = e => e.label ?? e.date + e.ext;
+  const tier = q => q >= .78 ? 3 : q >= .5 ? 2 : 1;
+  const pct = q => Math.max(1, Math.round((1 - q) * 100));
+
+  let kind = 'all', quality = 0, query = '', view = 'all', selected = -1;
+
+  const mount = document.getElementById('mount');
+  const navfav = document.getElementById('navfav');
+  const qInput = document.getElementById('q');
+  const slider = document.getElementById('quality');
+  const output = document.querySelector('output');
+
+  const esc = s => s.replace(/[&<>"]/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  const matches = e => {
+    if (view === 'favorites' && !favs.has(keyOf(e))) return false;
+    if (kind !== 'all' && e.kind !== kind) return false;
+    if (tier(e.q) < quality + 1) return false;
+    if (!query) return true;
+    return [e.label ?? '', e.sub, ...e.tags].join(' ').toLowerCase().includes(query);
+  };
+
+  const monthKey = e => {
+    const [y, m] = e.date.split('-');
+    return MONTHS[+m - 1] + ' ' + y;
+  };
+  const shortDate = e => {
+    const [, m, d] = e.date.split('-');
+    return MONTHS[+m - 1].slice(0, 3) + ' ' + (+d);
+  };
+
+  const row = (e, i) => `
+    <li>
+      <article data-i="${i}"${i === selected ? ' class="selected"' : ''}>
+        <h3>
+          <a href="#/${e.label ?? 'untitled'}">${e.label
+            ? esc(e.label) + '<small>' + esc(e.ext) + '</small>'
+            : '<i>(untitled)</i><small>' + esc(e.ext) + '</small>'}</a>
+          <time datetime="${e.date}">${shortDate(e)}</time>
+        </h3>
+        <p>${esc(e.sub)}</p>
+        <footer>
+          <span title="Graded top ${pct(e.q)}%" aria-label="Graded top ${pct(e.q)}%">${
+            [1, 2, 3].map(n => `<i${n <= tier(e.q) ? ' class="on"' : ''}></i>`).join('')
+          }</span>
+          ${e.tags.map(t => `<a href="#/+${t}">${esc(t)}</a>`).join('')}
+        </footer>
+        <button type="button" aria-pressed="${favs.has(keyOf(e))}"
+          aria-label="Save to favorites (stays in this browser)"
+          title="Favorite — saved in this browser only">${
+            favs.has(keyOf(e)) ? '★' : '☆'}</button>
+      </article>
+    </li>`;
+
+  function paint() {
+    const data = E.map((e, i) => [e, i]).filter(([e]) => matches(e))
+      .sort(([a], [b]) => a.date < b.date ? 1 : -1);
+    if (!data.length) {
+      mount.innerHTML = `<p>${view === 'favorites'
+        ? 'No favorites yet — the ☆ on any entry saves it here, in this browser.'
+        : 'Nothing matches.'}</p>`;
+    } else {
+      const groups = [];
+      data.forEach(([e, i]) => {
+        const k = monthKey(e);
+        if (!groups.length || groups.at(-1)[0] !== k) groups.push([k, []]);
+        groups.at(-1)[1].push([e, i]);
+      });
+      mount.innerHTML = groups.map(([m, items]) =>
+        `<section><h2>${m}</h2><ul>${
+          items.map(([e, i]) => row(e, i)).join('')}</ul></section>`).join('');
+    }
+    navfav.hidden = favs.size === 0 && view !== 'favorites';
+    navfav.setAttribute('aria-current', view === 'favorites' ? 'page' : 'false');
+    document.querySelector('nav a[href="#"]')
+      .setAttribute('aria-current', view === 'all' ? 'page' : 'false');
+    output.textContent = QUALITY[quality];
+  }
+
+  /* ---------- controls ---------- */
+
+  document.querySelectorAll('[data-kind]').forEach(b =>
+    b.addEventListener('click', () => {
+      kind = b.dataset.kind;
+      document.querySelectorAll('[data-kind]').forEach(x =>
+        x.setAttribute('aria-pressed', x === b));
+      selected = -1;
+      paint();
+    }));
+
+  slider.addEventListener('input', () => {
+    quality = +slider.value;
+    selected = -1;
+    paint();
+  });
+
+  qInput.addEventListener('input', () => {
+    query = qInput.value.trim().toLowerCase();
+    selected = -1;
+    paint();
+  });
+
+  navfav.addEventListener('click', ev => {
+    ev.preventDefault();
+    view = view === 'favorites' ? 'all' : 'favorites';
+    selected = -1;
+    paint();
+  });
+  document.querySelector('nav a[href="#"]').addEventListener('click', ev => {
+    ev.preventDefault();
+    view = 'all';
+    selected = -1;
+    paint();
+  });
+
+  /* ---------- favorites (localStorage only — nothing leaves the browser) */
+
+  const saveFavs = () => store.setItem('mock-favs', JSON.stringify([...favs]));
+
+  mount.addEventListener('click', ev => {
+    const btn = ev.target.closest('article > button');
+    if (!btn) return;
+    const e = E[+btn.closest('article').dataset.i];
+    favs.has(keyOf(e)) ? favs.delete(keyOf(e)) : favs.add(keyOf(e));
+    saveFavs();
+    paint();
+  });
+
+  /* ---------- keyboard ---------- */
+
+  const rows = () => [...mount.querySelectorAll('article')];
+
+  function move(delta) {
+    const r = rows();
+    if (!r.length) return;
+    const cur = r.findIndex(a => +a.dataset.i === selected);
+    const next = Math.max(0, Math.min(r.length - 1, cur + delta));
+    selected = +r[next].dataset.i;
+    r.forEach(a => a.classList.toggle('selected', +a.dataset.i === selected));
+    r[next].scrollIntoView({ block: 'nearest' });
+  }
+
+  document.addEventListener('keydown', ev => {
+    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    if (ev.target === qInput) {
+      if (ev.key === 'Escape') { qInput.value = ''; query = ''; qInput.blur(); paint(); }
+      return;
+    }
+    if (ev.target.closest('input, textarea')) return;
+    switch (ev.key) {
+      case 'j': case 'ArrowDown': ev.preventDefault(); move(1); break;
+      case 'k': case 'ArrowUp': ev.preventDefault(); move(-1); break;
+      case 'Enter': {
+        const a = mount.querySelector('article.selected h3 a');
+        if (a) a.click();
+        break;
+      }
+      case 'f': {
+        const btn = mount.querySelector('article.selected > button');
+        if (btn) btn.click();
+        break;
+      }
+      case '/': ev.preventDefault(); qInput.focus(); break;
+      case 'Escape':
+        selected = -1;
+        if (query) { qInput.value = ''; query = ''; }
+        paint();
+        break;
+    }
+  });
+
+  paint();
+})();
+</script>
+</body>
+</html>
