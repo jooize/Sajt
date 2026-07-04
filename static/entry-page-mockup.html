@@ -130,8 +130,38 @@ body > header > nav > a:hover {
 #grip:hover::before,
 #grip:focus-visible::before,
 #grip.active::before { background: var(--violet); height: 3.1rem; }
+
 @media (prefers-reduced-motion: reduce) { #grip::before { transition: none; } }
 @media (max-width: 52rem) { #grip { display: none; } }
+
+/* live readout: current reading width in px, rem and characters-per-line.
+   Shown only while dragging (.active) or while the grip holds keyboard focus
+   (tab, then Left/Right). Pinned to the viewport's right edge — always fully
+   on-screen, and at wide widths the grip meets it there. */
+#readout {
+  position: fixed;
+  right: .6rem;
+  top: 50%;
+  translate: 0 -50%;
+  white-space: nowrap;
+  font: 500 .74rem/1 var(--mono);
+  letter-spacing: -.01em;
+  color: var(--bg);
+  background: var(--ink);
+  padding: .34rem .5rem .32rem;
+  border-radius: .4rem;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 6;
+  transition: opacity .12s ease;
+}
+body:has(#grip.active) #readout,
+body:has(#grip:focus-visible) #readout { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { #readout { transition: none; } }
+@media (max-width: 52rem) { #readout { display: none; } }
+
+/* no text selection while a drag is in progress */
+body:has(#grip.active) { -webkit-user-select: none; user-select: none; }
 
 /* ---------- the entry ---------- */
 
@@ -561,6 +591,7 @@ kbd { font: 500 .95em var(--mono); }
 <div id="grip" role="slider" tabindex="0" aria-label="Reading width"
      aria-orientation="horizontal" aria-valuemin="480" aria-valuemax="1160"
      aria-valuenow="672" title="Drag to set reading width. Double-click resets."></div>
+<div id="readout" aria-hidden="true"></div>
 
 <main>
 <article data-label="publish-from-a-folder" data-title="Publish from a folder">
@@ -690,6 +721,7 @@ kbd { font: 500 .95em var(--mono); }
   const store = window.localStorage;
   const main = document.querySelector("main");
   const grip = document.getElementById("grip");
+  const readout = document.getElementById("readout");
 
   /* ---------- typeface (mockup-only control) ---------- */
 
@@ -718,12 +750,37 @@ kbd { font: 500 .95em var(--mono); }
     root.dataset.sn = (window.innerWidth - w) / 2 >= 330 ? "margin" : "inline";
   };
 
+  /* advance width of one character ('0') in the current reading font, so we
+     can report characters-per-line. The serif/sans toggle changes the font,
+     so cache by font string and re-measure when it changes. */
+  const remPx = parseFloat(getComputedStyle(root).fontSize) || 16;
+  let chFont = "", chPx = 0;
+  const measureCh = () => {
+    const cs = getComputedStyle(main);
+    const font = cs.font || `${cs.fontSize} ${cs.fontFamily}`;
+    if (font === chFont) return;
+    const probe = document.createElement("span");
+    probe.textContent = "0".repeat(50);
+    probe.style.cssText =
+      "position:absolute;visibility:hidden;white-space:pre;top:-9999px";
+    probe.style.font = font;
+    document.body.appendChild(probe);
+    chPx = probe.getBoundingClientRect().width / 50;
+    probe.remove();
+    chFont = font;
+  };
+
   const apply = () => {
     if (width) root.style.setProperty("--content-w", clamp(width) + "px");
     else root.style.removeProperty("--content-w");
-    grip.setAttribute("aria-valuenow",
-      Math.round(main.getBoundingClientRect().width));
+    const px = Math.round(main.getBoundingClientRect().width);
+    grip.setAttribute("aria-valuenow", px);
     grip.setAttribute("aria-valuemax", Math.round(maxW()));
+    measureCh();
+    const rem = `${(px / remPx).toFixed(1)} rem`;
+    readout.textContent = chPx
+      ? `${px} px · ${rem} · ${Math.round(px / chPx)} ch`
+      : `${px} px · ${rem}`;
     updateSidenotes();
   };
 
@@ -750,8 +807,8 @@ kbd { font: 500 .95em var(--mono); }
   });
   grip.addEventListener("keydown", e => {
     const cur = main.getBoundingClientRect().width;
-    if (e.key === "ArrowRight" || e.key === "ArrowUp") width = clamp(cur + 24);
-    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") width = clamp(cur - 24);
+    if (e.key === "ArrowRight") width = clamp(cur + 24);
+    else if (e.key === "ArrowLeft") width = clamp(cur - 24);
     else if (e.key === "Home") width = null;
     else return;
     e.preventDefault();

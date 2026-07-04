@@ -6,7 +6,7 @@
 <title>esko.bar — Timeline</title>
 <style>
 /* ================================================================
-   Timeline design reference, v4.5.
+   Timeline design reference, v4.6.
    The tag cloud IS the header — no site nav at all (the timeline
    is the site root; a "Timeline" link on the timeline is noise).
    The cloud block sits left but wraps into centered lines within
@@ -131,8 +131,38 @@ main {
 #grip:hover::before,
 #grip:focus-visible::before,
 #grip.active::before { background: var(--violet); height: 3.1rem; }
+
 @media (prefers-reduced-motion: reduce) { #grip::before { transition: none; } }
 @media (max-width: 56rem) { #grip { display: none; } }
+
+/* live readout: the current reading width in px, rem and characters-per-line.
+   Shown only while dragging (.active) or while the grip holds keyboard focus
+   (tab, then Left/Right). Pinned to the viewport's right edge — always fully
+   on-screen, and at wide widths the grip meets it there. */
+#readout {
+  position: fixed;
+  right: .6rem;
+  top: 50%;
+  translate: 0 -50%;
+  white-space: nowrap;
+  font: 500 .74rem/1 var(--mono);
+  letter-spacing: -.01em;
+  color: var(--bg);
+  background: var(--ink);
+  padding: .34rem .5rem .32rem;
+  border-radius: .4rem;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 6;
+  transition: opacity .12s ease;
+}
+body:has(#grip.active) #readout,
+body:has(#grip:focus-visible) #readout { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { #readout { transition: none; } }
+@media (max-width: 56rem) { #readout { display: none; } }
+
+/* no text selection while a drag is in progress */
+body:has(#grip.active) { -webkit-user-select: none; user-select: none; }
 
 /* ---------- the cloud is the header ----------
    size = entries, ink = recency, dot = Finder color.
@@ -649,6 +679,7 @@ body > footer button:hover { color: var(--violet); }
 <div id="grip" role="slider" tabindex="0" aria-label="Reading width"
      aria-orientation="horizontal" aria-valuemin="480" aria-valuemax="1160"
      aria-valuenow="736" title="Drag to set reading width. Double-click resets."></div>
+<div id="readout" aria-hidden="true"></div>
 
 <main>
   <!-- the cloud is the header; built from the entries below -->
@@ -1081,6 +1112,7 @@ body > footer button:hover { color: var(--violet); }
      page, so a width set on either page is the site's width on both */
 
   const grip = document.getElementById('grip');
+  const readout = document.getElementById('readout');
   const rootEl = document.documentElement;
   const mainEl = document.querySelector('main');
   const MINW = 480;
@@ -1088,12 +1120,34 @@ body > footer button:hover { color: var(--violet); }
   const clampW = v => Math.max(MINW, Math.min(maxW(), v));
   let width = parseFloat(store.getItem('mock-width')) || null;
 
+  /* advance width of one character ('0') in the reading font, so we can
+     report characters-per-line — the metric that actually governs reading
+     comfort. Constant across widths (font-size is fixed), measured once. */
+  const remPx = parseFloat(getComputedStyle(rootEl).fontSize) || 16;
+  let chPx = 0;
+  const measureCh = () => {
+    const probe = document.createElement('span');
+    probe.textContent = '0'.repeat(50);
+    probe.style.cssText =
+      'position:absolute;visibility:hidden;white-space:pre;top:-9999px';
+    const cs = getComputedStyle(mainEl);
+    probe.style.font = cs.font || `${cs.fontSize} ${cs.fontFamily}`;
+    document.body.appendChild(probe);
+    chPx = probe.getBoundingClientRect().width / 50;
+    probe.remove();
+  };
+
   const applyWidth = () => {
     if (width) rootEl.style.setProperty('--content-w', clampW(width) + 'px');
     else rootEl.style.removeProperty('--content-w');
-    grip.setAttribute('aria-valuenow',
-      Math.round(mainEl.getBoundingClientRect().width));
+    const px = Math.round(mainEl.getBoundingClientRect().width);
+    grip.setAttribute('aria-valuenow', px);
     grip.setAttribute('aria-valuemax', Math.round(maxW()));
+    if (!chPx) measureCh();
+    const rem = `${(px / remPx).toFixed(1)} rem`;
+    readout.textContent = chPx
+      ? `${px} px · ${rem} · ${Math.round(px / chPx)} ch`
+      : `${px} px · ${rem}`;
     syncSearchWidth();
   };
 
@@ -1120,8 +1174,8 @@ body > footer button:hover { color: var(--violet); }
   });
   grip.addEventListener('keydown', e => {
     const cur = mainEl.getBoundingClientRect().width;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') width = clampW(cur + 24);
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') width = clampW(cur - 24);
+    if (e.key === 'ArrowRight') width = clampW(cur + 24);
+    else if (e.key === 'ArrowLeft') width = clampW(cur - 24);
     else if (e.key === 'Home') width = null;
     else return;
     e.preventDefault();
