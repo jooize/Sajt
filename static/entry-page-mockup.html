@@ -7,6 +7,11 @@
 <style>
 /* ================================================================
    Entry page design reference — plain, typography-first, no glass.
+   Aligned with timeline-mockup.html v4.8: tags are Finder color
+   dot + name (no bordered pill), the header carries the timeline's
+   hairline quality meter with the notable/best ticks, dates share
+   the timeline's mono treatment, and the grey selection pill token
+   is shared.
    Static top nav confined to the content column. Dark mode follows
    the OS. Drag the edge handle for reading width. Sidenotes right,
    heading anchors left. Collapsed "On this page" mini-TOC (long
@@ -27,11 +32,19 @@
   --soft:   light-dark(#43473f, #b4bab2);
   --faint:  light-dark(#71766c, #8b918a);
   --hair:   light-dark(rgba(46, 62, 50, .18), rgba(178, 205, 184, .16));
+  --pill:   light-dark(rgba(46, 62, 50, .1), rgba(178, 205, 184, .14));
 
   --note:     light-dark(#3c6e4e, #9ecfae);
   --note-bg:  light-dark(rgba(88, 148, 106, .07), rgba(88, 148, 106, .09));
 
-  --tag-ink:  light-dark(#1f606e, #93d2de);
+  /* Finder tag colors, shared with the timeline */
+  --tag-red:    light-dark(#e0383e, #ff6961);
+  --tag-orange: light-dark(#e8842c, #ffb340);
+  --tag-yellow: light-dark(#d9a800, #ffd426);
+  --tag-green:  light-dark(#2f9e50, #30db5b);
+  --tag-blue:   light-dark(#1673de, #409cff);
+  --tag-purple: light-dark(#9853d2, #bf5af2);
+  --tag-gray:   light-dark(#8e8e93, #98989d);
 
   --code-bg:    light-dark(#f0efe9, #191e1a);
   --code-hair:  light-dark(rgba(46, 62, 50, .14), rgba(178, 205, 184, .12));
@@ -118,6 +131,7 @@ body > header > nav > a:hover {
   cursor: col-resize;
   touch-action: none;
   border-radius: 999px;
+  z-index: 5;
 }
 #grip::before {
   content: "";
@@ -189,19 +203,53 @@ article > header {
 article > header time {
   font: 500 .74rem var(--mono);
   font-feature-settings: "tnum";
-  letter-spacing: .09em;
-  text-transform: uppercase;
+  letter-spacing: .02em;
   color: var(--faint);
 }
 
-article > header a {
-  padding: .1rem .55rem;
-  border-radius: 999px;
-  font: 550 .72rem var(--sans);
-  color: var(--tag-ink);
-  border: 1px solid var(--hair);
+/* the timeline's hairline quality meter — gradual fill, ticks at the
+   notable/best thresholds the timeline's view control uses */
+article > header > span {
+  position: relative;
+  width: 2.9rem;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--hair);
 }
-article > header a:hover { text-decoration: none; border-color: currentColor; }
+article > header > span > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 1px;
+  background: var(--faint);
+}
+article > header > span::before,
+article > header > span::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  width: 1px;
+  height: 6px;
+  background: var(--hair);
+}
+article > header > span::before { left: 50%; }
+article > header > span::after { left: 78%; }
+
+/* tags: Finder color dot + name, exactly the timeline's tag style */
+article > header a {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  font: 550 .74rem var(--sans);
+  color: var(--soft);
+}
+article > header a:hover { color: var(--violet); text-decoration: none; }
+article > header a::before {
+  content: "";
+  width: .42rem;
+  height: .42rem;
+  border-radius: 50%;
+  background: var(--tag, var(--tag-gray));
+}
 
 h1 {
   font-size: clamp(1.75rem, 4.5vw, 2.35rem);
@@ -573,7 +621,7 @@ body > footer label {
 }
 body > footer label:has(:checked) {
   color: var(--ink);
-  background: var(--code-bg);
+  background: var(--pill);
 }
 body > footer input {
   position: absolute;
@@ -604,8 +652,9 @@ kbd { font: 500 .95em var(--mono); }
 <article data-label="publish-from-a-folder" data-title="Publish from a folder">
   <header>
     <time datetime="2026-07-03">2026-07-03</time>
-    <a href="#">design</a>
-    <a href="#">meta</a>
+    <span title="Graded top 10%" aria-label="Graded top 10%"><i style="width:90%"></i></span>
+    <a href="#" style="--tag: var(--tag-purple)">design</a>
+    <a href="#" style="--tag: var(--tag-gray)">meta</a>
   </header>
 
   <h1>Publish from a folder</h1>
@@ -895,9 +944,17 @@ kbd { font: 500 .95em var(--mono); }
      keeps loading on scroll. The URL follows whichever entry owns the
      most viewport (a URL can only name one entry, so majority wins). */
 
+  /* Finder tag colors travel with the tags, same map as the timeline */
+  const TAG = {
+    design:  "var(--tag-purple)",
+    dev:     "var(--tag-blue)",
+    writing: "var(--tag-green)",
+    meta:    "var(--tag-gray)",
+  };
+
   const NEXT = [
     { label: "on-file-systems", title: "On file systems", date: "2026-04-24",
-      tags: ["writing"], sub: "Why folders lost to tags.",
+      q: .88, tags: ["writing"], sub: "Why folders lost to tags.",
       body: `<p>A file can live in exactly one folder, but a thought never
         has exactly one subject. Every filing system built on location
         eventually forces a false choice — is the sunset photo in
@@ -906,7 +963,7 @@ kbd { font: 500 .95em var(--mono); }
         and the folder stops mattering. That is why this site reads tags
         and ignores hierarchy — the one folder it watches is flat.</p>` },
     { label: "code-highlighting", title: "Code highlighting", date: "2026-03-05",
-      tags: ["dev"], sub: "Fenced code blocks in Rust, Python, Bash, JS.",
+      q: .70, tags: ["dev"], sub: "Fenced code blocks in Rust, Python, Bash, JS.",
       body: `<p>Every code block on this site is highlighted at render time —
         no JavaScript highlighter runs in your browser. Pandoc and
         Asciidoctor emit the same token classes, themed once for light and
@@ -958,10 +1015,14 @@ kbd { font: 500 .95em var(--mono); }
     const art = document.createElement("article");
     art.dataset.label = next.label;
     art.dataset.title = next.title;
+    const pct = Math.max(1, Math.round((1 - next.q) * 100));
     art.innerHTML = `
       <header>
         <time datetime="${next.date}">${next.date}</time>
-        ${next.tags.map(t => `<a href="#">${t}</a>`).join("")}
+        <span title="Graded top ${pct}%" aria-label="Graded top ${pct}%">
+          <i style="width:${Math.round(next.q * 100)}%"></i></span>
+        ${next.tags.map(t =>
+          `<a href="#" style="--tag:${TAG[t] ?? "var(--tag-gray)"}">${t}</a>`).join("")}
       </header>
       <h1>${next.title}</h1>
       ${next.body}
