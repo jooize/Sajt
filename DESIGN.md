@@ -244,15 +244,21 @@ Structure carries the beauty. Reference realization:
   the timeline: **everything · better · best**, filtering by the pairwise
   grade percentile. One page instead of two; curation becomes a reader
   control, not a separate address.
-- **Visitor favorites — DECIDED 2026-07-04**: a small star on each timeline
-  row and in each entry header saves the entry to the *visitor's* favorites,
-  stored in `localStorage` only. Nothing is ever sent to the server — the
-  server cannot know what anyone starred, by design (privacy: favorites are
-  the reader's business). `/favorites` renders the starred list client-side.
-  **No cookie banner needed**: consent rules (ePrivacy) exempt storage that
-  is strictly necessary for a function the user explicitly requested —
-  clicking a star to save a favorite is exactly that; there is no tracking,
-  no identifier, and no transmission, so GDPR is never triggered either.
+- **Visitor favorites — OPEN (reconsidering 2026-07-04, same day as
+  decided)**: a small star on each timeline row saves the entry to the
+  *visitor's* favorites in `localStorage` only; nothing is ever sent to the
+  server, so no consent banner is needed (ePrivacy exempts storage strictly
+  necessary for a function the user explicitly requested; no tracking, no
+  identifier, no transmission). Implemented in the timeline mockup for
+  evaluation. **The counter-argument, per the site's own philosophy**:
+  browsers already provide bookmarks and the Reading List — a star
+  re-implements OS-provided UI, and visitors to a personal site rarely
+  curate favorites in-site. Claude recommends dropping the visitor star and
+  expressing *author* favorites as a plain `favorite` Finder tag instead
+  (zero machinery: it appears on Topics and is linkable as `/+favorite`).
+  Mixing author and visitor favorites on one `/favorites` URL is rejected
+  either way — one address that shows different people different content is
+  two features wearing one name.
 - **Continue reading (replaces the footer "timeline" link) — DECIDED
   2026-07-04**: post navigation is content, not chrome. After an entry's
   footer, a quiet block teases the next (older) entry — label, date, first
@@ -266,6 +272,12 @@ Structure carries the beauty. Reference realization:
   quiet entry metadata: `source`, "more like this".
 - **Typeface** — **OPEN**: New York (ui-serif) vs SF (system-ui) for entry
   body text; toggle in the mockup. Chrome is always system sans.
+- **Page titles — DECIDED 2026-07-04: site first**: `esko.bar — Topics`,
+  `esko.bar — <entry title>`. The domain is the brand, and tabs from the
+  site cluster visually. (Trade-off, noted and accepted: with many esko.bar
+  tabs open, narrow tabs truncate to the identical prefix — the favicon
+  carries identity there. Page-first is the common convention for exactly
+  that reason; brand-first is the deliberate choice here.)
 - **CSS conventions** — class-less (element selectors + structural
   combinators) in real templates; `color-scheme: light dark` with custom
   properties; plain-value fallbacks before modern functions so old browsers
