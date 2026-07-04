@@ -6,7 +6,7 @@
 <title>esko.bar — Timeline</title>
 <style>
 /* ================================================================
-   Timeline design reference, v4.6.
+   Timeline design reference, v4.7.
    The tag cloud IS the header — no site nav at all (the timeline
    is the site root; a "Timeline" link on the timeline is noise).
    The cloud block sits left but wraps into centered lines within
@@ -141,21 +141,28 @@ main {
    on-screen, and at wide widths the grip meets it there. */
 #readout {
   position: fixed;
-  right: .6rem;
   top: 50%;
+  left: 0;                 /* JS positions it just right of the dragger */
   translate: 0 -50%;
-  white-space: nowrap;
-  font: 500 .74rem/1 var(--mono);
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: .32rem;
+  align-items: baseline;
+  text-align: right;       /* values share a right-aligned column ... */
+  font: 500 .72rem/1.4 var(--mono);
+  font-variant-numeric: tabular-nums;
   letter-spacing: -.01em;
   color: var(--bg);
   background: var(--ink);
-  padding: .34rem .5rem .32rem;
+  padding: .36rem .52rem;
   border-radius: .4rem;
   opacity: 0;
   pointer-events: none;
   z-index: 6;
   transition: opacity .12s ease;
 }
+#readout b { font-weight: 600; }
+#readout i { font-style: normal; text-align: left; opacity: .55; }  /* ... units flush left */
 body:has(#grip.active) #readout,
 body:has(#grip:focus-visible) #readout { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { #readout { transition: none; } }
@@ -1144,10 +1151,13 @@ body > footer button:hover { color: var(--violet); }
     grip.setAttribute('aria-valuenow', px);
     grip.setAttribute('aria-valuemax', Math.round(maxW()));
     if (!chPx) measureCh();
-    const rem = `${(px / remPx).toFixed(1)} rem`;
-    readout.textContent = chPx
-      ? `${px} px · ${rem} · ${Math.round(px / chPx)} ch`
-      : `${px} px · ${rem}`;
+    let cells = `<b>${px}</b><i>px</i><b>${(px / remPx).toFixed(1)}</b><i>rem</i>`;
+    if (chPx) cells += `<b>${Math.round(px / chPx)}</b><i>ch</i>`;
+    readout.innerHTML = cells;
+    // ride the right side of the dragger; when it runs out of room, pin to the edge
+    const gr = grip.getBoundingClientRect();
+    const room = window.innerWidth - readout.offsetWidth - 10;
+    readout.style.left = Math.max(6, Math.min(gr.right + 6, room)) + 'px';
     syncSearchWidth();
   };
 
