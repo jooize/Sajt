@@ -39,7 +39,11 @@ An entry is a file **or a folder** in the single content directory.
 
 - **Files** — as today: `sunset.md`, `IMG_4392.jpg`, `talk.pdf`, `post.link`.
   Timestamp-prefix names (`2026-03-03T143052_sunset.md`) remain supported and
-  act as an explicit date override.
+  act as an explicit date override. **Files stay first-class (reaffirmed
+  2026-07-04): no folder, no sidecar is ever required to publish one.**
+  Dates and tags are native metadata (birthtime, xattrs); everything else —
+  grades, first-seen dates, the ledger — lives in the server-side index.
+  The extension gives the timeline its type indication for free.
 - **Folders as entries** — **DECIDED 2026-07-03: clean names, native dates.**
   A folder named `open-source-licenses/` *is* `esko.bar/open-source-licenses`.
   No timestamp prefix: the date comes from the folder's native creation date,
@@ -155,10 +159,11 @@ content-dir reads.
 Labels are primary; dates are for timeline filtering only.
 
 ```
-esko.bar/                     timeline (newest first, quality slider)
-esko.bar/topics               all tags, humanly named ("Topics"), with counts
+esko.bar/                     timeline (newest first, graded density)
+esko.bar/topics               all tags, humanly named ("Topics"): cloud + list
 esko.bar/everything           complete compact archive
-esko.bar/favorites            the visitor's starred entries (client-side)
+esko.bar/saved                the reader's bookmarked entries (client-side)
+esko.bar/+favorite            my hand-picked favorites (a plain Finder tag)
 esko.bar/open-source-licenses entry (file or folder), label = URL
 esko.bar/open-source-licenses/report.pdf   asset inside a bundle
 esko.bar/2026-03/             listing: March 2026
@@ -167,8 +172,8 @@ esko.bar/sunset.md            raw source (extension = raw)
 ```
 
 Old date+label URLs 301-redirect to label-only. `/best` is retired
-(DECIDED 2026-07-04): author-side quality lives on the timeline as a slider,
-and "Favorites" now means the *visitor's* own stars — see Presentation.
+(DECIDED 2026-07-04): quality lives on the timeline as graded density plus
+the everything/notable/best control — see Presentation.
 
 ## Authoring formats
 
@@ -234,31 +239,48 @@ Structure carries the beauty. Reference realization:
 - **Effects** — rain, snow, WebGL glass, gyro tilt, dynamic weather sky:
   removed from the live templates 2026-07-03. Honor
   `prefers-reduced-motion` and `prefers-contrast` in what remains.
-- **Timeline** — **DECIDED 2026-07-04: plain re-realization** in the entry
-  page's language; reference: `static/timeline-mockup.html`. Rows of pure
-  typography (no cards): label, date, one-line description, quiet tag/grade
-  meta. The interaction model from the glass prototype carries over: month
-  grouping, kind filter, search (`/`), keyboard nav (`j`/`k`, `Enter`,
-  `f` to star), relative pairwise grading at publish time.
-- **Quality slider (replaces `/best`)** — a discreet three-stop slider on
-  the timeline: **everything · better · best**, filtering by the pairwise
-  grade percentile. One page instead of two; curation becomes a reader
-  control, not a separate address.
-- **Visitor favorites — OPEN (reconsidering 2026-07-04, same day as
-  decided)**: a small star on each timeline row saves the entry to the
-  *visitor's* favorites in `localStorage` only; nothing is ever sent to the
-  server, so no consent banner is needed (ePrivacy exempts storage strictly
-  necessary for a function the user explicitly requested; no tracking, no
-  identifier, no transmission). Implemented in the timeline mockup for
-  evaluation. **The counter-argument, per the site's own philosophy**:
-  browsers already provide bookmarks and the Reading List — a star
-  re-implements OS-provided UI, and visitors to a personal site rarely
-  curate favorites in-site. Claude recommends dropping the visitor star and
-  expressing *author* favorites as a plain `favorite` Finder tag instead
-  (zero machinery: it appears on Topics and is linkable as `/+favorite`).
-  Mixing author and visitor favorites on one `/favorites` URL is rejected
-  either way — one address that shows different people different content is
-  two features wearing one name.
+- **Timeline — DECIDED (v2) 2026-07-04: graded density.** Quality is shown
+  as **prominence**, newspaper-style — no meters, no slider: top-graded
+  entries render large (bold title, description, imagery), good ones
+  regular, the rest as compact single lines. The grade does the layout;
+  curation is visible instead of labeled. Reference:
+  `static/timeline-mockup.html`.
+  - **Left rail**: date, ★ (author favorite), bookmark — *all* metadata on
+    the left so the eyes travel one straight line down; content to the
+    right of it.
+  - A quiet **everything · notable · best** text control filters by grade
+    tier (replaces `/best` — curation is a reader control, not a separate
+    address). The v1 kind-filter menu (All/Notes/Pages/…) and range slider
+    are dropped: rejected 2026-07-04 as chrome.
+  - Month groups, search (`/`, plain "Search" placeholder), keyboard
+    (`j`/`k`, `Enter`, `b` bookmark) carry over from the glass prototype's
+    interaction model, plus relative pairwise grading at publish time.
+- **Finder tag colors — DECIDED 2026-07-04**: tags render with the color
+  they carry in Finder (read from the macOS tag xattr, which stores a color
+  index 0–7 per tag). The seven Finder colors are mapped to CSS custom
+  properties tuned for light and dark. Tag = small colored dot + name;
+  text stays ink for legibility.
+- **Topics page — DECIDED (v2) 2026-07-04: a legible tag cloud.** Three
+  readable axes: **size** = entry count, **ink** (weight/contrast) =
+  recency of last activity, **color dot** = the tag's Finder color.
+  Position stays alphabetical on purpose — scatter clouds read terribly;
+  legibility beats cleverness. Below the cloud, the same topics as a list
+  ordered by latest activity, dates on the left rail. Reference:
+  `static/topics-mockup.html`.
+- **Three separate signals — DECIDED 2026-07-04** (the hybrid `/favorites`
+  is rejected: one address showing different people different content is two
+  features wearing one name):
+  - **★ Author favorites** — the `favorite` Finder tag, zero machinery: a
+    violet ★ on the timeline rail, a topic on the Topics page, linkable as
+    `/+favorite`. My taste, hand-picked.
+  - **Reader bookmarks ("Saved")** — a bookmark icon on each row lets a
+    reader keep a read-later list; `localStorage` only, never transmitted,
+    so the server cannot know what anyone saved and no consent banner is
+    needed (ePrivacy exempts storage strictly necessary for a function the
+    user explicitly requested; no tracking, no identifiers). The **Saved**
+    nav item appears only once something is saved.
+  - **Quality** — the dynamic pairwise grade; expressed as *prominence*,
+    see graded density below.
 - **Continue reading (replaces the footer "timeline" link) — DECIDED
   2026-07-04**: post navigation is content, not chrome. After an entry's
   footer, a quiet block teases the next (older) entry — label, date, first
@@ -274,10 +296,9 @@ Structure carries the beauty. Reference realization:
   body text; toggle in the mockup. Chrome is always system sans.
 - **Page titles — DECIDED 2026-07-04: site first**: `esko.bar — Topics`,
   `esko.bar — <entry title>`. The domain is the brand, and tabs from the
-  site cluster visually. (Trade-off, noted and accepted: with many esko.bar
-  tabs open, narrow tabs truncate to the identical prefix — the favicon
-  carries identity there. Page-first is the common convention for exactly
-  that reason; brand-first is the deliberate choice here.)
+  site cluster visually. Modern browsers (Safari included) deduplicate a
+  repeated title prefix across same-site tabs and surface the distinct
+  part, so the classic truncation argument for page-first no longer bites.
 - **CSS conventions** — class-less (element selectors + structural
   combinators) in real templates; `color-scheme: light dark` with custom
   properties; plain-value fallbacks before modern functions so old browsers
@@ -371,7 +392,8 @@ dark-variant images, related entries, mini-TOC, print stylesheet.
 - `static/entry-page-mockup.html` — entry page reference (plain, top nav,
   sidenotes, anchors, quote/link/code actions, adjustable width, star,
   continue-reading flow)
-- `static/timeline-mockup.html` — timeline reference (plain rows, month
-  groups, kind filter, quality slider, search, keyboard nav, favorites)
-- `static/topics-mockup.html` — Topics page reference (all tags with counts
-  and recent entries)
+- `static/timeline-mockup.html` — timeline reference v2 (graded density,
+  left metadata rail, Finder tag colors, ★ favorites, reader bookmarks,
+  everything/notable/best, search, keyboard nav)
+- `static/topics-mockup.html` — Topics reference v2 (legible tag cloud:
+  size = count, ink = recency, dot = Finder color; activity list below)

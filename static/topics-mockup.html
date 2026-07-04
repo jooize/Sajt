@@ -6,10 +6,14 @@
 <title>esko.bar — Topics</title>
 <style>
 /* ================================================================
-   Topics page design reference — plain, typography-first.
-   Every tag on the site, humanly named "Topics". A row per topic:
-   name, entry count, the most recent entries, last-active date.
-   Fully static — no JS needed on this page.
+   Topics design reference, v2 — a legible tag cloud.
+   Three axes, all readable: SIZE = how many entries, INK = how
+   recently the topic was active (fresh topics are dark and bold,
+   dormant ones fade), COLOR = the tag's own Finder color as a dot.
+   Position stays alphabetical on purpose — scatter clouds look
+   clever and read terribly. Below the cloud, the same topics as a
+   list with dates on the left rail, newest activity first.
+   Fully static — no JS on this page.
    ================================================================ */
 
 :root {
@@ -23,10 +27,19 @@
   --faint:  light-dark(#71766c, #8b918a);
   --hair:   light-dark(rgba(46, 62, 50, .18), rgba(178, 205, 184, .16));
 
+  --tag-red:    light-dark(#e0383e, #ff6961);
+  --tag-orange: light-dark(#e8842c, #ffb340);
+  --tag-yellow: light-dark(#d9a800, #ffd426);
+  --tag-green:  light-dark(#2f9e50, #30db5b);
+  --tag-blue:   light-dark(#1673de, #409cff);
+  --tag-purple: light-dark(#9853d2, #bf5af2);
+  --tag-gray:   light-dark(#8e8e93, #98989d);
+
   --sans:  system-ui, -apple-system, "Helvetica Neue", sans-serif;
   --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
-  --content-w: 42rem;
+  --content-w: 46rem;
+  --rail: 5.2rem;
 }
 
 * { margin: 0; box-sizing: border-box; }
@@ -38,7 +51,7 @@ body {
   color: var(--ink);
   font-family: var(--sans);
   font-size: 1rem;
-  line-height: 1.55;
+  line-height: 1.5;
   padding-inline: 1.25rem;
   -webkit-font-smoothing: antialiased;
 }
@@ -51,11 +64,7 @@ body {
 
 ::selection { background: rgba(161, 35, 246, .25); }
 
-a {
-  color: #8318c9;
-  color: var(--violet);
-  text-decoration: none;
-}
+a { color: #8318c9; color: var(--violet); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 /* ---------- site nav ---------- */
@@ -77,73 +86,122 @@ body > header > nav > a { color: var(--faint); }
 body > header > nav > a:hover { color: var(--violet); text-decoration: none; }
 body > header > nav > a[aria-current="page"] { color: var(--ink); }
 
-/* ---------- topics ---------- */
+/* ---------- the cloud ---------- */
 
 main {
   max-width: var(--content-w);
   margin-inline: auto;
-  padding: 2.4rem 0 4rem;
+  padding: 2.2rem 0 4rem;
 }
 
-h1 {
-  font-size: clamp(1.75rem, 4.5vw, 2.35rem);
-  font-weight: 700;
-  line-height: 1.14;
-  letter-spacing: -.018em;
-  margin-bottom: .5rem;
-  text-wrap: balance;
-}
-
-main > p {
-  font-size: .875rem;
-  color: var(--faint);
-  margin-bottom: 1.6rem;
-}
-
-main > ol {
-  list-style: none;
-  padding: 0;
-}
-
-main > ol > li {
-  padding: .8rem 0 .85rem;
-  border-top: 1px solid var(--hair);
-}
-
-main > ol > li > h2 {
+main > nav {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: .55rem;
-  font-size: 1.05rem;
-  font-weight: 650;
-  letter-spacing: -.011em;
-  line-height: 1.35;
+  justify-content: center;
+  column-gap: 1.9rem;
+  row-gap: .55rem;
+  padding: 1.6rem .5rem 2.1rem;
+  line-height: 1.25;
 }
-main > ol > li > h2 > a { color: var(--ink); }
-main > ol > li > h2 > a:hover { color: var(--violet); text-decoration: none; }
 
-main > ol > li > h2 > data {
-  font: 500 .74rem var(--mono);
+main > nav a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .42rem;
+  font-weight: 550;
+  letter-spacing: -.011em;
+}
+main > nav a:hover { color: var(--violet) !important; text-decoration: none; }
+main > nav a::before {
+  content: "";
+  align-self: center;
+  width: .5em;
+  height: .5em;
+  min-width: 7px;
+  min-height: 7px;
+  border-radius: 50%;
+  background: var(--tag, var(--tag-gray));
+}
+main > nav a > small {
+  font-size: .62em;
+  font-weight: 500;
+  color: var(--faint);
   font-feature-settings: "tnum";
+}
+/* my favorites tag wears a star, not a dot */
+main > nav a[data-star]::before { content: none; }
+main > nav a[data-star] > b {
+  align-self: center;
+  color: var(--violet);
+  font-size: .75em;
+  font-weight: 500;
+}
+
+/* ---------- the same topics as a list, newest activity first ---------- */
+
+main > section > h2 {
+  margin: 1.4rem 0 .6rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--hair);
+  font: 500 .74rem var(--mono);
+  letter-spacing: .09em;
+  text-transform: uppercase;
   color: var(--faint);
 }
 
-main > ol > li > h2 > time {
-  margin-left: auto;
+main > section > ul { list-style: none; padding: 0; }
+
+main > section li {
+  display: grid;
+  grid-template-columns: var(--rail) 1fr;
+  column-gap: 1.15rem;
+  padding: .45rem 0;
+}
+main > section li > time {
+  padding-top: .12rem;
   font: 500 .74rem var(--mono);
   font-feature-settings: "tnum";
   letter-spacing: .06em;
   color: var(--faint);
   white-space: nowrap;
 }
-
-main > ol > li > p {
-  margin-top: .1rem;
+main > section li h3 {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .42rem;
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -.011em;
+}
+main > section li h3 a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .42rem;
+  color: var(--ink);
+}
+main > section li h3 a:hover { color: var(--violet); text-decoration: none; }
+main > section li h3 a::before {
+  content: "";
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tag, var(--tag-gray));
+}
+main > section li h3 small {
+  font-size: .74rem;
+  font-weight: 500;
+  color: var(--faint);
+  font-feature-settings: "tnum";
+}
+main > section li p {
+  margin-top: .05rem;
   font-size: .875rem;
   color: var(--soft);
 }
-main > ol > li > p > a { color: var(--soft); }
-main > ol > li > p > a:hover { color: var(--violet); text-decoration: none; }
+main > section li p a { color: var(--soft); }
+main > section li p a:hover { color: var(--violet); text-decoration: none; }
 
 /* ---------- mockup hints, bottom ---------- */
 
@@ -151,9 +209,13 @@ body > footer {
   max-width: var(--content-w);
   margin-inline: auto;
   padding-bottom: 3rem;
-  font: .74rem var(--sans);
-  color: var(--faint);
+  font: .8rem var(--sans);
+  color: var(--soft);
   text-align: center;
+}
+
+@media (max-width: 40rem) {
+  main > nav { column-gap: 1.3rem; }
 }
 </style>
 </head>
@@ -168,71 +230,123 @@ body > footer {
 </header>
 
 <main>
-  <h1>Topics</h1>
-  <p>Everything on this site, by subject — each topic is a Finder tag.</p>
 
-  <ol>
-    <li>
-      <h2><a href="#/+design">design</a> <data value="4">4 entries</data>
-        <time datetime="2026-05-26">May 26</time></h2>
-      <p><a href="#/wireframe">wireframe</a> ·
-         <a href="#/rain-canvas">rain-canvas</a> ·
-         <a href="#/glass-tuner">glass-tuner</a> ·
-         <a href="#/snow-test">snow-test</a></p>
-    </li>
-    <li>
-      <h2><a href="#/+photo">photo</a> <data value="2">2 entries</data>
-        <time datetime="2026-05-30">May 30</time></h2>
-      <p><a href="#/family-trip">family-trip</a> ·
-         <a href="#/sunset">sunset</a></p>
-    </li>
-    <li>
-      <h2><a href="#/+dev">dev</a> <data value="2">2 entries</data>
-        <time datetime="2026-04-18">Apr 18</time></h2>
-      <p><a href="#/screenshot-bug">screenshot-bug</a> ·
-         <a href="#/code-highlighting">code-highlighting</a></p>
-    </li>
-    <li>
-      <h2><a href="#/+meme">meme</a> <data value="2">2 entries</data>
-        <time datetime="2026-04-18">Apr 18</time></h2>
-      <p><a href="#/screenshot-bug">screenshot-bug</a> ·
-         <a href="#/cat-loaf">cat-loaf</a></p>
-    </li>
-    <li>
-      <h2><a href="#/+writing">writing</a> <data value="1">1 entry</data>
-        <time datetime="2026-04-24">Apr 24</time></h2>
-      <p><a href="#/on-file-systems">on-file-systems</a></p>
-    </li>
-    <li>
-      <h2><a href="#/+meta">meta</a> <data value="1">1 entry</data>
-        <time datetime="2026-05-18">May 18</time></h2>
-      <p><a href="#/open-source-licenses">open-source-licenses</a></p>
-    </li>
-    <li>
-      <h2><a href="#/+personal">personal</a> <data value="1">1 entry</data>
-        <time datetime="2026-05-02">May 2</time></h2>
-      <p><a href="#/journal-2026-05">journal-2026-05</a></p>
-    </li>
-    <li>
-      <h2><a href="#/+audio">audio</a> <data value="1">1 entry</data>
-        <time datetime="2026-03-19">Mar 19</time></h2>
-      <p><a href="#/the-daily">the-daily</a></p>
-    </li>
-    <li>
-      <h2><a href="#/+apps">apps</a> <data value="1">1 entry</data>
-        <time datetime="2026-03-19">Mar 19</time></h2>
-      <p><a href="#/things-3">things-3</a></p>
-    </li>
-    <li>
-      <h2><a href="#/+intro">intro</a> <data value="1">1 entry</data>
-        <time datetime="2026-03-03">Mar 3</time></h2>
-      <p><a href="#/hello-world">hello-world</a></p>
-    </li>
-  </ol>
+  <!-- The cloud. size = entries, ink = recency, dot = Finder color.
+       Alphabetical, so a topic is findable, not just discoverable. -->
+  <nav aria-label="All topics">
+    <a href="#/+apps" style="--tag:var(--tag-blue); font-size:.95rem; color:var(--faint); font-weight:500"
+       title="1 entry, last active Mar 19">apps <small>1</small></a>
+    <a href="#/+audio" style="--tag:var(--tag-orange); font-size:.95rem; color:var(--faint); font-weight:500"
+       title="1 entry, last active Mar 19">audio <small>1</small></a>
+    <a href="#/+design" style="--tag:var(--tag-purple); font-size:1.6rem; color:var(--ink); font-weight:650"
+       title="4 entries, last active May 26">design <small>4</small></a>
+    <a href="#/+dev" style="--tag:var(--tag-blue); font-size:1.35rem; color:var(--soft); font-weight:550"
+       title="3 entries, last active Apr 18">dev <small>3</small></a>
+    <a href="#/+favorite" data-star style="font-size:1.15rem; color:var(--soft); font-weight:550"
+       title="2 entries, last active Apr 24"><b>★</b>favorite <small>2</small></a>
+    <a href="#/+intro" style="--tag:var(--tag-gray); font-size:.95rem; color:var(--faint); font-weight:500"
+       title="1 entry, last active Mar 3">intro <small>1</small></a>
+    <a href="#/+meme" style="--tag:var(--tag-orange); font-size:1.15rem; color:var(--soft); font-weight:550"
+       title="2 entries, last active Apr 18">meme <small>2</small></a>
+    <a href="#/+meta" style="--tag:var(--tag-gray); font-size:.95rem; color:var(--soft); font-weight:550"
+       title="1 entry, last active May 18">meta <small>1</small></a>
+    <a href="#/+personal" style="--tag:var(--tag-red); font-size:.95rem; color:var(--soft); font-weight:550"
+       title="1 entry, last active May 2">personal <small>1</small></a>
+    <a href="#/+photo" style="--tag:var(--tag-yellow); font-size:1.15rem; color:var(--ink); font-weight:650"
+       title="2 entries, last active May 30">photo <small>2</small></a>
+    <a href="#/+writing" style="--tag:var(--tag-green); font-size:.95rem; color:var(--soft); font-weight:550"
+       title="1 entry, last active Apr 24">writing <small>1</small></a>
+  </nav>
+
+  <section>
+    <h2>By latest activity</h2>
+    <ul>
+      <li>
+        <time datetime="2026-05-30">May 30</time>
+        <div>
+          <h3><a href="#/+photo" style="--tag:var(--tag-yellow)">photo <small>2</small></a></h3>
+          <p><a href="#/family-trip">family-trip</a> · <a href="#/sunset">sunset</a></p>
+        </div>
+      </li>
+      <li>
+        <time datetime="2026-05-26">May 26</time>
+        <div>
+          <h3><a href="#/+design" style="--tag:var(--tag-purple)">design <small>4</small></a></h3>
+          <p><a href="#/wireframe">wireframe</a> · <a href="#/rain-canvas">rain-canvas</a> ·
+             <a href="#/glass-tuner">glass-tuner</a> · <a href="#/snow-test">snow-test</a></p>
+        </div>
+      </li>
+      <li>
+        <time datetime="2026-05-18">May 18</time>
+        <div>
+          <h3><a href="#/+meta" style="--tag:var(--tag-gray)">meta <small>1</small></a></h3>
+          <p><a href="#/open-source-licenses">open-source-licenses</a></p>
+        </div>
+      </li>
+      <li>
+        <time datetime="2026-05-02">May 2</time>
+        <div>
+          <h3><a href="#/+personal" style="--tag:var(--tag-red)">personal <small>1</small></a></h3>
+          <p><a href="#/journal-2026-05">journal-2026-05</a></p>
+        </div>
+      </li>
+      <li>
+        <time datetime="2026-04-24">Apr 24</time>
+        <div>
+          <h3><a href="#/+writing" style="--tag:var(--tag-green)">writing <small>1</small></a></h3>
+          <p><a href="#/on-file-systems">on-file-systems</a></p>
+        </div>
+      </li>
+      <li>
+        <time datetime="2026-04-24">Apr 24</time>
+        <div>
+          <h3><a href="#/+favorite" style="--tag:var(--violet)">favorite <small>2</small></a></h3>
+          <p><a href="#/on-file-systems">on-file-systems</a> · <a href="#/glass-tuner">glass-tuner</a></p>
+        </div>
+      </li>
+      <li>
+        <time datetime="2026-04-18">Apr 18</time>
+        <div>
+          <h3><a href="#/+dev" style="--tag:var(--tag-blue)">dev <small>3</small></a></h3>
+          <p><a href="#/screenshot-bug">screenshot-bug</a> · <a href="#/glass-tuner">glass-tuner</a> ·
+             <a href="#/code-highlighting">code-highlighting</a></p>
+        </div>
+      </li>
+      <li>
+        <time datetime="2026-04-18">Apr 18</time>
+        <div>
+          <h3><a href="#/+meme" style="--tag:var(--tag-orange)">meme <small>2</small></a></h3>
+          <p><a href="#/screenshot-bug">screenshot-bug</a> · <a href="#/cat-loaf">cat-loaf</a></p>
+        </div>
+      </li>
+      <li>
+        <time datetime="2026-03-19">Mar 19</time>
+        <div>
+          <h3><a href="#/+audio" style="--tag:var(--tag-orange)">audio <small>1</small></a></h3>
+          <p><a href="#/the-daily">the-daily</a></p>
+        </div>
+      </li>
+      <li>
+        <time datetime="2026-03-19">Mar 19</time>
+        <div>
+          <h3><a href="#/+apps" style="--tag:var(--tag-blue)">apps <small>1</small></a></h3>
+          <p><a href="#/things-3">things-3</a></p>
+        </div>
+      </li>
+      <li>
+        <time datetime="2026-03-03">Mar 3</time>
+        <div>
+          <h3><a href="#/+intro" style="--tag:var(--tag-gray)">intro <small>1</small></a></h3>
+          <p><a href="#/hello-world">hello-world</a></p>
+        </div>
+      </li>
+    </ul>
+  </section>
 </main>
 
 <footer>
-  sorted by entry count, then recency &middot; dark mode follows the OS
+  cloud: size = entries, ink = recency, dot = the tag's Finder color
+  &middot; dark mode follows the OS
 </footer>
 
 </body>
