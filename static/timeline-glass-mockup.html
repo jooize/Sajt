@@ -11,10 +11,10 @@
    only addition is a bottom control (and the `g` key) that layers
    glass carried over from entries-site.html, in steps:
      plain — reference, exactly the shipped plain design
-     wall  — faint tinted wall behind the page; controls and the
-             help dialog pick up glass material
-     rows  — plus every entry row floats as a glass card
+     rows  — every entry row floats as a glass card; the segmented
+             control and help dialog pick up glass material
      full  — plus the tag-cloud header sits on its own glass mat
+   No tinted wall: the glass sits directly on the plain background.
    The glass layer lives at the very end of this stylesheet; nothing
    above it was touched. Original notes follow.
    ================================================================
@@ -719,9 +719,7 @@ body > footer label input {
 /* ================================================================
    GLASS FLAIR — everything below is the exploration layer.
    Tokens carried over from entries-site.html, re-tuned to this
-   palette (warm paper light, green-tinged dark). Gradient stops
-   always fade to the same color at 0 alpha, never `transparent`,
-   and the tints stay low to dodge 8-bit banding on dark.
+   palette (warm paper light, green-tinged dark).
    ================================================================ */
 
 html {
@@ -738,24 +736,7 @@ html {
     inset 0 1px 0 light-dark(rgba(255, 255, 255, .8), rgba(255, 255, 255, .16));
 }
 
-/* wall and up: a faint tinted wall behind the page — the violet
-   leads, blue and green whisper from the edges */
-html:not([data-glass="plain"]) body {
-  background:
-    radial-gradient(52rem 36rem at 14% -8%,
-      light-dark(rgba(161, 35, 246, .13), rgba(161, 35, 246, .18)),
-      rgba(161, 35, 246, 0) 60%),
-    radial-gradient(46rem 34rem at 102% 12%,
-      light-dark(rgba(38, 168, 237, .1), rgba(38, 168, 237, .12)),
-      rgba(38, 168, 237, 0) 60%),
-    radial-gradient(58rem 42rem at 55% 115%,
-      light-dark(rgba(52, 199, 89, .1), rgba(52, 199, 89, .1)),
-      rgba(52, 199, 89, 0) 62%),
-    var(--bg);
-  background-attachment: fixed;
-}
-
-/* wall and up: the chrome picks up glass material — segmented capsule
+/* rows and up: the chrome picks up glass material — segmented capsule
    and help dialog. Shapes and placement identical. */
 html:not([data-glass="plain"]) main > form p > span {
   background: var(--glass);
@@ -864,7 +845,6 @@ html[data-glass="full"] #cloud {
 <footer>
   <fieldset aria-label="Glass flair (mockup control)">
     <label><input type="radio" name="glass" value="plain">Plain</label>
-    <label><input type="radio" name="glass" value="wall">Wall</label>
     <label><input type="radio" name="glass" value="rows" checked>Rows</label>
     <label><input type="radio" name="glass" value="full">Full</label>
   </fieldset>

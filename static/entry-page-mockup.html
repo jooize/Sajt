@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-type="serif" data-sn="inline">
+<html lang="en" data-type="serif" data-sn="bottom">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,12 +12,23 @@
    hairline quality meter with the notable/best ticks, dates share
    the timeline's mono treatment, and the grey selection pill token
    is shared.
-   Static top nav confined to the content column. Dark mode follows
-   the OS. Drag the edge handle for reading width. Sidenotes right,
-   heading anchors left. Collapsed "On this page" mini-TOC (long
-   entries only). Post navigation is content: a Continue block after
-   the entry loads the next one inline; the URL follows whichever
-   entry owns most of the viewport; infinite scroll is opt-in.
+   The site header IS the timeline's header — tag cloud, saved
+   count, level control, favorites, search — one chrome for the
+   whole site. It lives above the post; the page lands scrolled to
+   the post, and scrolling up reveals it. From an entry, its
+   controls route back to the (filtered) timeline.
+   Dark mode follows the OS. Drag the edge handle for reading
+   width. Heading anchors hang left and behave like the timeline's
+   bookmark: always faintly there, lifted by pointer nearness,
+   violet on the anchor itself. The h1 gets a chain that links to
+   the entry's own address — no fragment. Sidenotes sit in the
+   right margin when there's room; otherwise they become real
+   footnotes at the bottom of the post, and the references link
+   both ways (glow the margin note / travel to the footnote).
+   Collapsed "On this page" mini-TOC (long entries only). Post
+   navigation is content: a Continue block after the entry loads
+   the next one inline; the URL follows whichever entry owns most
+   of the viewport; infinite scroll is opt-in.
    t = typeface (mockup control).
    ================================================================ */
 
@@ -96,25 +107,188 @@ a {
 }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
-/* ---------- site nav: plain links, top of the content column ---------- */
+/* ---------- site header: the timeline's header, whole ----------
+   Tag cloud, saved count, level control, favorites, search — the
+   same chrome as the timeline, styles carried over verbatim. It
+   sits above the post; the page lands scrolled to the post. */
 
-body > header {
+#site {
   max-width: var(--content-w);
   margin-inline: auto;
-  padding: 1.15rem 0 .1rem;
+  padding: 1.4rem 0 1.3rem;
+  border-bottom: 1px solid var(--hair);
+  font-family: var(--sans);
 }
 
-body > header > nav {
+#cloud {
+  position: relative;
+  max-width: 30rem;
+  margin-inline: 0 auto;
   display: flex;
   flex-wrap: wrap;
-  gap: 1.35rem;
-  font: 550 .8rem var(--sans);
+  align-items: baseline;
+  justify-content: center;
+  column-gap: 1.4rem;
+  row-gap: .5rem;
+  padding: 1rem .5rem 2.6rem;
+  line-height: 1.25;
+}
+#cloud a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .38rem;
+  font-weight: 550;
+  letter-spacing: -.011em;
+}
+#cloud a:hover { color: var(--violet) !important; text-decoration: none; }
+#cloud a::before {
+  content: "";
+  align-self: center;
+  translate: 0 .09em;
+  width: .5em;
+  height: .5em;
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 50%;
+  background: var(--tag, var(--tag-gray));
+}
+#cloud a > small {
+  font-size: .68em;
+  font-weight: 500;
+  color: var(--faint);
+  font-feature-settings: "tnum";
+  translate: 0 -.07em;
 }
 
-body > header > nav > a { color: var(--faint); }
-body > header > nav > a:hover {
-  color: var(--violet);
-  text-decoration: none;
+#site form {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .4rem 1.2rem;
+  font: 550 .8rem var(--sans);
+  color: var(--faint);
+}
+#navsaved {
+  position: absolute;
+  left: -3.4rem;
+  top: .95rem;
+  translate: 0 -50%;
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  padding: 0 .1rem;
+  color: var(--faint);
+}
+#navsaved:hover { color: var(--violet); text-decoration: none; }
+#navsaved svg {
+  width: .85rem;
+  height: .85rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+#navsaved output {
+  font: 500 .74rem var(--mono);
+  font-feature-settings: "tnum";
+}
+#navsaved i {
+  font-style: normal;
+  font-size: .72rem;
+  opacity: .5;
+}
+#navsaved[hidden] { display: none; }
+
+#site form p {
+  display: inline-flex;
+  gap: .55rem;
+  align-items: center;
+  margin: 0;
+}
+#site form p > svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: currentColor;
+}
+#site form p > svg rect { opacity: .3; }
+#site form p > svg rect[data-on] { opacity: 1; }
+#site form p button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--faint);
+  font: inherit;
+  cursor: pointer;
+}
+#site form p button > b { color: var(--violet); font-weight: 500; }
+#site form p button:hover { color: var(--violet); }
+#site form p > span {
+  position: relative;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding: 2px;
+  border-radius: 999px;
+  background: light-dark(rgba(46, 62, 50, .07), rgba(178, 205, 184, .09));
+}
+#site form p > span > u {
+  position: absolute;
+  inset-block: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / 3);
+  border-radius: 999px;
+  background: light-dark(#fff, rgba(178, 205, 184, .14));
+  box-shadow: 0 1px 3px light-dark(rgba(20, 24, 20, .16), rgba(0, 0, 0, .4));
+}
+#site form p > span > button {
+  position: relative;
+  padding: .3em .9em;
+  border-radius: 999px;
+}
+#site form p > span > button[aria-pressed="true"] { color: var(--ink); }
+#site form search {
+  flex-basis: 100%;
+  margin: .4rem 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: .55rem;
+}
+#site form search button {
+  display: inline-flex;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+}
+#site form search button:hover { color: var(--violet); }
+#site form search button svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+}
+#site form search input {
+  width: 11rem;
+  padding: .2rem 0;
+  border: none;
+  border-bottom: 1px solid var(--hair);
+  border-radius: 0;
+  background: none;
+  color: var(--ink);
+  font: .85rem var(--sans);
+}
+#site form search input::placeholder { color: var(--faint); }
+#site form search input:focus {
+  outline: none;
+  border-bottom-color: var(--violet);
+}
+@media (max-width: 52rem) {
+  #navsaved { position: static; translate: none; }
+  #cloud { column-gap: 1.2rem; }
 }
 
 /* ---------- reading-width handle ---------- */
@@ -252,6 +426,7 @@ article > header a::before {
 }
 
 h1 {
+  position: relative;
   font-size: clamp(1.75rem, 4.5vw, 2.35rem);
   font-weight: 700;
   line-height: 1.14;
@@ -260,7 +435,12 @@ h1 {
   text-wrap: balance;
 }
 
-/* ---------- headings with hover anchors in the left margin ---------- */
+/* ---------- heading anchors in the left margin ----------
+   They behave like the timeline's bookmark: always faintly there
+   (nothing appears or vanishes), lifted to full by pointer nearness
+   (.near, set in JS), violet only on the anchor itself. The h1 gets
+   a chain linking to the entry's own address — no fragment; the h2s
+   keep their # section links. */
 
 h2 {
   position: relative;
@@ -271,23 +451,51 @@ h2 {
   margin: 2.6rem 0 .9rem;
 }
 
-h2 > a:last-child {
+:is(h1, h2) > a:last-child {
   position: absolute;
-  left: -1.5em;
+  left: -1.7rem;
   top: 0;
-  width: 1.3em;
+  width: 1.4rem;
   text-align: center;
   font: 550 .85em var(--sans);
   color: var(--faint);
-  opacity: 0;
-  transition: opacity .15s ease;
+  opacity: .32;
+  transition: opacity .15s ease, color .15s ease;
 }
-h2:hover > a:last-child,
-h2 > a:last-child:focus-visible { opacity: 1; }
-h2 > a:last-child:hover { color: var(--violet); text-decoration: none; }
-@media (prefers-reduced-motion: reduce) { h2 > a:last-child { transition: none; } }
+h1 > a:last-child {
+  font-size: inherit;
+  display: grid;
+  place-items: center;
+  height: 1.14em;   /* one h1 line box: centers the chain on the first line */
+}
+h1 > a:last-child svg {
+  width: .42em;
+  height: .42em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+:is(h1, h2) > a:last-child.near,
+:is(h1, h2) > a:last-child:focus-visible { opacity: 1; }
+:is(h1, h2) > a:last-child:hover {
+  opacity: 1;
+  color: var(--violet);
+  text-decoration: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(h1, h2) > a:last-child { transition: none; }
+}
 @media (max-width: 52rem) {
-  h2 > a:last-child { position: static; margin-left: .4em; width: auto; }
+  :is(h1, h2) > a:last-child {
+    position: static;
+    display: inline-grid;
+    margin-left: .4em;
+    width: auto;
+    height: auto;
+    vertical-align: baseline;
+  }
 }
 
 p { margin-bottom: 1.15rem; }
@@ -351,39 +559,70 @@ blockquote button:hover, pre > button:hover {
   border-color: var(--violet);
 }
 
-/* ---------- sidenotes: inline by default, right margin when room ---------- */
+/* ---------- sidenotes: right margin when room, real footnotes at
+   the bottom of the post otherwise. The references are links both
+   ways: in margin mode they glow the note; in bottom mode they
+   travel to it (and the footnote links back). ---------- */
 
 sup {
   font: 650 .72em var(--sans);
-  color: var(--violet);
   line-height: 0;
 }
+sup > a { color: var(--violet); }
 
-.sn {
-  display: block;
-  margin: .95rem 0 1.15rem;
-  padding: .55rem .9rem .55rem 1rem;
-  border-left: 2px solid rgba(161, 35, 246, .55);
-  border-radius: 0 9px 9px 0;
-  background: var(--violet-soft);
-  font-size: .85rem;
-  line-height: 1.55;
-  color: var(--soft);
-  font-family: var(--sans);
-}
-.sn > sup { margin-right: .35em; }
-
+.sn { display: none; }
 html[data-sn="margin"] .sn {
+  display: block;
   float: right;
   clear: right;
   width: 15.5rem;
   margin: .15rem -18.5rem 1rem 1.5rem;
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: none;
   font-size: .79rem;
+  line-height: 1.55;
   color: var(--faint);
+  font-family: var(--sans);
+  transition: color .25s ease;
+}
+html[data-sn="margin"] .sn.lit { color: var(--ink); }
+.sn > sup { margin-right: .35em; }
+
+#footnotes { display: none; }
+html[data-sn="bottom"] #footnotes {
+  display: block;
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--hair);
+  font: .85rem var(--sans);
+  line-height: 1.55;
+  color: var(--soft);
+}
+#footnotes > p {
+  margin: 0 0 .55rem;
+  font: 500 .74rem var(--mono);
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+#footnotes ol {
+  margin: 0;
+  padding-left: 1.4rem;
+  display: grid;
+  gap: .55rem;
+}
+#footnotes li {
+  border-radius: 6px;
+  padding: .1rem .4rem;
+  margin-inline: -.4rem;
+  transition: background .3s ease;
+}
+#footnotes li::marker {
+  color: var(--violet);
+  font: 650 .85em var(--sans);
+}
+#footnotes li.lit { background: var(--violet-soft); }
+#footnotes .backref { margin-left: .35em; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-sn="margin"] .sn, #footnotes li { transition: none; }
 }
 
 /* ---------- code blocks with copy button ---------- */
@@ -636,11 +875,45 @@ kbd { font: 500 .95em var(--mono); }
 </head>
 <body>
 
-<header>
-  <!-- no site nav: just the quiet way back to the root -->
-  <nav>
-    <a href="timeline-mockup.html">esko.bar</a>
+<header id="site">
+  <!-- the timeline's header, whole. On the real site this chrome is
+       shared and built from the entries; from an entry, every control
+       routes back to the (filtered) timeline. Static values here. -->
+  <nav id="cloud" aria-label="Topics">
+    <a href="timeline-mockup.html" style="--tag:var(--tag-blue);font-size:.82rem;color:var(--faint);font-weight:500">apps <small>1</small></a>
+    <a href="timeline-mockup.html" style="--tag:var(--tag-orange);font-size:.82rem;color:var(--faint);font-weight:500">audio <small>1</small></a>
+    <a href="timeline-mockup.html" style="--tag:var(--tag-purple);font-size:1.25rem;color:var(--ink);font-weight:650">design <small>4</small></a>
+    <a href="timeline-mockup.html" style="--tag:var(--tag-blue);font-size:1.11rem;color:var(--soft);font-weight:550">dev <small>3</small></a>
+    <a href="timeline-mockup.html" style="--tag:var(--tag-gray);font-size:.82rem;color:var(--faint);font-weight:500">intro <small>1</small></a>
+    <a href="timeline-mockup.html" style="--tag:var(--tag-orange);font-size:.96rem;color:var(--soft);font-weight:550">meme <small>2</small></a>
+    <a href="timeline-mockup.html" style="--tag:var(--tag-gray);font-size:.82rem;color:var(--ink);font-weight:650">meta <small>1</small></a>
+    <a href="timeline-mockup.html" style="--tag:var(--tag-red);font-size:.82rem;color:var(--soft);font-weight:550">personal <small>1</small></a>
+    <a href="timeline-mockup.html" style="--tag:var(--tag-green);font-size:.82rem;color:var(--ink);font-weight:650">travel <small>1</small></a>
+    <a href="timeline-mockup.html" style="--tag:var(--tag-green);font-size:.82rem;color:var(--soft);font-weight:550">writing <small>1</small></a>
   </nav>
+  <form>
+    <a href="timeline-mockup.html#saved" id="navsaved" hidden aria-label="Saved for later">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.5h11V21l-5.5-4-5.5 4z"/></svg>
+      <i aria-hidden="true">&times;</i>
+      <output>0</output>
+    </a>
+    <p aria-label="How much to show">
+      <svg viewBox="0 0 24 24"><title>Showing everything</title><rect x="2" y="14" width="5.5" height="8" rx="2.4" data-on/><rect x="9.25" y="8" width="5.5" height="14" rx="2.4"/><rect x="16.5" y="2" width="5.5" height="20" rx="2.4"/></svg>
+      <span>
+        <u></u>
+        <button type="button" aria-pressed="true">everything</button>
+        <button type="button" aria-pressed="false">notable</button>
+        <button type="button" aria-pressed="false">best</button>
+      </span>
+      <button type="button" id="favonly" aria-pressed="false"><b>★</b> favorites</button>
+    </p>
+    <search>
+      <button type="button" id="qbtn" aria-label="Search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M15.2 15.2 21.5 21.5"/></svg>
+      </button>
+      <input type="search" id="q" placeholder="Search" aria-label="Search entries">
+    </search>
+  </form>
 </header>
 
 <div id="grip" role="slider" tabindex="0" aria-label="Reading width"
@@ -657,7 +930,9 @@ kbd { font: 500 .95em var(--mono); }
     <a href="#" style="--tag: var(--tag-gray)">meta</a>
   </header>
 
-  <h1>Publish from a folder</h1>
+  <h1>Publish from a folder<a href="entry-page-mockup.html"
+    aria-label="Link to this entry" title="Link to this entry"><svg
+    viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a3 3 0 0 0 4 .3l3-3a3 3 0 0 0-4.3-4.3l-1.4 1.4"/><path d="M14 11a3 3 0 0 0-4-.3l-3 3a3 3 0 0 0 4.3 4.3l1.4-1.4"/></svg></a></h1>
 
   <!-- mini-TOC: rendered only when an entry is long (several sections);
        shown here for reference. Collapsed by default, plain links. -->
@@ -672,7 +947,7 @@ kbd { font: 500 .95em var(--mono); }
   <p>
     Every entry on this site is a file — or a folder — sitting in one
     directory that syncs through iCloud&nbsp;Drive. The folder&rsquo;s name is the
-    address<sup>1</sup>:
+    address<sup><a href="#fn1" id="fnref1" aria-label="Footnote 1">1</a></sup>:
     <span class="sn"><sup>1</sup>Clean names, native dates. The created date
     is read from the filesystem the first time the server sees the entry and
     remembered, so later syncs can&rsquo;t lose it. No timestamp prefixes.</span>
@@ -684,7 +959,7 @@ kbd { font: 500 .95em var(--mono); }
   <p>
     The whole pipeline is the operating system. Finder and Files.app are the
     admin panel, tags are the taxonomy, and the creation date is the
-    publication date. Nothing goes live by accident<sup>2</sup> —
+    publication date. Nothing goes live by accident<sup><a href="#fn2" id="fnref2" aria-label="Footnote 2">2</a></sup> —
     <span class="sn"><sup>2</sup>Fail closed: anything without the
     <code>public</code> tag is invisible to the web, even if a sync client
     misbehaves.</span>
@@ -712,7 +987,7 @@ kbd { font: 500 .95em var(--mono); }
   <p>
     This page is a single <code>.adoc</code> file, rendered by Asciidoctor.
     Admonitions, includes, and media macros work exactly as
-    written<sup>3</sup>:
+    written<sup><a href="#fn3" id="fnref3" aria-label="Footnote 3">3</a></sup>:
     <span class="sn"><sup>3</sup>CommonMark gets the same power a different
     way: paste a bare URL on its own line and the embed system turns it into
     a player or card.</span>
@@ -743,6 +1018,13 @@ kbd { font: 500 .95em var(--mono); }
     If you can tag a file, you can publish. That is the entire interface.
   </p>
 
+  <!-- shown only in bottom mode (data-sn="bottom"); the list items
+       are built by JS from the .sn spans above -->
+  <section id="footnotes" aria-label="Footnotes">
+    <p>Footnotes</p>
+    <ol></ol>
+  </section>
+
   <footer>
     <a href="#">source</a>
     <span>more like this: <a href="#/on-file-systems">on-file-systems</a> ·
@@ -763,9 +1045,14 @@ kbd { font: 500 .95em var(--mono); }
     <label><input type="radio" name="type" value="sans">Sans</label>
   </fieldset>
   <span>
-    drag the edge handle for reading width (double-click resets)
+    the site header is the timeline's — the page lands on the post,
+    scroll up to reveal it
+    &nbsp;&middot;&nbsp; drag the edge handle for reading width
+    (double-click resets)
     &nbsp;&middot;&nbsp; <kbd>t</kbd> typeface
     &nbsp;&middot;&nbsp; dark mode follows the OS
+    &nbsp;&middot;&nbsp; footnotes sit in the right margin when there is
+    room, at the bottom of the post otherwise
     &nbsp;&middot;&nbsp; Continue loads the next entry inline; the address
     follows your reading position
   </span>
@@ -803,7 +1090,7 @@ kbd { font: 500 .95em var(--mono); }
 
   const updateSidenotes = () => {
     const w = main.getBoundingClientRect().width;
-    root.dataset.sn = (window.innerWidth - w) / 2 >= 330 ? "margin" : "inline";
+    root.dataset.sn = (window.innerWidth - w) / 2 >= 330 ? "margin" : "bottom";
   };
 
   /* advance width of one character ('0') in the current reading font, so we
@@ -882,6 +1169,105 @@ kbd { font: 500 .95em var(--mono); }
   window.addEventListener("resize", apply);
   apply();
 
+  /* ---------- site header: the timeline's chrome ----------
+     from an entry, every control routes back to the timeline; the
+     saved count reads the same store the timeline writes */
+
+  const toTimeline = () => { location.href = "timeline-mockup.html"; };
+  document.querySelectorAll("#site form button").forEach(b =>
+    b.addEventListener("click", toTimeline));
+  document.getElementById("q").addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); toTimeline(); }
+  });
+  const savedCount =
+    JSON.parse(store.getItem("mock-saved") || "[]").length;
+  const navsaved = document.getElementById("navsaved");
+  navsaved.hidden = savedCount === 0;
+  navsaved.querySelector("output").textContent = savedCount;
+
+  /* the header lives above the post: land scrolled to the post, so
+     scrolling up is what reveals the site chrome */
+  if (!location.hash && window.scrollY === 0)
+    requestAnimationFrame(() => window.scrollTo(0, main.offsetTop));
+
+  /* ---------- anchor proximity glow ----------
+     heading anchors rest dim and brighten by pointer nearness, like
+     the timeline's bookmark: within ~50px they lift to full but stay
+     grey (.near); landing on the anchor itself turns it violet. */
+
+  const NEAR = 50;
+  let nearRaf = 0, nearX = -1e4, nearY = -1e4;
+  const updateNear = () => {
+    nearRaf = 0;
+    document.querySelectorAll(":is(h1, h2) > a:last-child").forEach(a => {
+      const r = a.getBoundingClientRect();
+      const dx = Math.max(r.left - nearX, 0, nearX - r.right);
+      const dy = Math.max(r.top - nearY, 0, nearY - r.bottom);
+      a.classList.toggle("near", dx * dx + dy * dy <= NEAR * NEAR);
+    });
+  };
+  const queueNear = () => {
+    if (!nearRaf) nearRaf = requestAnimationFrame(updateNear);
+  };
+  document.addEventListener("pointermove", ev => {
+    if (ev.pointerType === "touch") return;
+    nearX = ev.clientX; nearY = ev.clientY;
+    queueNear();
+  });
+  document.documentElement.addEventListener("pointerleave", () => {
+    nearX = nearY = -1e4;
+    queueNear();
+  });
+
+  /* ---------- footnotes ----------
+     the .sn spans are the source; here they're cloned into a real
+     footnote list at the bottom of the post (shown when the margin
+     is too narrow). References link both ways: margin mode glows the
+     note in place, bottom mode travels to it — URL stays clean. */
+
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+  const behave = () => reduced.matches ? "auto" : "smooth";
+  const sns = [...document.querySelectorAll("article .sn")];
+  const refs = [...document.querySelectorAll("sup > a")];
+  const lis = sns.map((sn, i) => {
+    const li = document.createElement("li");
+    li.id = "fn" + (i + 1);
+    const clone = sn.cloneNode(true);
+    clone.querySelector("sup")?.remove();
+    li.innerHTML = clone.innerHTML.trim() +
+      ` <a class="backref" href="#fnref${i + 1}" aria-label="Back to text">&#8617;</a>`;
+    document.querySelector("#footnotes ol").append(li);
+    return li;
+  });
+  const glow = el => {
+    el.classList.add("lit");
+    clearTimeout(el._lit);
+    el._lit = setTimeout(() => { el.classList.remove("lit"); el._lit = 0; }, 1600);
+  };
+  refs.forEach((a, i) => {
+    a.addEventListener("click", e => {
+      e.preventDefault();
+      if (root.dataset.sn === "margin") glow(sns[i]);
+      else {
+        lis[i].scrollIntoView({ block: "center", behavior: behave() });
+        glow(lis[i]);
+      }
+    });
+    a.addEventListener("mouseenter", () => {
+      if (root.dataset.sn === "margin") sns[i].classList.add("lit");
+    });
+    a.addEventListener("mouseleave", () => {
+      if (!sns[i]._lit) sns[i].classList.remove("lit");
+    });
+  });
+  document.querySelector("#footnotes ol").addEventListener("click", e => {
+    const b = e.target.closest(".backref");
+    if (!b) return;
+    e.preventDefault();
+    const i = lis.findIndex(li => li.contains(b));
+    refs[i].scrollIntoView({ block: "center", behavior: behave() });
+  });
+
   /* ---------- copy helpers ---------- */
 
   const copyText = async text => {
@@ -943,6 +1329,10 @@ kbd { font: 500 .95em var(--mono); }
      next (older) entry below; after the first load, an opt-in toggle
      keeps loading on scroll. The URL follows whichever entry owns the
      most viewport (a URL can only name one entry, so majority wins). */
+
+  const CHAIN = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+    '<path d="M10 13a3 3 0 0 0 4 .3l3-3a3 3 0 0 0-4.3-4.3l-1.4 1.4"/>' +
+    '<path d="M14 11a3 3 0 0 0-4-.3l-3 3a3 3 0 0 0 4.3 4.3l1.4-1.4"/></svg>';
 
   /* Finder tag colors travel with the tags, same map as the timeline */
   const TAG = {
@@ -1024,7 +1414,8 @@ kbd { font: 500 .95em var(--mono); }
         ${next.tags.map(t =>
           `<a href="#" style="--tag:${TAG[t] ?? "var(--tag-gray)"}">${t}</a>`).join("")}
       </header>
-      <h1>${next.title}</h1>
+      <h1>${next.title}<a href="#/${next.label}"
+        aria-label="Link to this entry" title="Link to this entry">${CHAIN}</a></h1>
       ${next.body}
       <footer><a href="#">source</a></footer>`;
     cont.before(art);
