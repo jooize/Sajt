@@ -79,6 +79,8 @@ pub async fn index(
         active_tag: None,
         view: &view,
         base_path: "/",
+        date_scope: None,
+        path_tags: "",
         saved_view: false,
     };
     let title = filter_title("", &view, false);
@@ -103,6 +105,8 @@ pub async fn saved(
         active_tag: None,
         view: &view,
         base_path: "/saved",
+        date_scope: None,
+        path_tags: "",
         saved_view: true,
     };
     let title = filter_title("", &view, true);
@@ -146,9 +150,16 @@ pub async fn catch_all(
     State(store): State<AppState>,
     Path(path): Path<String>,
     Query(params): Query<HashMap<String, String>>,
-    uri: axum::http::Uri,
 ) -> Response {
-    let query = parse_url_path(&format!("/{}", path));
+    let mut query = parse_url_path(&format!("/{}", path));
+    // The `?time=` disambiguator lives in the query string, not the path. Accept
+    // only a left-anchored HHMMSS prefix of digits; anything else is ignored
+    // (an unmatched time simply yields no results — fail closed).
+    query.time = params
+        .get("time")
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty() && t.len() <= 6 && t.bytes().all(|b| b.is_ascii_digit()))
+        .map(|t| t.to_string());
     let view = view_from_query(&params);
     let store = store.read().await;
 
@@ -166,8 +177,13 @@ pub async fn catch_all(
         return serve_raw_file(&matching, raw_ext).await;
     }
 
-    // Listing (trailing slash or date-only or tag-only filter)
-    if query.is_listing || (query.label.is_none() && (query.date_prefix.is_some() || !query.and_tags.is_empty() || !query.or_tags.is_empty())) {
+    // Listing: a trailing slash, or a date-only / tag-only filter with no label
+    // and no `?time=` narrowing it to one entry. With a time present we fall
+    // through to entry resolution (that's how an unlabeled entry is addressed).
+    let is_scope_listing = query.label.is_none()
+        && query.time.is_none()
+        && (query.date_prefix.is_some() || !query.and_tags.is_empty() || !query.or_tags.is_empty());
+    if (query.is_listing && query.time.is_none()) || is_scope_listing {
         return render_listing(&matching, &all_entries, &query, &view, &path);
     }
 
@@ -184,16 +200,13 @@ pub async fn catch_all(
     };
 
     if let Some(entry) = target {
-        // One canonical address per entry: everything else 301s onto it,
-        // carrying the query string (filters) along.
-        let canonical = templates::canonical_path(entry, &all_entries);
+        // One canonical address per entry: everything else 301s onto it. The
+        // canonical address is (path, ?time=); the redirect re-attaches only the
+        // canonical view filters, so aliases collapse onto exactly one URL.
+        let canon = templates::canonical(entry, &all_entries);
         let requested = format!("/{}", path);
-        if requested != canonical {
-            // Compare decoded-to-decoded, emit encoded (ASCII-safe header).
-            let mut location = templates::encode_path(&canonical);
-            if let Some(qs) = uri.query() {
-                location = format!("{}?{}", location, qs);
-            }
+        if requested != canon.path || query.time != canon.time {
+            let location = templates::canonical_location(entry, &all_entries, &view);
             return redirect(&location);
         }
         return serve_entry(entry, &store).await;
@@ -231,15 +244,58 @@ fn render_listing(
     let display: Vec<&Entry> = matching.iter().copied().filter(|e| view.matches(e)).collect();
     let cloud = compute_cloud(all_entries);
     let base_path = format!("/{}", path);
+    // The tag-only portion of the path, so month links can graft a date onto the
+    // active topic and the date chip can clear back to just the tags.
+    let path_tags = tag_suffix(path);
+    let date_scope = query.date_prefix.as_deref().map(|prefix| templates::DateScope {
+        label: human_date(prefix),
+        clear_path: if path_tags.is_empty() { "/".to_string() } else { path_tags.clone() },
+    });
     let ctx = HeaderContext {
         cloud: &cloud,
         active_tag: active_tag(query),
         view,
         base_path: &base_path,
+        date_scope,
+        path_tags: &path_tags,
         saved_view: false,
     };
     let title = filter_title(&build_filter_description(query), view, false);
     Html(templates::timeline_page(&display, all_entries, &ctx, &title)).into_response()
+}
+
+/// The `+tag` portion of a path (e.g. "/+design"), or "" when there is none —
+/// used to keep the active topic while swapping or clearing the date scope.
+fn tag_suffix(path: &str) -> String {
+    path.trim_matches('/')
+        .split('/')
+        .filter(|s| s.starts_with('+'))
+        .map(|s| format!("/{}", s))
+        .collect()
+}
+
+/// Humanize a compact date prefix for the scope chip and the page title:
+/// "2026" → "2026", "2026-03" → "March 2026", "2026-03-25" → "March 25, 2026".
+fn human_date(prefix: &str) -> String {
+    let parts: Vec<&str> = prefix.split('-').collect();
+    match parts.as_slice() {
+        [y] => y.to_string(),
+        [y, m] => format!("{} {}", month_name(m), y),
+        [y, m, d] => format!("{} {}, {}", month_name(m), d.trim_start_matches('0'), y),
+        _ => prefix.to_string(),
+    }
+}
+
+/// Full month name for a zero-padded "01".."12"; echoes the input if unknown.
+fn month_name(m: &str) -> &str {
+    const NAMES: [&str; 12] = [
+        "January", "February", "March", "April", "May", "June", "July", "August",
+        "September", "October", "November", "December",
+    ];
+    m.parse::<usize>()
+        .ok()
+        .filter(|n| (1..=12).contains(n))
+        .map_or(m, |n| NAMES[n - 1])
 }
 
 /// GET /_embed/{entry_name}/{asset_name} — serve a cached sidecar asset (OG images, etc.).
@@ -447,7 +503,7 @@ fn not_found() -> Response {
 fn build_filter_description(query: &crate::url::ContentQuery) -> String {
     let mut parts = Vec::new();
     if let Some(ref dp) = query.date_prefix {
-        parts.push(dp.clone());
+        parts.push(human_date(dp));
     }
     for tag in &query.and_tags {
         parts.push(format!("+{}", tag));

@@ -3,8 +3,14 @@ use chrono::NaiveDateTime;
 /// Parsed URL query: date filter, tag filter, label lookup.
 #[derive(Debug, Default, Clone)]
 pub struct ContentQuery {
-    /// Date prefix to filter by (variable precision)
+    /// Date filter in compact hierarchy form: "2026", "2026-03", or
+    /// "2026-03-25" (year / year-month / year-month-day). Assembled from the
+    /// slash-separated path segments; matched as a prefix of the timestamp.
     pub date_prefix: Option<String>,
+    /// Time-of-day disambiguator (`?time=HHMMSS`, or any left-anchored prefix
+    /// like `14` or `1430`). Only same-day label collisions need it; it never
+    /// appears in the path. Set by the route handler from the query string.
+    pub time: Option<String>,
     /// Tags combined with AND (from `+tag1+tag2`)
     pub and_tags: Vec<String>,
     /// Tags combined with OR (from `+tag1,tag2`)
@@ -20,10 +26,18 @@ pub struct ContentQuery {
 impl ContentQuery {
     /// Check if an entry matches this query.
     pub fn matches(&self, timestamp: &NaiveDateTime, label: &Option<String>, tags: &[String]) -> bool {
-        // Date prefix filter
+        // Date prefix filter — compare against the compact timestamp string.
         if let Some(ref prefix) = self.date_prefix {
-            let ts_str = format_timestamp_for_prefix(timestamp, prefix.len());
-            if !ts_str.starts_with(prefix.as_str()) {
+            let full = timestamp.format("%Y-%m-%dT%H%M%S").to_string();
+            if !full.starts_with(prefix.as_str()) {
+                return false;
+            }
+        }
+
+        // Time-of-day disambiguator (left-anchored prefix of HHMMSS).
+        if let Some(ref time) = self.time {
+            let hms = timestamp.format("%H%M%S").to_string();
+            if !hms.starts_with(time.as_str()) {
                 return false;
             }
         }
@@ -63,24 +77,25 @@ impl ContentQuery {
     }
 }
 
-/// Format a timestamp to match against a prefix of a given length.
-fn format_timestamp_for_prefix(ts: &NaiveDateTime, prefix_len: usize) -> String {
-    // Full format: 2026-03-03T143052
-    let full = ts.format("%Y-%m-%dT%H%M%S").to_string();
-    full[..full.len().min(prefix_len + 5)].to_string()
-}
-
 /// Parse a URL path into a ContentQuery.
 ///
+/// Dates are a slash hierarchy consumed from the front of the path; tags and a
+/// label follow. There is no hyphenated-date form and no `T`-timestamp segment —
+/// sub-day disambiguation is carried by `?time=` (set separately by the caller).
+///
 /// Examples:
-///   `/` → timeline (all entries)
-///   `/2026-03` → date filter
-///   `/2026-03-03/sunset` → date + label
-///   `/2026-03-03/sunset.jpg` → raw file request
-///   `/+amusing` → tag filter
-///   `/+amusing+personal` → AND tags
-///   `/+amusing,personal` → OR tags
-///   `/2026-03/+amusing` → date + tag
+///   `/`                       → timeline (all entries)
+///   `/2026`                   → year filter
+///   `/2026/03`                → year + month filter
+///   `/2026/03/25/`            → that day (listing)
+///   `/2026/03/25/sunset`      → date + label
+///   `/2026/03/25/sunset.jpg`  → date + raw file request
+///   `/2026/03/04.txt`         → date + raw file for an unlabeled entry
+///   `/sunset`                 → bare label
+///   `/+amusing`               → tag filter
+///   `/+amusing+personal`      → AND tags
+///   `/+amusing,personal`      → OR tags
+///   `/2026/03/+amusing`       → date + tag
 pub fn parse_url_path(path: &str) -> ContentQuery {
     let mut query = ContentQuery::default();
 
@@ -91,77 +106,99 @@ pub fn parse_url_path(path: &str) -> ContentQuery {
         return query;
     }
 
-    // Check for trailing slash → listing
+    // Trailing slash → listing.
     if path.ends_with('/') {
         query.is_listing = true;
     }
 
     let path = path.trim_end_matches('/');
-    let segments: Vec<&str> = path.split('/').collect();
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
-    for segment in &segments {
-        if segment.is_empty() {
-            continue;
-        }
+    // --- Consume the leading date hierarchy: year [/ month [/ day]] ---
+    // Each rung may carry a file extension (`04.txt`), which ends the date and
+    // records a raw-file request for an otherwise unlabeled entry.
+    let mut idx = 0;
+    let mut date = String::new();
 
-        if segment.starts_with('+') {
-            // Tag segment
-            parse_tag_segment(&segment[1..], &mut query);
-        } else if is_date_segment(segment) {
-            // Date segment — accumulate into date_prefix
-            match &query.date_prefix {
-                Some(existing) => {
-                    query.date_prefix = Some(format!("{}/{}", existing, segment));
+    if let Some(seg) = segments.get(idx) {
+        let (name, ext) = split_ext(seg);
+        if is_year(name) {
+            date.push_str(name);
+            idx += 1;
+            if let Some(e) = ext {
+                query.raw_extension = Some(e.to_string());
+            } else if let Some(seg) = segments.get(idx) {
+                let (name, ext) = split_ext(seg);
+                if in_range(name, 1, 12) {
+                    date.push('-');
+                    date.push_str(name);
+                    idx += 1;
+                    if let Some(e) = ext {
+                        query.raw_extension = Some(e.to_string());
+                    } else if let Some(seg) = segments.get(idx) {
+                        let (name, ext) = split_ext(seg);
+                        if in_range(name, 1, 31) {
+                            date.push('-');
+                            date.push_str(name);
+                            idx += 1;
+                            if let Some(e) = ext {
+                                query.raw_extension = Some(e.to_string());
+                            }
+                        }
+                    }
                 }
-                None => {
-                    query.date_prefix = Some(segment.to_string());
-                }
-            }
-        } else {
-            // Label or raw file — check for extension
-            if let Some(dot_pos) = segment.rfind('.') {
-                let name = &segment[..dot_pos];
-                let ext = &segment[dot_pos + 1..];
-                if !ext.is_empty() && !name.is_empty() {
-                    query.label = Some(name.to_string());
-                    query.raw_extension = Some(ext.to_string());
-                } else {
-                    query.label = Some(segment.to_string());
-                }
-            } else {
-                query.label = Some(segment.to_string());
             }
         }
     }
 
-    // If we have a date_prefix, normalize it to the compact timestamp format
-    if let Some(ref prefix) = query.date_prefix {
-        query.date_prefix = Some(normalize_date_prefix(prefix));
+    if !date.is_empty() {
+        query.date_prefix = Some(date);
+    }
+
+    // --- Remaining segments: tags (`+…`) and a single label ---
+    for segment in &segments[idx..] {
+        if segment.starts_with('+') {
+            parse_tag_segment(&segment[1..], &mut query);
+        } else if let Some(dot_pos) = segment.rfind('.') {
+            let name = &segment[..dot_pos];
+            let ext = &segment[dot_pos + 1..];
+            if !ext.is_empty() && !name.is_empty() {
+                query.label = Some(name.to_string());
+                query.raw_extension = Some(ext.to_string());
+            } else {
+                query.label = Some(segment.to_string());
+            }
+        } else {
+            query.label = Some(segment.to_string());
+        }
     }
 
     query
 }
 
-/// Detect whether a URL segment looks like a date/time component.
-fn is_date_segment(segment: &str) -> bool {
-    let len = segment.len();
-    // Year: 2026
-    // Year-month: 2026-03
-    // Full date: 2026-03-03
-    // Date+hour: 2026-03-03T14
-    // Date+minute: 2026-03-03T1430
-    // Full timestamp: 2026-03-03T143052
-    matches!(len, 4 | 7 | 10 | 13 | 15 | 17)
-        && segment.as_bytes()[0].is_ascii_digit()
-        && (len <= 4 || segment.as_bytes()[4] == b'-')
+/// Split a trailing `.ext` off a segment. Returns `(name, Some(ext))` only when
+/// both sides are non-empty; otherwise `(segment, None)`.
+fn split_ext(seg: &str) -> (&str, Option<&str>) {
+    if let Some(pos) = seg.rfind('.') {
+        let (name, dotext) = seg.split_at(pos);
+        let ext = &dotext[1..];
+        if !name.is_empty() && !ext.is_empty() {
+            return (name, Some(ext));
+        }
+    }
+    (seg, None)
 }
 
-/// Normalize a date prefix to compact timestamp format for matching.
-/// "2026-03" stays "2026-03", "2026-03-03" stays "2026-03-03", etc.
-fn normalize_date_prefix(prefix: &str) -> String {
-    // If there's a slash (from multi-segment dates like "2026-03-03/sunset"),
-    // we don't have that case since labels are handled separately.
-    prefix.to_string()
+/// A 4-digit year (`2026`).
+fn is_year(s: &str) -> bool {
+    s.len() == 4 && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// A zero-padded 2-digit number within `[lo, hi]` (month 1..=12, day 1..=31).
+fn in_range(s: &str, lo: u8, hi: u8) -> bool {
+    s.len() == 2
+        && s.bytes().all(|b| b.is_ascii_digit())
+        && s.parse::<u8>().map_or(false, |v| (lo..=hi).contains(&v))
 }
 
 /// Parse tag segment: `amusing+personal` → AND, `amusing,personal` → OR
@@ -204,23 +241,63 @@ mod tests {
 
     #[test]
     fn month_filter() {
-        let q = parse_url_path("/2026-03");
+        let q = parse_url_path("/2026/03");
         assert_eq!(q.date_prefix.as_deref(), Some("2026-03"));
+        assert!(q.label.is_none());
+    }
+
+    #[test]
+    fn day_filter() {
+        let q = parse_url_path("/2026/03/25");
+        assert_eq!(q.date_prefix.as_deref(), Some("2026-03-25"));
+        assert!(q.label.is_none());
     }
 
     #[test]
     fn date_with_label() {
-        let q = parse_url_path("/2026-03-03/sunset");
-        assert_eq!(q.date_prefix.as_deref(), Some("2026-03-03"));
+        let q = parse_url_path("/2026/03/25/sunset");
+        assert_eq!(q.date_prefix.as_deref(), Some("2026-03-25"));
         assert_eq!(q.label.as_deref(), Some("sunset"));
         assert!(q.raw_extension.is_none());
     }
 
     #[test]
+    fn month_then_label() {
+        // A non-day segment after the month is the label, not a date rung.
+        let q = parse_url_path("/2026/03/sunset");
+        assert_eq!(q.date_prefix.as_deref(), Some("2026-03"));
+        assert_eq!(q.label.as_deref(), Some("sunset"));
+    }
+
+    #[test]
+    fn bare_label() {
+        let q = parse_url_path("/hello-world");
+        assert!(q.date_prefix.is_none());
+        assert_eq!(q.label.as_deref(), Some("hello-world"));
+    }
+
+    #[test]
     fn raw_file_request() {
-        let q = parse_url_path("/2026-03-03/sunset.jpg");
+        let q = parse_url_path("/2026/03/25/sunset.jpg");
+        assert_eq!(q.date_prefix.as_deref(), Some("2026-03-25"));
         assert_eq!(q.label.as_deref(), Some("sunset"));
         assert_eq!(q.raw_extension.as_deref(), Some("jpg"));
+    }
+
+    #[test]
+    fn raw_file_for_unlabeled_entry() {
+        // The day rung carries the extension; there is no label.
+        let q = parse_url_path("/2026/03/04.txt");
+        assert_eq!(q.date_prefix.as_deref(), Some("2026-03-04"));
+        assert!(q.label.is_none());
+        assert_eq!(q.raw_extension.as_deref(), Some("txt"));
+    }
+
+    #[test]
+    fn invalid_month_becomes_label() {
+        let q = parse_url_path("/2026/13");
+        assert_eq!(q.date_prefix.as_deref(), Some("2026"));
+        assert_eq!(q.label.as_deref(), Some("13"));
     }
 
     #[test]
@@ -243,16 +320,16 @@ mod tests {
 
     #[test]
     fn date_with_tag() {
-        let q = parse_url_path("/2026-03/+amusing");
+        let q = parse_url_path("/2026/03/+amusing");
         assert_eq!(q.date_prefix.as_deref(), Some("2026-03"));
         assert_eq!(q.and_tags, vec!["amusing"]);
     }
 
     #[test]
     fn trailing_slash_listing() {
-        let q = parse_url_path("/2026-03-03/");
+        let q = parse_url_path("/2026/03/25/");
         assert!(q.is_listing);
-        assert_eq!(q.date_prefix.as_deref(), Some("2026-03-03"));
+        assert_eq!(q.date_prefix.as_deref(), Some("2026-03-25"));
     }
 
     #[test]
@@ -264,14 +341,30 @@ mod tests {
 
     #[test]
     fn matches_date_prefix_month() {
-        let q = parse_url_path("/2026-03");
+        let q = parse_url_path("/2026/03");
         assert!(q.matches(&ts("2026-03-03T143052"), &None, &[]));
         assert!(!q.matches(&ts("2026-04-01T000000"), &None, &[]));
     }
 
     #[test]
+    fn matches_date_prefix_day() {
+        let q = parse_url_path("/2026/03/03");
+        assert!(q.matches(&ts("2026-03-03T143052"), &None, &[]));
+        // A different day in the same month must not match (guards the T boundary).
+        assert!(!q.matches(&ts("2026-03-30T143052"), &None, &[]));
+    }
+
+    #[test]
+    fn matches_time_disambiguator() {
+        let mut q = parse_url_path("/2026/03/12/cookie-consent-tests");
+        q.time = Some("133513".to_string());
+        assert!(q.matches(&ts("2026-03-12T133513"), &Some("cookie-consent-tests".into()), &[]));
+        assert!(!q.matches(&ts("2026-03-12T170005"), &Some("cookie-consent-tests".into()), &[]));
+    }
+
+    #[test]
     fn matches_label() {
-        let q = parse_url_path("/2026-03-03/sunset");
+        let q = parse_url_path("/2026/03/03/sunset");
         assert!(q.matches(&ts("2026-03-03T143052"), &Some("sunset".into()), &[]));
         assert!(!q.matches(&ts("2026-03-03T143052"), &Some("other".into()), &[]));
         assert!(!q.matches(&ts("2026-03-03T143052"), &None, &[]));
@@ -298,21 +391,8 @@ mod tests {
     }
 
     #[test]
-    fn full_timestamp_url() {
-        let q = parse_url_path("/2026-03-03T143052");
-        assert_eq!(q.date_prefix.as_deref(), Some("2026-03-03T143052"));
-    }
-
-    #[test]
-    fn timestamp_with_label() {
-        let q = parse_url_path("/2026-03-03T143052/sunset");
-        assert_eq!(q.date_prefix.as_deref(), Some("2026-03-03T143052"));
-        assert_eq!(q.label.as_deref(), Some("sunset"));
-    }
-
-    #[test]
     fn raw_markdown_source() {
-        let q = parse_url_path("/2026-03-03/hello-world.md");
+        let q = parse_url_path("/2026/03/03/hello-world.md");
         assert_eq!(q.label.as_deref(), Some("hello-world"));
         assert_eq!(q.raw_extension.as_deref(), Some("md"));
     }

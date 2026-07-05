@@ -227,6 +227,43 @@ body:has(#grip.active) { -webkit-user-select: none; user-select: none; }
   translate: 0 -.07em;
 }
 
+/* active date scope: a removable glass chip that sits between the cloud and the
+   controls, pulled up under the cloud's tall padding. Only present when a date
+   filter is active, so the header is otherwise unchanged. */
+#scope {
+  display: flex;
+  justify-content: center;
+  margin: -1.7rem 0 1rem;
+}
+#scope span,
+#scope a {
+  display: inline-flex;
+  align-items: center;
+  height: 1.7rem;
+  background: var(--glass);
+  border: .5px solid var(--glass-edge);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, .55), rgba(255, 255, 255, .08));
+}
+#scope span {
+  padding: 0 .35rem 0 .8rem;
+  border-radius: 999px 0 0 999px;
+  border-right: none;
+  font: 550 .82rem var(--sans);
+  color: var(--soft);
+  font-feature-settings: "tnum";
+}
+#scope a {
+  padding: 0 .6rem 0 .45rem;
+  border-radius: 0 999px 999px 0;
+  border-left: .5px solid var(--hair);
+  color: var(--faint);
+  font-size: 1.05rem;
+  line-height: 1;
+}
+#scope a:hover { color: var(--violet); text-decoration: none; background: var(--violet-soft); }
+
 /* controls: one quiet line, no rule under it */
 #site form {
   position: relative;
@@ -359,6 +396,8 @@ main section > h2 {
   letter-spacing: -.011em;
   color: var(--soft);
 }
+main section > h2 > a { color: inherit; }
+main section > h2 > a:hover { color: var(--violet); text-decoration: none; }
 main section:first-of-type > h2 { margin-top: .9rem; }
 main section > ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
 
@@ -1364,6 +1403,15 @@ fn make_url(path: &str, view: &ViewFilter) -> String {
 // Shared site header (the timeline's header, whole) — one component, both pages
 // ---------------------------------------------------------------------------
 
+/// The active date scope, shown as a removable chip in the header.
+pub struct DateScope {
+    /// Human-readable range, e.g. "March 2026" or "March 25, 2026".
+    pub label: String,
+    /// The path to return to when the date is cleared — the remaining tag path,
+    /// or "/" when only the date was active. View filters are re-applied to it.
+    pub clear_path: String,
+}
+
 /// Everything the shared header needs to render itself and reflect the request.
 pub struct HeaderContext<'a> {
     /// Statistics for the tag cloud, built from all public entries.
@@ -1375,6 +1423,11 @@ pub struct HeaderContext<'a> {
     /// The path portion the controls compose their queries onto (e.g. "/",
     /// "/+design"). Cloud topics always link from root.
     pub base_path: &'a str,
+    /// The active date scope (removable chip), if the timeline is date-filtered.
+    pub date_scope: Option<DateScope>,
+    /// The tag-only portion of the path (e.g. "/+design" or ""), onto which
+    /// month links graft a date so they preserve the active topic.
+    pub path_tags: &'a str,
     /// Whether this is the reader's saved-bookmarks view.
     pub saved_view: bool,
 }
@@ -1383,7 +1436,15 @@ impl<'a> HeaderContext<'a> {
     /// A default (unfiltered) header — used on entry/image pages, where every
     /// control simply links to the timeline with that filter applied.
     fn plain(cloud: &'a CloudStats, view: &'a ViewFilter) -> Self {
-        HeaderContext { cloud, active_tag: None, view, base_path: "/", saved_view: false }
+        HeaderContext {
+            cloud,
+            active_tag: None,
+            view,
+            base_path: "/",
+            date_scope: None,
+            path_tags: "",
+            saved_view: false,
+        }
     }
 }
 
@@ -1484,9 +1545,21 @@ fn render_site_header(ctx: &HeaderContext) -> String {
     let q_value = view.q.as_deref().map(html_escape).unwrap_or_default();
     let action = if ctx.base_path.is_empty() { "/" } else { ctx.base_path };
 
+    // Active date scope: a quiet removable chip under the cloud. The × returns
+    // to the tag path (or root), keeping the current level/favorites/search.
+    let scope = match &ctx.date_scope {
+        Some(s) => format!(
+            r#"<p id="scope"><span>{label}</span><a href="{clear}" aria-label="Clear date filter" title="Clear date filter">&times;</a></p>"#,
+            label = html_escape(&s.label),
+            clear = html_escape(&make_url(&s.clear_path, view)),
+        ),
+        None => String::new(),
+    };
+
     format!(
         r#"<header id="site">
 <nav id="cloud" aria-label="Topics">{cloud}</nav>
+{scope}
 <form method="get" action="{action}">
 <a href="{saved_href}" id="navsaved" hidden aria-current="{saved_current}" aria-label="Saved for later">{bookmark}<i aria-hidden="true">&times;</i><output>0</output></a>
 <p aria-label="How much to show">
@@ -1502,6 +1575,7 @@ fn render_site_header(ctx: &HeaderContext) -> String {
 </form>
 </header>"#,
         cloud = render_cloud(ctx),
+        scope = scope,
         action = html_escape(action),
         saved_href = saved_href,
         saved_current = saved_current,
@@ -1584,22 +1658,34 @@ fn format_datetime_attr(ts: &chrono::NaiveDateTime) -> String {
     ts.format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
+/// A canonical address: the decoded path, plus — only for same-day label
+/// collisions and unlabeled entries — a `time` disambiguator carried as
+/// `?time=HHMMSS`. Dates are a slash hierarchy (`/2026/03/12`).
+pub struct Canonical {
+    /// Decoded path, e.g. `/label`, `/2026/03/12/label`, or `/2026/03/12`.
+    pub path: String,
+    /// The `HHMMSS` for `?time=`, present only when the path alone is ambiguous.
+    pub time: Option<String>,
+}
+
 /// The one canonical (decoded) address for an entry.
 ///
 /// - A unique label owns `/label`.
 /// - When several entries share a label (a folder and a file, or an old and a
 ///   new version), the NEWEST owns the bare `/label`; the others carry the
-///   shortest date prefix that tells them apart: `/2026-03-12/label` when the
-///   day suffices, the full `/2026-03-12T133513/label` only as a last resort.
-/// - Unlabeled entries live at their full timestamp.
+///   shortest date that tells them apart: `/2026/03/12/label` when the day
+///   suffices, else the day plus `?time=133513` for a same-day collision.
+/// - Unlabeled entries live at their day (`/2026/03/12`) plus `?time=`.
 ///
-/// Returned decoded (for comparing against decoded request paths); run it
+/// The `path` is decoded (compare against decoded request paths); run it
 /// through [`encode_path`] before emitting into an href or Location header.
-pub fn canonical_path(entry: &Entry, all_entries: &[&Entry]) -> String {
-    let full_ts = || entry.timestamp.format("%Y-%m-%dT%H%M%S").to_string();
+pub fn canonical(entry: &Entry, all_entries: &[&Entry]) -> Canonical {
+    let ymd = || entry.timestamp.format("/%Y/%m/%d").to_string();
+    let hms = || entry.timestamp.format("%H%M%S").to_string();
+
     let label = match &entry.label {
         Some(label) => label,
-        None => return format!("/{}", full_ts()),
+        None => return Canonical { path: ymd(), time: Some(hms()) },
     };
 
     let lower = label.to_lowercase();
@@ -1609,14 +1695,14 @@ pub fn canonical_path(entry: &Entry, all_entries: &[&Entry]) -> String {
         .collect();
 
     if twins.len() <= 1 {
-        return format!("/{}", label);
+        return Canonical { path: format!("/{}", label), time: None };
     }
 
     // Newest wins the bare label — unless the newest timestamp itself is tied.
     let newest = twins.iter().map(|e| e.timestamp).max().unwrap_or(entry.timestamp);
     let newest_is_unique = twins.iter().filter(|e| e.timestamp == newest).count() == 1;
     if entry.timestamp == newest && newest_is_unique {
-        return format!("/{}", label);
+        return Canonical { path: format!("/{}", label), time: None };
     }
 
     let day = entry.timestamp.format("%Y-%m-%d").to_string();
@@ -1625,21 +1711,68 @@ pub fn canonical_path(entry: &Entry, all_entries: &[&Entry]) -> String {
         .filter(|e| e.timestamp.format("%Y-%m-%d").to_string() == day)
         .count();
     if same_day == 1 {
-        format!("/{}/{}", day, label)
+        Canonical { path: format!("{}/{}", ymd(), label), time: None }
     } else {
-        format!("/{}/{}", full_ts(), label)
+        Canonical { path: format!("{}/{}", ymd(), label), time: Some(hms()) }
     }
 }
 
-/// Raw-file address for an entry: its canonical page address plus the
-/// extension (the URL parser reads the extension back off the last segment).
-fn canonical_raw_path(entry: &Entry, all_entries: &[&Entry]) -> String {
-    let page = canonical_path(entry, all_entries);
-    if entry.extension.is_empty() {
-        page // folders have no raw file
-    } else {
-        format!("{}.{}", page, entry.extension)
+/// Compose a ready-to-emit href from a decoded path: append an optional raw-file
+/// extension and an optional `?time=` disambiguator, encoding as it goes.
+fn compose_href(path: &str, ext: Option<&str>, time: Option<&str>) -> String {
+    let mut decoded = path.to_string();
+    if let Some(e) = ext {
+        if !e.is_empty() {
+            decoded.push('.');
+            decoded.push_str(e);
+        }
     }
+    let mut out = encode_path(&decoded);
+    if let Some(t) = time {
+        out.push_str("?time=");
+        out.push_str(&percent_encode(t));
+    }
+    out
+}
+
+/// The full addressable href for an entry (encoded path + `?time=` when needed).
+fn canonical_href(entry: &Entry, all_entries: &[&Entry]) -> String {
+    let c = canonical(entry, all_entries);
+    compose_href(&c.path, None, c.time.as_deref())
+}
+
+/// The raw-bytes href for an entry: canonical path + extension (+ `?time=`), so
+/// the parser reads the extension back off the last segment. Folders have none.
+fn canonical_raw_href(entry: &Entry, all_entries: &[&Entry]) -> String {
+    let c = canonical(entry, all_entries);
+    let ext = (!entry.extension.is_empty()).then_some(entry.extension.as_str());
+    compose_href(&c.path, ext, c.time.as_deref())
+}
+
+/// The full canonical location for a redirect: encoded path + `?time=` (when the
+/// address needs it) + the view filters (grade/favorites/search), in that order.
+/// Everything non-canonical is dropped, so every alias 301s onto one address.
+pub fn canonical_location(entry: &Entry, all_entries: &[&Entry], view: &ViewFilter) -> String {
+    let c = canonical(entry, all_entries);
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(t) = &c.time {
+        parts.push(format!("time={}", percent_encode(t)));
+    }
+    if view.level > 0 {
+        parts.push(format!("grade={}", view.grade_word()));
+    }
+    if view.fav {
+        parts.push("favorites".to_string());
+    }
+    if let Some(ref q) = view.q {
+        parts.push(format!("q={}", percent_encode(q)));
+    }
+    let mut out = encode_path(&c.path);
+    if !parts.is_empty() {
+        out.push('?');
+        out.push_str(&parts.join("&"));
+    }
+    out
 }
 
 /// Percent-encode a decoded path for emission (href attribute, Location
@@ -1651,10 +1784,15 @@ pub fn encode_path(path: &str) -> String {
         .join("/")
 }
 
-/// A stable per-entry key for the reader's localStorage bookmarks: the
-/// canonical path — unique even across entries sharing a label.
-fn bookmark_key(canonical: &str) -> &str {
-    canonical.trim_start_matches('/')
+/// A stable per-entry key for the reader's localStorage bookmarks: the canonical
+/// address (path + `?time=`), unique even across entries sharing a label.
+fn canonical_key(c: &Canonical) -> String {
+    let mut k = c.path.trim_start_matches('/').to_string();
+    if let Some(t) = &c.time {
+        k.push_str("?time=");
+        k.push_str(t);
+    }
+    k
 }
 
 /// Render an entry's topical tags as a vertical rail nav with Finder-color dots.
@@ -1703,9 +1841,9 @@ fn render_meter(grade: Option<f32>) -> String {
 fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
     let datetime = format_datetime_attr(&entry.timestamp);
     let date = entry.timestamp.format("%Y-%m-%d").to_string();
-    let canonical = canonical_path(entry, all_entries);
-    let href = encode_path(&canonical);
-    let key = bookmark_key(&canonical);
+    let canon = canonical(entry, all_entries);
+    let href = compose_href(&canon.path, None, canon.time.as_deref());
+    let key = canonical_key(&canon);
 
     let star = if entry.is_favorite() {
         r#"<b title="A favorite of mine">&#9733;</b>"#.to_string()
@@ -1734,7 +1872,7 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
 </aside>
 <div><h3><a href="{href}">{title}</a></h3></div>
 </article></li>"#,
-        key = html_escape(key),
+        key = html_escape(&key),
         datetime = html_escape(&datetime),
         date = html_escape(&date),
         star = star,
@@ -1776,9 +1914,13 @@ pub fn timeline_page(
             if open_section {
                 rows.push_str("</ul></section>");
             }
+            // The month heading links into that month's view, grafting the date
+            // onto any active tag path and keeping the current view filters.
+            let month_path = format!("/{}{}", entry.timestamp.format("%Y/%m"), ctx.path_tags);
             rows.push_str(&format!(
-                r#"<section><h2>{}</h2><ul>"#,
-                html_escape(&month)
+                r#"<section><h2><a href="{href}">{label}</a></h2><ul>"#,
+                href = html_escape(&make_url(&month_path, ctx.view)),
+                label = html_escape(&month),
             ));
             current_month = month;
             open_section = true;
@@ -1841,7 +1983,7 @@ fn continue_nav(next: Option<&Entry>, all_entries: &[&Entry]) -> String {
         Some(n) => n,
         None => return String::new(),
     };
-    let href = encode_path(&canonical_path(next, all_entries));
+    let href = canonical_href(next, all_entries);
     let datetime = format_datetime_attr(&next.timestamp);
     let date = next.timestamp.format("%Y-%m-%d").to_string();
     let title = match next.display_label.as_deref().or(next.label.as_deref()) {
@@ -1874,8 +2016,8 @@ pub fn entry_page(
         .as_deref()
         .or(entry.label.as_deref())
         .unwrap_or("Untitled");
-    let canonical = canonical_path(entry, all_entries);
-    let raw_href = encode_path(&canonical_raw_path(entry, all_entries));
+    let canon_href = canonical_href(entry, all_entries);
+    let raw_href = canonical_raw_href(entry, all_entries);
 
     let body = format!(
         r#"{header}
@@ -1890,7 +2032,7 @@ pub fn entry_page(
 </main>"#,
         header = render_site_header(&ctx),
         crumbs = crumbs(),
-        canonical = html_escape(&encode_path(&canonical)),
+        canonical = html_escape(&canon_href),
         data_title = html_escape(label),
         post_header = post_header(entry),
         content = rendered_html,
@@ -1917,8 +2059,8 @@ pub fn image_page(
         .as_deref()
         .or(entry.label.as_deref())
         .unwrap_or("Image");
-    let canonical = canonical_path(entry, all_entries);
-    let src = encode_path(&canonical_raw_path(entry, all_entries));
+    let canon_href = canonical_href(entry, all_entries);
+    let src = canonical_raw_href(entry, all_entries);
 
     let body = format!(
         r#"{header}
@@ -1933,7 +2075,7 @@ pub fn image_page(
 </main>"#,
         header = render_site_header(&ctx),
         crumbs = crumbs(),
-        canonical = html_escape(&encode_path(&canonical)),
+        canonical = html_escape(&canon_href),
         data_title = html_escape(label),
         post_header = post_header(entry),
         src = html_escape(&src),
