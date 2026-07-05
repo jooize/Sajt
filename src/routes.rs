@@ -15,13 +15,14 @@ use crate::url::{parse_url_path, ContentQuery};
 
 pub type AppState = Arc<RwLock<ContentStore>>;
 
-/// Parse the query string into a view filter (level / favorites / search).
+/// Parse the query string into a view filter (grade / favorites / search).
+/// `?favorites` is presence-based: bare, empty, or any value but 0/false.
 fn view_from_query(params: &HashMap<String, String>) -> ViewFilter {
     let fav = params
-        .get("fav")
+        .get("favorites")
         .map_or(false, |v| v != "0" && v != "false");
     ViewFilter::from_params(
-        params.get("level").map(String::as_str),
+        params.get("grade").map(String::as_str),
         fav,
         params.get("q").map(String::as_str),
     )
@@ -37,7 +38,7 @@ fn filter_title(path_desc: &str, view: &ViewFilter, saved: bool) -> String {
         parts.push(path_desc.to_string());
     }
     if view.level > 0 {
-        parts.push(view.level_word().to_string());
+        parts.push(view.grade_word().to_string());
     }
     if view.fav {
         parts.push("favorites".to_string());
@@ -145,6 +146,7 @@ pub async fn catch_all(
     State(store): State<AppState>,
     Path(path): Path<String>,
     Query(params): Query<HashMap<String, String>>,
+    uri: axum::http::Uri,
 ) -> Response {
     let query = parse_url_path(&format!("/{}", path));
     let view = view_from_query(&params);
@@ -169,31 +171,32 @@ pub async fn catch_all(
         return render_listing(&matching, &all_entries, &query, &view, &path);
     }
 
-    // If date+label URL and a single match with a unique label, redirect to label-only URL
-    if query.date_prefix.is_some() && query.label.is_some() && matching.len() == 1 {
-        if let Some(ref label) = matching[0].label {
-            if is_label_unique_in(label, &all_entries) {
-                return redirect(&format!("/{}", label));
-            }
-        }
-    }
+    // Resolve the request to one entry:
+    // - exactly one match serves (or 301s to its canonical address);
+    // - a bare /label carried by several entries serves the NEWEST — older
+    //   versions stay reachable at their date-disambiguated addresses.
+    let target: Option<&Entry> = if matching.len() == 1 {
+        Some(matching[0])
+    } else if query.label.is_some() && query.date_prefix.is_none() {
+        newest_of(&matching)
+    } else {
+        None
+    };
 
-    // Timestamp-only URL for an entry that has a unique label: redirect to label URL
-    if query.date_prefix.is_some() && query.label.is_none() && matching.len() == 1 {
-        if let Some(ref label) = matching[0].label {
-            if is_label_unique_in(label, &all_entries) {
-                return redirect(&format!("/{}", label));
+    if let Some(entry) = target {
+        // One canonical address per entry: everything else 301s onto it,
+        // carrying the query string (filters) along.
+        let canonical = templates::canonical_path(entry, &all_entries);
+        let requested = format!("/{}", path);
+        if requested != canonical {
+            // Compare decoded-to-decoded, emit encoded (ASCII-safe header).
+            let mut location = templates::encode_path(&canonical);
+            if let Some(qs) = uri.query() {
+                location = format!("{}?{}", location, qs);
             }
+            return redirect(&location);
         }
-    }
-
-    // Single entry
-    if matching.len() == 1 {
-        let unique = matching[0]
-            .label
-            .as_ref()
-            .map_or(false, |l| is_label_unique_in(l, &all_entries));
-        return serve_entry(matching[0], &store, unique).await;
+        return serve_entry(entry, &store).await;
     }
 
     if matching.is_empty() {
@@ -202,6 +205,18 @@ pub async fn catch_all(
 
     // Multiple matches — show as listing
     render_listing(&matching, &all_entries, &query, &view, &path)
+}
+
+/// The single newest entry in a set, or None on a timestamp tie (ambiguous).
+fn newest_of<'a>(entries: &[&'a Entry]) -> Option<&'a Entry> {
+    let newest = entries.iter().map(|e| e.timestamp).max()?;
+    let mut at_newest = entries.iter().filter(|e| e.timestamp == newest);
+    let first = at_newest.next()?;
+    if at_newest.next().is_some() {
+        None
+    } else {
+        Some(first)
+    }
 }
 
 /// Render a filtered timeline listing: apply the view filter, build the shared
@@ -307,26 +322,23 @@ pub async fn rescan(State(store): State<AppState>) -> impl IntoResponse {
     }
 }
 
-/// Check if a label is unique across all entries.
-fn is_label_unique_in(label: &str, entries: &[&Entry]) -> bool {
-    let lower = label.to_lowercase();
-    entries
-        .iter()
-        .filter(|e| e.label.as_ref().map_or(false, |l| l.to_lowercase() == lower))
-        .count()
-        <= 1
-}
-
 /// Serve a single entry as a rendered HTML page.
-async fn serve_entry(entry: &Entry, store: &ContentStore, label_unique: bool) -> Response {
+async fn serve_entry(entry: &Entry, store: &ContentStore) -> Response {
     let all: Vec<&Entry> = store.entries.iter().collect();
+
+    // The next-older entry feeds the Continue block at the foot of the post.
+    let next: Option<&Entry> = all
+        .iter()
+        .copied()
+        .filter(|e| e.timestamp < entry.timestamp)
+        .max_by_key(|e| e.timestamp);
 
     // Check if this entry has a cached embed
     if let Some(embed_data) = store.embed_cache.get(&entry.path) {
         if !embed_data.is_upstream_deleted() {
             let cache_dir = crate::embed::cache_dir_for(&entry.path);
             let card_html = crate::embed::render_embed_card(embed_data, &cache_dir);
-            return Html(templates::entry_page(entry, &card_html, label_unique, &all)).into_response();
+            return Html(templates::entry_page(entry, &card_html, &all, next)).into_response();
         }
     }
 
@@ -339,20 +351,20 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, label_unique: bool) ->
         Ok(RenderedContent::Html(html)) => {
             // Expand inline URLs in rendered HTML to embed cards
             let html = crate::embed::expand_inline_embeds(&html, &store.embed_cache);
-            Html(templates::entry_page(entry, &html, label_unique, &all)).into_response()
+            Html(templates::entry_page(entry, &html, &all, next)).into_response()
         }
         Ok(RenderedContent::Standalone(html)) => {
             Html(html).into_response()
         }
         Ok(RenderedContent::PreformattedText(text)) => {
             let pre = format!("<pre>{}</pre>", html_escape_content(&text));
-            Html(templates::entry_page(entry, &pre, label_unique, &all)).into_response()
+            Html(templates::entry_page(entry, &pre, &all, next)).into_response()
         }
         Ok(RenderedContent::Embed(card_html)) => {
-            Html(templates::entry_page(entry, &card_html, label_unique, &all)).into_response()
+            Html(templates::entry_page(entry, &card_html, &all, next)).into_response()
         }
         Ok(RenderedContent::Image { mime }) => {
-            Html(templates::image_page(entry, &mime, label_unique, &all)).into_response()
+            Html(templates::image_page(entry, &mime, &all, next)).into_response()
         }
         Ok(RenderedContent::Download { .. }) => {
             serve_raw_bytes(entry).await
@@ -360,16 +372,19 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, label_unique: bool) ->
         Err(e) => {
             tracing::error!("Render error for {}: {}", entry.path.display(), e);
             let body = format!("<p>Rendering error: {}</p>", html_escape_content(&e));
-            Html(templates::entry_page(entry, &body, label_unique, &all)).into_response()
+            Html(templates::entry_page(entry, &body, &all, next)).into_response()
         }
     }
 }
 
 /// Serve raw file bytes with correct MIME type and Content-Disposition.
+/// With duplicate labels, the newest entry carrying the extension wins,
+/// mirroring the page URL's newest-wins rule.
 async fn serve_raw_file(matching: &[&Entry], requested_ext: &str) -> Response {
     let entry = matching
         .iter()
-        .find(|e| e.extension.eq_ignore_ascii_case(requested_ext));
+        .filter(|e| e.extension.eq_ignore_ascii_case(requested_ext))
+        .max_by_key(|e| e.timestamp);
 
     match entry {
         Some(entry) => serve_raw_bytes(entry).await,
@@ -407,9 +422,16 @@ async fn serve_raw_bytes(entry: &Entry) -> Response {
 }
 
 fn redirect(location: &str) -> Response {
+    // Canonical paths are percent-encoded (ASCII), so this only fails on a
+    // hostile/broken query string — in which case fail closed with a 404
+    // rather than panic the worker.
+    let value = match HeaderValue::from_str(location) {
+        Ok(v) => v,
+        Err(_) => return not_found(),
+    };
     Response::builder()
         .status(StatusCode::MOVED_PERMANENTLY)
-        .header(header::LOCATION, HeaderValue::from_str(location).unwrap())
+        .header(header::LOCATION, value)
         .body(Body::empty())
         .unwrap()
 }

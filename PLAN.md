@@ -142,6 +142,205 @@ launch (no compat needed pre-v1.0.0).
 Run: `nix develop --command cargo run` + `caddy start --config Caddyfile`,
 then https://localhost. Restart server after changes (Tilde watches live).
 
+## 2026-07-05 handoff: decisions made, implementation plan (for Opus)
+
+Fable made the design calls below and started the code; Opus finishes it.
+**The tree is MID-REFACTOR and does NOT compile** until item 1 is done —
+`routes.rs` already calls the new `entry_page`/`image_page` signatures.
+Verify with `nix develop --command cargo test` and by running the server.
+
+### Decisions (made this session — implement as stated)
+
+- **URL collisions / revisions.** One canonical address per entry:
+  unique label → `/label`; duplicated label → the NEWEST entry owns bare
+  `/label`, older ones get the shortest disambiguating date prefix —
+  `/2026-03-12/label` when the day suffices, full `/2026-03-12T133513/label`
+  only as a last resort. Single-segment ISO dates (NOT `/2026/03/12/`: one
+  segment matches the existing date-filter scheme). Duplicates ARE served
+  (a folder and a file may legitimately share a name; an old version stays
+  readable — that's the revisions story: re-drop a file with the same label,
+  the new one takes `/label`, the old one keeps its dated URL). Every
+  non-canonical URL that resolves to one entry 301s to the canonical,
+  preserving the query string. Bare `/label` matching several entries serves
+  the newest (tie → listing). macOS Versions is NOT used (see notes at end).
+- **`?fav=1` → bare `?favorites`.** Presence-based flag. Links emit
+  `?favorites` with no value; the search form's hidden field emits
+  `favorites=` (forms can't do valueless keys) — parser accepts both,
+  rejects `0`/`false`.
+- **`?level=` → `?grade=notable|best`.** It's the author's grading, so the
+  URL says so: `/?grade=notable&favorites&q=…`. Internal field stays
+  `ViewFilter.level` (it's a floor over grades); `level_word()` renamed
+  `grade_word()`; `data-level` attr → `data-grade`.
+- **Tag cloud: center-out.** Sort tags by count desc (ties alphabetical),
+  then alternate push-back/push-front so the largest lands mid-sequence and
+  sizes fall off toward both edges. Presentation-only, in `render_cloud`.
+  (Trade-off accepted: loses alphabetical scanning.)
+- **Grip: split handle.** The single 2.4rem bar reads as a scrollbar. Make
+  it two short bars with a gap (::before + ::after, 4px × ~1.05rem,
+  ~.3rem gap, same radius/colors/hover-to-violet). No exact native macOS
+  element exists for a vertical edge-drag; the two-bar split reads
+  "handle", like the iPadOS split-view divider pill family.
+- **Short posts.** Before the land-on-post jump, JS pads `main`'s
+  min-height so `scrollTo(landingTop)` can actually land (header hidden
+  above the fold even when the post is short). Recompute on resize with
+  min-height cleared first, then re-measure.
+- **Bookmark/star alignment.** `main section article aside > button svg`
+  gets `translate: 0 -1px` (Tilde judged the bookmark 1–2px low vs the ★).
+- **Bookmark keys.** localStorage key = canonical path sans leading slash
+  (labels alone collide for duplicates). Pre-1.0, no migration.
+- **Entry body typography: serif + toggle (Tilde 2026-07-05).** Post
+  section defaults to serif — `--serif: ui-serif, "New York", Georgia,
+  "Times New Roman", serif`, 1.0625rem/1.72; chrome stays sans. The
+  typeface toggle SHIPS: `t` key + a small serif/sans control in the page
+  footer (next to "? shortcuts"), entry pages only, persisted in
+  localStorage as `esko-type`, applied as `html[data-type="sans"]`
+  (`article#post > section` swaps to `var(--sans)`, letter-spacing .001em,
+  per the mockup). Default serif; JS-applied (brief flash for sans users
+  is accepted). Heading sizes per entry-page-mockup.html.
+- **Continue block: FULL inline-load (Tilde 2026-07-05).** Port the
+  mockup's behavior for real: the server renders
+  `<nav id="continue"><p>Continue</p><a …><b>title</b><time>date</time></a></nav>`
+  for the next-older entry (`next` is already computed in `serve_entry`).
+  No new endpoint: activating Continue fetches the next entry's canonical
+  page with `fetch()`, parses it with `DOMParser`, and appends its
+  `article#post` (strip the duplicate `id`, keep `data-canonical` +
+  `data-title` from `<title>` or the header) before `#continue`; the
+  fetched page's own `#continue` supplies the following teaser, so the
+  chain continues naturally. Re-run the per-post enhancements on each
+  appended article — factor them as `enhancePost(article)` (anchors,
+  proximity targets, footnotes, copy buttons, blockquote menu, TOC).
+  URL follows viewport majority (IntersectionObserver over
+  `main > article`s, `history.replaceState` to the owning entry's
+  canonical path + `document.title` swap). Autoload is opt-in: the
+  "keep loading as I scroll" checkbox appears after the first manual
+  load, persisted as `esko-autoload`, IntersectionObserver with 200px
+  rootMargin on `#continue`. Without JS, Continue is a plain link — that
+  must keep working. Sidenote margin-vs-bottom mode stays global
+  (`html[data-sn]`).
+
+### Already implemented this session (uncommitted; keep)
+
+- `src/stats.rs` — `from_params` documents `grade`; `grade_word()`.
+- `src/routes.rs` — `view_from_query` reads `grade`/`favorites`;
+  `catch_all` does the generalized canonical 301 (via
+  `templates::canonical_path` + `encode_path`, query preserved) and
+  newest-wins (`newest_of`); `serve_entry(entry, store)` computes
+  `next: Option<&Entry>` (max timestamp < entry's) and calls
+  `templates::entry_page(entry, html, &all, next)` /
+  `image_page(entry, mime, &all, next)` — **new signatures, templates side
+  not yet written**; `serve_raw_file` newest-wins on ties; `redirect()`
+  fails closed on bad header values.
+- `src/templates.rs` — `query_string` emits `grade=`/bare `favorites`;
+  hidden form fields renamed; `data-grade`; new `canonical_path`,
+  `canonical_raw_path`, `encode_path` (per-segment percent-encoding,
+  decoded-vs-decoded comparison in routes, encoded on emission),
+  `bookmark_key(&canonical)`; `render_row(entry, all_entries)` uses them;
+  `timeline_page` no longer builds `label_counts` (old helpers
+  `entry_href`/`entry_raw_href`/`label_counts`/`is_label_unique` deleted).
+
+### Remaining work (in commit-sized steps)
+
+1. **Fix the build: port `entry_page`/`image_page`** in templates.rs to
+   `(entry, rendered_html | mime, all_entries: &[&Entry], next: Option<&Entry>)`.
+   Inside: `let canonical = canonical_path(entry, all_entries)`; raw/source
+   link = `encode_path(&canonical_raw_path(...))`; add
+   `data-canonical="{encoded}"` on `<article id="post">` (the JS h1 chain
+   anchor reads it); render the quality meter `<span class="meter"…>` in the
+   post header when `entry.grade` is `Some` (same markup/percentile title as
+   `render_row`; today always `None`, so it just must not panic); append the
+   Continue nav when `next` is `Some` (title = display_label|label|
+   "(untitled)", href = encoded canonical of `next`). `cargo test` green;
+   run server, click around, check a duplicate-label pair if present.
+2. **Cloud center-out** in `render_cloud`: collect `Vec<&TagStat>`, sort
+   count desc/name asc, alternate `push_back`/`push_front` into a
+   `VecDeque`, iterate that instead of `ctx.cloud.tags`.
+3. **Small CSS fixes**: grip split (replace `#grip::before` block: grid →
+   flex column, gap .3rem; two bars via ::before AND ::after; hover/active/
+   focus-visible turns both violet and grows to ~1.35rem); bookmark svg
+   `translate: 0 -1px`.
+4. **Entry-body port** (the big one; port from entry-page-mockup.html,
+   adapting mockup classes to pandoc's real output):
+   - CSS: `--serif` token; `article#post > section` serif type; mockup h1
+     (clamp size, balance) / h2 (1.32rem) / blockquote (violet bar, italic,
+     hover menu) / `pre > button` copy pill / `#toc` details / `#continue` /
+     `.sn` + footnotes styles. Pandoc emits
+     `<section id="footnotes" class="footnotes …">` and
+     `<a class="footnote-ref"><sup>N</sup></a>` refs — style
+     `article#post .footnotes` (hide its `<hr>`, add a small-caps
+     "Footnotes" heading via `::before`), `.lit` glow uses `--violet-soft`.
+     Anchors: `.anchor` class (JS-injected — do NOT use `:last-child` like
+     the mockup; a content link at a heading's end would false-match
+     without JS), absolute at `left: -1.7rem`, opacity .32 base, `.near` /
+     `:focus-visible` → 1, hover violet; h1 chain uses the mockup's svg at
+     .58em; compact media query makes them static inline. Meter: factor the
+     timeline's `span.meter` rules to also cover the post header (post
+     header becomes a flex row like the mockup: time · meter · tags).
+   - JS (extend the entry-page block): ensure h2 ids (slugify, uniquify —
+     pandoc usually provides them); append `.anchor` links to h1 (chain →
+     `data-canonical`) and h2s (`#` → `#id`) using createElement (labels can
+     contain quotes — no innerHTML for attribute values); generalize the
+     proximity-glow block to run on BOTH pages (timeline: `main article
+     aside > button`; entry: `#post .anchor`); two-mode footnotes: if
+     `#post section .footnotes` exists, build `.sn` margin spans cloned
+     from each `li` (strip the `.footnote-back`), insert after each
+     `a.footnote-ref`, set `html[data-sn]` from
+     `(innerWidth - mainWidth)/2 >= 330 ? "margin" : "bottom"` inside
+     `applyWidth`; ref clicks: margin mode glows the span (`.lit`,
+     1.6s timeout), bottom mode scrollIntoView + glow, backrefs return to
+     the ref — all preventDefault so the URL stays clean; no-JS must stay
+     correct (footnotes section visible by default; `html[data-sn="margin"]`
+     is what hides it); copy buttons on `pre > code` (append, flash
+     "copied ✓"); blockquote quote/link menu (text-fragment deep link);
+     mini-TOC `<details id="toc">` after the first h1 when the post has
+     ≥3 h2s; land-on-post min-height pad (decision above).
+5. **Docs**: DESIGN.md — URL scheme section (canonical/collision/revision
+   rules, `?grade`/`?favorites`), cloud ordering, grip, entry-body port
+   status, CSS class exception list gains `.anchor`, `.sn`, `.lit`,
+   `.backref` (JS-injected/pandoc); PLAN.md — mark stages 3–4 done, note
+   Continue is a plain link, stage 2 (data-island no-reload filtering)
+   still open. Update .claude-memory (MEMORY.md bullets: URL scheme grade/
+   favorites wording, collisions rule, serif body).
+6. Grep for stragglers: `level=`, `fav=`, `data-level`, `entry_href`,
+   `label_unique` — should be zero outside docs history.
+
+Suggested commits: (1) build fix + canonical URLs, (2) cloud ordering,
+(3) grip + bookmark nudge, (4) entry-body port, (5) docs.
+
+### Direction (Tilde 2026-07-05): timestamp filename prefixes are going away
+
+Clean names are the plan (per entry-page-mockup prose: folder/file name IS
+the address, dates from filesystem creation time, remembered by the index
+so syncs can't lose them). Fable's opinion: right call, with one structural
+consequence — a directory can't hold two files with the same name, so the
+FILESYSTEM stops being the version store and the SERVER must take over:
+
+- Index persists first-seen timestamp + content hash per name (mostly
+  exists already).
+- On rescan, same name + changed hash = new version: snapshot the old
+  content into a server-side content-addressed archive (hash-named — dedup
+  is free), then serve the new.
+- The canonical URL scheme implemented above survives unchanged: newest
+  owns `/label`, older versions live at `/2026-03-12/label` (day) or full
+  timestamp; only the SOURCE of old bytes moves from "second file on disk"
+  to "server archive". Folder-vs-file same-name collisions remain real and
+  keep the same disambiguation.
+- Privacy fails closed: archived versions are served only while the entry
+  is public; unpublish hides all versions. Never archive entries that were
+  never public.
+- NOT this session's work — do it together with the filename-convention
+  migration (one-shot conversion, pre-v1.0.0). macOS Versions still ruled
+  out (below).
+
+### Why not macOS Versions (Tilde's question)
+
+The Versions system (NSDocument's version browser) stores revisions in a
+hidden per-volume database (`/.DocumentRevisions-V100`), owned by whichever
+app saved the document. It is not enumerable from other processes via any
+public API, does not travel through iCloud Drive/rsync, and can be pruned
+by the OS under disk pressure. It's a UI feature, not a storage contract —
+unusable as a hosting substrate. Our filesystem convention (timestamped
+filenames, content hashes) IS the version store, and it's portable.
+
 ## Open decisions for Tilde
 
 - ~~Glass: plain, rows, or full?~~ **RESOLVED 2026-07-05: rows.**

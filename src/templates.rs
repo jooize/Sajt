@@ -820,14 +820,15 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
-/// Build the query string for a view filter: "" when default, else "?level=…&…".
+/// Build the query string for a view filter: "" when default, else
+/// "?grade=notable&favorites&q=…". `favorites` is a bare presence flag.
 fn query_string(view: &ViewFilter) -> String {
     let mut parts: Vec<String> = Vec::new();
     if view.level > 0 {
-        parts.push(format!("level={}", view.level_word()));
+        parts.push(format!("grade={}", view.grade_word()));
     }
     if view.fav {
-        parts.push("fav=1".to_string());
+        parts.push("favorites".to_string());
     }
     if let Some(ref q) = view.q {
         parts.push(format!("q={}", percent_encode(q)));
@@ -910,12 +911,12 @@ fn render_cloud(ctx: &HeaderContext) -> String {
 fn render_site_header(ctx: &HeaderContext) -> String {
     let view = ctx.view;
 
-    // Level segmented control: three links, each setting its level while
+    // Grade segmented control: three links, each setting its floor while
     // preserving favorites/search; the thumb + stepped bars reflect the state.
     let level_link = |lvl: u8, label: &str| {
         let target = ViewFilter { level: lvl, fav: view.fav, q: view.q.clone() };
         format!(
-            r#"<a href="{href}" data-level="{lvl}" aria-current="{cur}">{label}</a>"#,
+            r#"<a href="{href}" data-grade="{lvl}" aria-current="{cur}">{label}</a>"#,
             href = html_escape(&make_url(ctx.base_path, &target)),
             lvl = lvl,
             cur = if view.level == lvl { "true" } else { "false" },
@@ -938,16 +939,18 @@ fn render_site_header(ctx: &HeaderContext) -> String {
     let saved_href = if ctx.saved_view { "/" } else { "/saved" };
     let saved_current = if ctx.saved_view { "page" } else { "false" };
 
-    // Search preserves level/favorites via hidden fields; action is the path.
+    // Search preserves grade/favorites via hidden fields; action is the path.
+    // (A form can't emit a valueless key, so `favorites=` stands in for the
+    // bare `?favorites` the links use — the parser treats both as presence.)
     let mut hidden = String::new();
     if view.level > 0 {
         hidden.push_str(&format!(
-            r#"<input type="hidden" name="level" value="{}">"#,
-            view.level_word()
+            r#"<input type="hidden" name="grade" value="{}">"#,
+            view.grade_word()
         ));
     }
     if view.fav {
-        hidden.push_str(r#"<input type="hidden" name="fav" value="1">"#);
+        hidden.push_str(r#"<input type="hidden" name="favorites" value="">"#);
     }
     let q_value = view.q.as_deref().map(html_escape).unwrap_or_default();
     let action = if ctx.base_path.is_empty() { "/" } else { ctx.base_path };
@@ -1044,48 +1047,77 @@ fn format_datetime_attr(ts: &chrono::NaiveDateTime) -> String {
     ts.format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
-/// Permalink for an entry, using timestamp to disambiguate if label is not unique.
-fn entry_href(entry: &Entry, unique_label: bool) -> String {
-    match &entry.label {
-        Some(label) if unique_label => format!("/{}", label),
-        Some(label) => format!("/{}/{}", entry.timestamp.format("%Y-%m-%dT%H%M%S"), label),
-        None => format!("/{}", entry.timestamp.format("%Y-%m-%dT%H%M%S")),
+/// The one canonical (decoded) address for an entry.
+///
+/// - A unique label owns `/label`.
+/// - When several entries share a label (a folder and a file, or an old and a
+///   new version), the NEWEST owns the bare `/label`; the others carry the
+///   shortest date prefix that tells them apart: `/2026-03-12/label` when the
+///   day suffices, the full `/2026-03-12T133513/label` only as a last resort.
+/// - Unlabeled entries live at their full timestamp.
+///
+/// Returned decoded (for comparing against decoded request paths); run it
+/// through [`encode_path`] before emitting into an href or Location header.
+pub fn canonical_path(entry: &Entry, all_entries: &[&Entry]) -> String {
+    let full_ts = || entry.timestamp.format("%Y-%m-%dT%H%M%S").to_string();
+    let label = match &entry.label {
+        Some(label) => label,
+        None => return format!("/{}", full_ts()),
+    };
+
+    let lower = label.to_lowercase();
+    let twins: Vec<&&Entry> = all_entries
+        .iter()
+        .filter(|e| e.label.as_ref().map_or(false, |l| l.to_lowercase() == lower))
+        .collect();
+
+    if twins.len() <= 1 {
+        return format!("/{}", label);
+    }
+
+    // Newest wins the bare label — unless the newest timestamp itself is tied.
+    let newest = twins.iter().map(|e| e.timestamp).max().unwrap_or(entry.timestamp);
+    let newest_is_unique = twins.iter().filter(|e| e.timestamp == newest).count() == 1;
+    if entry.timestamp == newest && newest_is_unique {
+        return format!("/{}", label);
+    }
+
+    let day = entry.timestamp.format("%Y-%m-%d").to_string();
+    let same_day = twins
+        .iter()
+        .filter(|e| e.timestamp.format("%Y-%m-%d").to_string() == day)
+        .count();
+    if same_day == 1 {
+        format!("/{}/{}", day, label)
+    } else {
+        format!("/{}/{}", full_ts(), label)
     }
 }
 
-/// Raw file URL for an entry.
-fn entry_raw_href(entry: &Entry, unique_label: bool) -> String {
-    match &entry.label {
-        Some(label) if unique_label => format!("/{}.{}", label, entry.extension),
-        Some(label) => format!("/{}/{}.{}", entry.timestamp.format("%Y-%m-%dT%H%M%S"), label, entry.extension),
-        None => format!("/{}.{}", entry.timestamp.format("%Y-%m-%dT%H%M%S"), entry.extension),
+/// Raw-file address for an entry: its canonical page address plus the
+/// extension (the URL parser reads the extension back off the last segment).
+fn canonical_raw_path(entry: &Entry, all_entries: &[&Entry]) -> String {
+    let page = canonical_path(entry, all_entries);
+    if entry.extension.is_empty() {
+        page // folders have no raw file
+    } else {
+        format!("{}.{}", page, entry.extension)
     }
 }
 
-/// A stable per-entry key for the reader's localStorage bookmarks: the label,
-/// or the timestamp+extension when unlabeled (mirrors the mockup's keyOf).
-fn bookmark_key(entry: &Entry) -> String {
-    match &entry.label {
-        Some(label) => label.clone(),
-        None => format!("{}.{}", entry.timestamp.format("%Y-%m-%dT%H%M%S"), entry.extension),
-    }
+/// Percent-encode a decoded path for emission (href attribute, Location
+/// header): each segment is encoded, slashes survive.
+pub fn encode_path(path: &str) -> String {
+    path.split('/')
+        .map(percent_encode)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
-fn label_counts(all_entries: &[&Entry]) -> std::collections::HashMap<String, usize> {
-    let mut counts = std::collections::HashMap::new();
-    for entry in all_entries {
-        if let Some(ref label) = entry.label {
-            *counts.entry(label.to_lowercase()).or_insert(0) += 1;
-        }
-    }
-    counts
-}
-
-fn is_label_unique(entry: &Entry, counts: &std::collections::HashMap<String, usize>) -> bool {
-    match &entry.label {
-        Some(label) => counts.get(&label.to_lowercase()).copied().unwrap_or(0) <= 1,
-        None => false,
-    }
+/// A stable per-entry key for the reader's localStorage bookmarks: the
+/// canonical path — unique even across entries sharing a label.
+fn bookmark_key(canonical: &str) -> &str {
+    canonical.trim_start_matches('/')
 }
 
 /// Render an entry's topical tags as a vertical rail nav with Finder-color dots.
@@ -1112,21 +1144,12 @@ fn rail_tags(entry: &Entry) -> String {
 // Timeline page
 // ---------------------------------------------------------------------------
 
-/// Render one timeline row.
-fn render_row(entry: &Entry, unique: bool) -> String {
-    let datetime = format_datetime_attr(&entry.timestamp);
-    let date = entry.timestamp.format("%Y-%m-%d").to_string();
-    let href = entry_href(entry, unique);
-    let key = bookmark_key(entry);
-
-    let star = if entry.is_favorite() {
-        r#"<b title="A favorite of mine">&#9733;</b>"#.to_string()
-    } else {
-        String::new()
-    };
-
-    // The meter only appears once an entry is graded (no grading flow yet).
-    let meter = match entry.grade {
+/// The hairline quality meter, shared by timeline rows and the entry-post
+/// header. Empty until an entry is graded (no grading flow yet), so callers
+/// can splice it unconditionally. `grade` is a percentile in [0, 1]: fill
+/// width is `grade`, the title reads the top percentage (`1 - grade`).
+fn render_meter(grade: Option<f32>) -> String {
+    match grade {
         Some(q) => {
             let pct = ((1.0 - q) * 100.0).round().max(1.0) as i32;
             format!(
@@ -1136,7 +1159,25 @@ fn render_row(entry: &Entry, unique: bool) -> String {
             )
         }
         None => String::new(),
+    }
+}
+
+/// Render one timeline row.
+fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
+    let datetime = format_datetime_attr(&entry.timestamp);
+    let date = entry.timestamp.format("%Y-%m-%d").to_string();
+    let canonical = canonical_path(entry, all_entries);
+    let href = encode_path(&canonical);
+    let key = bookmark_key(&canonical);
+
+    let star = if entry.is_favorite() {
+        r#"<b title="A favorite of mine">&#9733;</b>"#.to_string()
+    } else {
+        String::new()
     };
+
+    // The meter only appears once an entry is graded (no grading flow yet).
+    let meter = render_meter(entry.grade);
 
     let title = match entry.display_label.as_deref().or(entry.label.as_deref()) {
         Some(label) => format!(
@@ -1156,7 +1197,7 @@ fn render_row(entry: &Entry, unique: bool) -> String {
 </aside>
 <div><h3><a href="{href}">{title}</a></h3></div>
 </article></li>"#,
-        key = html_escape(&key),
+        key = html_escape(key),
         datetime = html_escape(&datetime),
         date = html_escape(&date),
         star = star,
@@ -1189,8 +1230,6 @@ pub fn timeline_page(
         format!("esko.bar — {}", filter_desc)
     };
 
-    let counts = label_counts(all_entries);
-
     let mut rows = String::new();
     let mut current_month = String::new();
     let mut open_section = false;
@@ -1207,8 +1246,7 @@ pub fn timeline_page(
             current_month = month;
             open_section = true;
         }
-        let unique = is_label_unique(entry, &counts);
-        rows.push_str(&render_row(entry, unique));
+        rows.push_str(&render_row(entry, all_entries));
     }
     if open_section {
         rows.push_str("</ul></section>");
@@ -1241,13 +1279,54 @@ fn crumbs() -> &'static str {
 </nav>"#
 }
 
+/// The entry-post header: mono date, quality meter, Finder-color dot tags.
+/// Shared by the document and image entry pages.
+fn post_header(entry: &Entry) -> String {
+    let datetime = format_datetime_attr(&entry.timestamp);
+    let date = entry.timestamp.format("%Y-%m-%d %H:%M").to_string();
+    format!(
+        r#"<header>
+<time datetime="{datetime}">{date}</time>
+{meter}{tags}
+</header>"#,
+        datetime = html_escape(&datetime),
+        date = html_escape(&date),
+        meter = render_meter(entry.grade),
+        tags = post_tags(entry),
+    )
+}
+
+/// The Continue block at the foot of a post: a teaser link to the next-older
+/// entry, so the reader can keep going. Empty when there is no next entry.
+/// Without JS it is a plain link to the next entry's canonical page.
+fn continue_nav(next: Option<&Entry>, all_entries: &[&Entry]) -> String {
+    let next = match next {
+        Some(n) => n,
+        None => return String::new(),
+    };
+    let href = encode_path(&canonical_path(next, all_entries));
+    let datetime = format_datetime_attr(&next.timestamp);
+    let date = next.timestamp.format("%Y-%m-%d").to_string();
+    let title = match next.display_label.as_deref().or(next.label.as_deref()) {
+        Some(label) => html_escape(label),
+        None => "(untitled)".to_string(),
+    };
+    format!(
+        r#"<nav id="continue"><p>Continue</p><a href="{href}"><b>{title}</b><time datetime="{datetime}">{date}</time></a></nav>"#,
+        href = html_escape(&href),
+        title = title,
+        datetime = html_escape(&datetime),
+        date = html_escape(&date),
+    )
+}
+
 /// Render a single entry page: shared header (linking to the timeline), crumbs,
-/// then the post in plain typography.
+/// then the post in plain typography, and a Continue teaser for the next entry.
 pub fn entry_page(
     entry: &Entry,
     rendered_html: &str,
-    label_unique: bool,
     all_entries: &[&Entry],
+    next: Option<&Entry>,
 ) -> String {
     let cloud = compute_cloud(all_entries);
     let view = ViewFilter::default();
@@ -1258,66 +1337,69 @@ pub fn entry_page(
         .as_deref()
         .or(entry.label.as_deref())
         .unwrap_or("Untitled");
-    let datetime = format_datetime_attr(&entry.timestamp);
-    let date = entry.timestamp.format("%Y-%m-%d %H:%M").to_string();
-    let raw_href = entry_raw_href(entry, label_unique);
+    let canonical = canonical_path(entry, all_entries);
+    let raw_href = encode_path(&canonical_raw_path(entry, all_entries));
 
     let body = format!(
         r#"{header}
 {crumbs}
 <main>
-<article id="post">
-<header>
-<time datetime="{datetime}">{date}</time>
-{tags}
-</header>
+<article id="post" data-canonical="{canonical}">
+{post_header}
 <section>{content}</section>
 <footer><a href="{raw_href}">source</a> <a href="/">timeline</a></footer>
 </article>
+{continue_nav}
 </main>"#,
         header = render_site_header(&ctx),
         crumbs = crumbs(),
-        datetime = html_escape(&datetime),
-        date = html_escape(&date),
-        tags = post_tags(entry),
+        canonical = html_escape(&encode_path(&canonical)),
+        post_header = post_header(entry),
         content = rendered_html,
         raw_href = html_escape(&raw_href),
+        continue_nav = continue_nav(next, all_entries),
     );
 
     page_shell(&format!("esko.bar — {}", label), &body, "entry", false)
 }
 
 /// Render an image viewer page.
-pub fn image_page(entry: &Entry, _mime: &str, label_unique: bool, all_entries: &[&Entry]) -> String {
+pub fn image_page(
+    entry: &Entry,
+    _mime: &str,
+    all_entries: &[&Entry],
+    next: Option<&Entry>,
+) -> String {
     let cloud = compute_cloud(all_entries);
     let view = ViewFilter::default();
     let ctx = HeaderContext::plain(&cloud, &view);
 
-    let label = entry.label.as_deref().unwrap_or("Image");
-    let datetime = format_datetime_attr(&entry.timestamp);
-    let date = entry.timestamp.format("%Y-%m-%d %H:%M").to_string();
-    let src = entry_raw_href(entry, label_unique);
+    let label = entry
+        .display_label
+        .as_deref()
+        .or(entry.label.as_deref())
+        .unwrap_or("Image");
+    let canonical = canonical_path(entry, all_entries);
+    let src = encode_path(&canonical_raw_path(entry, all_entries));
 
     let body = format!(
         r#"{header}
 {crumbs}
 <main>
-<article id="post">
-<header>
-<time datetime="{datetime}">{date}</time>
-{tags}
-</header>
+<article id="post" data-canonical="{canonical}">
+{post_header}
 <figure><img src="{src}" alt="{alt}"></figure>
 <footer><a href="{src}">original</a> <a href="/">timeline</a></footer>
 </article>
+{continue_nav}
 </main>"#,
         header = render_site_header(&ctx),
         crumbs = crumbs(),
-        datetime = html_escape(&datetime),
-        date = html_escape(&date),
-        tags = post_tags(entry),
+        canonical = html_escape(&encode_path(&canonical)),
+        post_header = post_header(entry),
         src = html_escape(&src),
         alt = html_escape(label),
+        continue_nav = continue_nav(next, all_entries),
     );
 
     page_shell(&format!("esko.bar — {}", label), &body, "entry", false)

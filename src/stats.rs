@@ -114,21 +114,22 @@ impl CloudStats {
     }
 }
 
-/// The transient view filter carried in the query string: how much to show
-/// (level), favorites-only, and a free-text search. Composes with the path
-/// filter (tags / date) that `ContentQuery` already handles.
+/// The transient view filter carried in the query string: the grade floor
+/// (`?grade=notable|best`), favorites-only (`?favorites`), and a free-text
+/// search (`?q=…`). Composes with the path filter (tags / date) that
+/// `ContentQuery` already handles.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ViewFilter {
-    /// 0 everything, 1 notable, 2 best.
+    /// Grade floor: 0 everything, 1 notable, 2 best.
     pub level: u8,
     pub fav: bool,
     pub q: Option<String>,
 }
 
 impl ViewFilter {
-    /// Parse from decoded query parameters (`level`, `fav`, `q`).
-    pub fn from_params(level: Option<&str>, fav: bool, q: Option<&str>) -> Self {
-        let level = match level.map(|s| s.to_ascii_lowercase()) {
+    /// Parse from decoded query parameters (`grade`, `favorites`, `q`).
+    pub fn from_params(grade: Option<&str>, fav: bool, q: Option<&str>) -> Self {
+        let level = match grade.map(|s| s.to_ascii_lowercase()) {
             Some(ref s) if s == "best" || s == "2" => 2,
             Some(ref s) if s == "notable" || s == "1" => 1,
             _ => 0,
@@ -139,8 +140,8 @@ impl ViewFilter {
         ViewFilter { level, fav, q }
     }
 
-    /// The level as its URL/UI word.
-    pub fn level_word(&self) -> &'static str {
+    /// The grade floor as its URL/UI word.
+    pub fn grade_word(&self) -> &'static str {
         match self.level {
             2 => "best",
             1 => "notable",
