@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tag cloud — variants</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --violet: #a123f6;
+  --bg:    light-dark(#f5f4f0, #121514);
+  --ink:   light-dark(#20231f, #d9ded9);
+  --soft:  light-dark(#43473f, #b4bab2);
+  --faint: light-dark(#71766c, #8b918a);
+  --hair:  light-dark(rgba(46, 62, 50, .18), rgba(178, 205, 184, .16));
+  --pill:  light-dark(rgba(46, 62, 50, .1), rgba(178, 205, 184, .14));
+  --card:  light-dark(rgba(255,255,255,.5), rgba(44,50,46,.4));
+  --tag-red:    light-dark(#e0383e, #ff6961);
+  --tag-orange: light-dark(#e8842c, #ffb340);
+  --tag-yellow: light-dark(#d9a800, #ffd426);
+  --tag-green:  light-dark(#2f9e50, #30db5b);
+  --tag-blue:   light-dark(#1673de, #409cff);
+  --tag-purple: light-dark(#9853d2, #bf5af2);
+  --tag-gray:   light-dark(#8e8e93, #98989d);
+  --sans: system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { margin: 0; box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--sans);
+  padding: 2.5rem 1.25rem 6rem; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--violet); text-decoration: none; }
+main { max-width: 48rem; margin-inline: auto; }
+h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: -.02em; margin-bottom: .3rem; }
+body > main > p { color: var(--soft); font-size: .9rem; margin-bottom: 2.4rem; max-width: 40rem; }
+
+section {
+  margin-bottom: 1.6rem;
+  border: .5px solid var(--hair); border-radius: 14px;
+  background: var(--card);
+  -webkit-backdrop-filter: blur(14px) saturate(160%); backdrop-filter: blur(14px) saturate(160%);
+  overflow: hidden;
+}
+section > figcaption {
+  display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap;
+  padding: .8rem 1.1rem; border-bottom: .5px solid var(--hair);
+  font-size: .85rem;
+}
+section > figcaption b { font-weight: 650; letter-spacing: -.01em; }
+section > figcaption span { color: var(--faint); font-size: .8rem; }
+section > figcaption kbd {
+  font: 500 .72rem var(--mono); color: var(--violet);
+  border: 1px solid var(--hair); border-radius: 5px; padding: .05rem .35rem;
+}
+
+/* ---- shared tag look (matches production: dot + size + recency ink + count) ---- */
+.cloud a {
+  position: relative; display: inline-flex; align-items: baseline; gap: .38rem;
+  font-weight: 550; letter-spacing: -.011em; color: var(--ink);
+}
+.cloud a:hover { color: var(--violet); }
+.cloud a::before {
+  content: ""; align-self: center; translate: 0 .09em;
+  width: .5em; height: .5em; min-width: 6px; min-height: 6px;
+  border-radius: 50%; background: var(--tag, var(--tag-gray));
+}
+.cloud a small {
+  font-size: .68em; font-weight: 500; color: var(--faint);
+  font-feature-settings: "tnum"; translate: 0 -.07em;
+}
+
+/* ---- (1) flat, left-aligned ---- */
+.flat {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  column-gap: 1.4rem; row-gap: .5rem;
+  max-width: 30rem; margin: 0 auto 0 0; padding: 1.4rem 1.1rem;
+  line-height: 1.25;
+}
+.flat.center { justify-content: center; }
+
+/* ---- (2) diamond mass (centered rows) ---- */
+.diamond { display: flex; flex-direction: column; align-items: center; gap: .25rem; padding: 1.4rem 1.1rem; }
+.diamond > div { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; column-gap: 1.3rem; row-gap: .2rem; line-height: 1.14; }
+
+/* ---- (3) 3D depth (literal) ---- */
+.depth { max-width: 30rem; margin: 0 auto 0 0; padding: 1.8rem 1.1rem; perspective: 700px;
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 1.4rem; row-gap: .5rem; line-height: 1.3;
+  --shadow: light-dark(rgba(30,34,28,.22), rgba(0,0,0,.55)); }
+.depth a {
+  --amp: calc(2px + 5px * var(--z, 0));
+  opacity: calc(.72 + .28 * var(--z, 1));
+  text-shadow: 0 calc(1px + 3px * var(--z,0)) calc(4px + 9px * var(--z,0)) var(--shadow);
+  transform-style: preserve-3d;
+  transition: transform .18s ease, color .15s ease, text-shadow .18s ease;
+  animation: drift calc(6s + 3s * var(--z,0)) ease-in-out infinite;
+}
+.depth a:hover { transform: translateZ(28px); }
+@keyframes drift { 0%,100% { translate: 0 0; } 50% { translate: 0 calc(-1 * var(--amp)); } }
+@media (prefers-reduced-motion: reduce) { .depth a { animation: none; } .depth a:hover { transform: none; } }
+</style>
+</head>
+<body>
+<main>
+<h1>Tag cloud &mdash; five treatments</h1>
+<p>Same topics in every panel. Size = number of entries, ink darkness = recency,
+dot = Finder colour, small number = count. The question is <b>ordering</b> (does
+it rearrange, or stay predictable?) and <b>shape</b> (a flat line, or a mass).
+Resize the window to see how each wraps.</p>
+
+<section><figcaption><b>1 &middot; Flat, left-aligned, alphabetical</b>
+<span>Most predictable &mdash; a topic never moves. Reads like an index.</span></figcaption>
+<figure class="cloud flat" id="v1"></figure></section>
+
+<section><figcaption><b>2 &middot; Flat, left-aligned, by count</b>
+<span>Predictable &mdash; busiest first, always. Importance is the order.</span></figcaption>
+<figure class="cloud flat" id="v2"></figure></section>
+
+<section><figcaption><b>3 &middot; Flat, left-aligned, center-out</b> <kbd>previous</kbd>
+<span>Biggest in the middle of the line. Looks balanced, but the order isn&rsquo;t obvious.</span></figcaption>
+<figure class="cloud flat center" id="v3"></figure></section>
+
+<section><figcaption><b>4 &middot; Diamond mass, center-out</b>
+<span>A centred body, busiest dead-centre, tapering top and bottom. Rearranges the most.</span></figcaption>
+<figure class="cloud diamond" id="v4"></figure></section>
+
+<section><figcaption><b>5 &middot; 3D depth (literal)</b>
+<span>Flat + center-out, but busy topics lift and drift toward you. Hover a tag.</span></figcaption>
+<figure class="cloud flat depth" id="v5"></figure></section>
+</main>
+
+<script>
+/* sample topics: [name, count, daysAgo, finderColorVar] */
+var TAGS = [
+  ["design", 12, 2, "purple"], ["dev", 9, 4, "blue"], ["notes", 7, 8, "green"],
+  ["writing", 6, 20, "green"], ["links", 5, 1, "blue"], ["personal", 5, 40, "gray"],
+  ["photography", 4, 10, "orange"], ["music", 4, 5, "red"], ["reading", 3, 70, "yellow"],
+  ["travel", 3, 95, "blue"], ["ideas", 2, 15, "purple"], ["food", 2, 30, "orange"],
+  ["code", 2, 3, "blue"], ["meta", 2, 2, "gray"]
+];
+var MAX = Math.max.apply(null, TAGS.map(function (t) { return t[1]; }));
+
+function share(c) { return MAX > 1 ? (c - 1) / (MAX - 1) : 0; }
+function sizeRem(c) { return 0.82 + share(c) * 0.43; }        // production's current range
+function ink(days) { return days <= 14 ? ["var(--ink)", 650] : days <= 60 ? ["var(--soft)", 550] : ["var(--faint)", 500]; }
+
+function el(t, i) {
+  var s = sizeRem(t[1]); var k = ink(t[2]);
+  var a = document.createElement("a");
+  a.href = "#"; a.style.cssText =
+    "--tag:var(--tag-" + t[3] + ");--z:" + share(t[1]).toFixed(3) +
+    ";font-size:" + s.toFixed(2) + "rem;color:" + k[0] + ";font-weight:" + k[1] +
+    ";animation-delay:" + (-(i || 0) * 0.37).toFixed(2) + "s";
+  a.innerHTML = t[0] + " <small>" + t[1] + "</small>";
+  return a;
+}
+function byCount(a, b) { return b[1] - a[1] || a[0].localeCompare(b[0]); }
+function centerOut(arr) {                   // largest (arr[0]) to the middle
+  var out = [];
+  arr.forEach(function (t, i) { if (i % 2 === 0) out.push(t); else out.unshift(t); });
+  return out;
+}
+function fill(id, list) { var box = document.getElementById(id); list.forEach(function (t, i) { box.appendChild(el(t, i)); }); }
+
+/* 1: alphabetical */
+fill("v1", TAGS.slice().sort(function (a, b) { return a[0].localeCompare(b[0]); }));
+/* 2: by count desc */
+fill("v2", TAGS.slice().sort(byCount));
+/* 3: flat center-out */
+fill("v3", centerOut(TAGS.slice().sort(byCount)));
+/* 5: depth (flat center-out) */
+fill("v5", centerOut(TAGS.slice().sort(byCount)));
+
+/* 4: diamond rows */
+(function () {
+  var sorted = TAGS.slice().sort(byCount);
+  var n = sorted.length;
+  var rows = n >= 9 ? 5 : n >= 4 ? 3 : 1, mid = rows >> 1;
+  var weights = []; for (var i = 0; i < rows; i++) weights.push((mid - Math.abs(i - mid)) * 2 + 1);
+  var wsum = weights.reduce(function (a, b) { return a + b; }, 0);
+  var caps = weights.map(function (w) { return Math.round(w * n / wsum); });
+  var order = [mid]; for (var d = 1; order.length < rows; d++) { if (mid - d >= 0) order.push(mid - d); if (mid + d < rows) order.push(mid + d); }
+  var over = caps.reduce(function (a, b) { return a + b; }, 0) - n, oi = 0, back = order.slice().reverse();
+  while (over > 0 && oi < rows * 8) { var r = back[oi % rows]; if (r !== mid && caps[r] > 0) { caps[r]--; over--; } oi++; }
+  if (over < 0) caps[mid] += -over;
+  var buckets = []; for (var b = 0; b < rows; b++) buckets.push([]);
+  var idx = 0;
+  order.forEach(function (r) { for (var c = 0; c < caps[r]; c++) if (idx < n) buckets[r].push(sorted[idx++]); });
+  while (idx < n) buckets[mid].push(sorted[idx++]);
+  var host = document.getElementById("v4");
+  buckets.forEach(function (bk) {
+    if (!bk.length) return;
+    var div = document.createElement("div");
+    centerOut(bk).forEach(function (t, i) { div.appendChild(el(t, i)); });
+    host.appendChild(div);
+  });
+})();
+</script>
+</body>
+</html>
