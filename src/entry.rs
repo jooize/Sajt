@@ -1,5 +1,14 @@
+use crate::tags::Tag;
 use chrono::NaiveDateTime;
 use std::path::PathBuf;
+
+/// Tags the site treats as machinery, not topics — never shown in the cloud or
+/// the row rail. `favorite` drives the ★, `public`/`private` drive visibility,
+/// and `Do…` are one-shot action tags the scanner consumes.
+pub fn is_reserved_tag(name: &str) -> bool {
+    matches!(name.to_ascii_lowercase().as_str(), "public" | "private" | "favorite")
+        || name.starts_with("Do")
+}
 
 #[derive(Debug, Clone)]
 pub struct Entry {
@@ -10,7 +19,41 @@ pub struct Entry {
     /// Templates use display_label.as_ref().or(label.as_ref()) for display.
     pub display_label: Option<String>,
     pub extension: String,
-    pub tags: Vec<String>,
+    pub tags: Vec<Tag>,
+    /// Pairwise-grade percentile in `0.0..=1.0`, or `None` until the entry has
+    /// been graded. The grading flow is not built yet, so this is always `None`
+    /// today; the quality meter and level filter read it when it exists.
+    pub grade: Option<f32>,
+}
+
+impl Entry {
+    /// Whether the author marked this entry a favorite (the `favorite` tag → ★).
+    pub fn is_favorite(&self) -> bool {
+        self.tags.iter().any(|t| t.name.eq_ignore_ascii_case("favorite"))
+    }
+
+    /// Tags shown to readers: everything that isn't machinery, in file order.
+    pub fn topical_tags(&self) -> impl Iterator<Item = &Tag> {
+        self.tags.iter().filter(|t| !is_reserved_tag(&t.name))
+    }
+
+    /// Tag names (all of them) for URL/query matching, which is name-based.
+    pub fn tag_names(&self) -> Vec<String> {
+        self.tags.iter().map(|t| t.name.clone()).collect()
+    }
+
+    /// The entry's *type*, derived from the file itself — never a tag. Search
+    /// matches it, so typing "photo" finds photos with zero extra UI.
+    pub fn kind(&self) -> &'static str {
+        match self.extension.to_ascii_lowercase().as_str() {
+            "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "heic" | "heif" | "tiff" | "bmp" => "photo",
+            "html" | "htm" => "page",
+            "link" => "link",
+            "" | "/" => "folder",
+            "md" | "markdown" | "txt" | "text" | "adoc" | "asciidoc" | "rst" | "org" | "tex" => "note",
+            _ => "file",
+        }
+    }
 }
 
 /// Parse a filename like `2026-03-03T143052_sunset.md` into components.

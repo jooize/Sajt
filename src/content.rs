@@ -1,6 +1,6 @@
 use crate::embed::EmbedData;
 use crate::entry::{parse_filename, Entry};
-use crate::tags::{read_tags, remove_tag};
+use crate::tags::{read_tags, read_tags_colored, remove_tag};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -57,7 +57,7 @@ impl ContentStore {
             };
 
             if let Some((timestamp, label, extension)) = parse_filename(&name) {
-                let tags = read_tags(&path);
+                let tags = read_tags_colored(&path);
                 entries.push(Entry {
                     path,
                     timestamp,
@@ -65,6 +65,7 @@ impl ContentStore {
                     display_label: None,
                     extension,
                     tags,
+                    grade: None,
                 });
             } else if let Some(entry) = entry_from_plain_filename(&path, &name) {
                 entries.push(entry);
@@ -219,7 +220,7 @@ fn entry_from_plain_filename(path: &Path, name: &str) -> Option<Entry> {
     let datetime: chrono::DateTime<chrono::Utc> = timestamp.into();
     let naive = datetime.naive_utc();
 
-    let tags = read_tags(path);
+    let tags = read_tags_colored(path);
 
     tracing::debug!(
         "Plain file '{}': using filesystem timestamp {}",
@@ -234,5 +235,6 @@ fn entry_from_plain_filename(path: &Path, name: &str) -> Option<Entry> {
         display_label: None,
         extension: extension.to_string(),
         tags,
+        grade: None,
     })
 }

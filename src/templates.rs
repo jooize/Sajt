@@ -1,500 +1,536 @@
 use crate::entry::Entry;
+use crate::stats::{compute_cloud, finder_color_var, CloudStats, ViewFilter};
 
-const CSS: &str = r#"
+// ============================================================================
+// Stylesheet — ported from the mockups (timeline-glass-mockup.html, the "rows"
+// glass variant Tilde chose, and entry-page-mockup.html's shared header). The
+// old glass-card design was thrown out. Element selectors, no classes (the JS
+// state classes .selected/.near/.empty aside), light-dark() theming.
+// ============================================================================
+
+const CSS: &str = r##"
 :root {
   color-scheme: light dark;
 
-  --color-bg: #fff;
-  --sunset-bg: linear-gradient(180deg, #e8e0f0, #f5d5c8 60%, #fce4b8) fixed;
-  --color-fg: #313b3f;
-  --color-muted: #555;
-  --color-faint: #999;
-  --color-link: #26a8ed;
-  --color-link-hover: #1a8fd4;
-  --color-date: green;
-  --color-tag-bg: rgba(100, 155, 210, .55);
-  --color-tag-hover: rgba(109, 90, 207, .65);
-  --color-tag-fg: #fff;
-  --color-card-bg: rgba(224, 244, 224, .5);
-  --color-border: #e3e9ed;
-  --color-code-bg: #e8ecf0;
-  --color-blockquote-border: #e5eff5;
-  --color-link-underline: #b4d5ee;
-  --color-404: #ccc;
+  --violet: #a123f6;
+  --violet-soft: light-dark(rgba(161, 35, 246, .08), rgba(161, 35, 246, .13));
 
-  --bg-blob-1: rgba(100, 140, 220, .12);
-  --bg-blob-1-end: rgba(100, 140, 220, 0);
-  --bg-blob-2: rgba(180, 100, 200, .08);
-  --bg-blob-2-end: rgba(180, 100, 200, 0);
-  --bg-blob-3: rgba(100, 200, 160, .06);
-  --bg-blob-3-end: rgba(100, 200, 160, 0);
-  --nav-pill-bg: rgba(161, 35, 246, .86);
-  --nav-pill-hover: rgba(161, 35, 246, .99);
-  --nav-pill-glow: rgba(161, 35, 246, .30);
-  --toggle-pill-bg: rgba(220, 245, 220, .3);
-  --toggle-pill-hover: rgba(200, 240, 200, .5);
-  --glass-border: rgba(34, 139, 34, .2);
+  --bg:     light-dark(#f5f4f0, #121514);
+  --ink:    light-dark(#20231f, #d9ded9);
+  --soft:   light-dark(#43473f, #b4bab2);
+  --faint:  light-dark(#71766c, #8b918a);
+  --hair:   light-dark(rgba(46, 62, 50, .18), rgba(178, 205, 184, .16));
+  --pill:   light-dark(rgba(46, 62, 50, .1), rgba(178, 205, 184, .14));
+  --code-bg: light-dark(#eceae4, #1c201a);
+
+  /* Finder tag colors, tuned per scheme */
+  --tag-red:    light-dark(#e0383e, #ff6961);
+  --tag-orange: light-dark(#e8842c, #ffb340);
+  --tag-yellow: light-dark(#d9a800, #ffd426);
+  --tag-green:  light-dark(#2f9e50, #30db5b);
+  --tag-blue:   light-dark(#1673de, #409cff);
+  --tag-purple: light-dark(#9853d2, #bf5af2);
+  --tag-gray:   light-dark(#8e8e93, #98989d);
+
+  --sans:  system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --content-w: 46rem;
+  --rail: 5.6rem;
+
+  /* Glass material (the "rows" variant), tuned to this palette */
+  --glass:        light-dark(rgba(255, 255, 255, .5),  rgba(44, 50, 46, .44));
+  --glass-strong: light-dark(rgba(252, 252, 250, .68), rgba(40, 46, 42, .64));
+  --glass-edge:   light-dark(rgba(255, 255, 255, .62), rgba(255, 255, 255, .1));
   --glass-shadow:
-    inset 0 0 0 1px var(--glass-border),
-    inset 0 1px 1px rgba(255, 255, 255, .55),
-    0 2px 8px rgba(40, 50, 40, .06),
-    0 10px 28px rgba(40, 50, 40, .05);
+    0 6px 20px light-dark(rgba(30, 34, 28, .09), rgba(0, 0, 0, .38)),
+    0 1px 2px  light-dark(rgba(30, 34, 28, .06), rgba(0, 0, 0, .3)),
+    inset 0 1px 0 light-dark(rgba(255, 255, 255, .7), rgba(255, 255, 255, .12));
+  --glass-shadow-hover:
+    0 12px 28px light-dark(rgba(30, 34, 28, .14), rgba(0, 0, 0, .48)),
+    0 1px 2px   light-dark(rgba(30, 34, 28, .06), rgba(0, 0, 0, .3)),
+    inset 0 1px 0 light-dark(rgba(255, 255, 255, .8), rgba(255, 255, 255, .16));
+
+  /* Compatibility aliases so the embed-card CSS keeps rendering until the
+     entry body is fully ported (stage 3-4). */
+  --color-fg: var(--ink);
+  --color-muted: var(--soft);
+  --color-faint: var(--faint);
+  --color-link: var(--violet);
+  --color-link-hover: var(--violet);
+  --color-card-bg: var(--glass);
+  --glass-border: var(--glass-edge);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg: #151515;
-    --sunset-bg: linear-gradient(180deg, #1a1525, #2a1a2e 60%, #2d1f1a) fixed;
-    --color-fg: #d4d4d4;
-    --color-muted: #999;
-    --color-faint: #666;
-    --color-link: #6cb4ee;
-    --color-link-hover: #9ccdff;
-    --color-date: #5a5;
-    --color-tag-bg: rgba(58, 90, 110, .6);
-    --color-tag-hover: rgba(90, 74, 191, .6);
-    --color-tag-fg: #c8dce8;
-    --color-card-bg: rgba(28, 44, 28, .42);
-    --color-border: #333;
-    --color-code-bg: #232629;
-    --color-blockquote-border: #333;
-    --color-link-underline: #3a5a6e;
-    --color-404: #444;
+* { margin: 0; box-sizing: border-box; }
 
-    --bg-blob-1: rgba(60, 80, 160, .25);
-    --bg-blob-1-end: rgba(60, 80, 160, 0);
-    --bg-blob-2: rgba(140, 60, 160, .18);
-    --bg-blob-2-end: rgba(140, 60, 160, 0);
-    --bg-blob-3: rgba(60, 160, 100, .12);
-    --bg-blob-3-end: rgba(60, 160, 100, 0);
-    --nav-pill-bg: rgba(161, 35, 246, .69);
-    --nav-pill-hover: rgba(161, 35, 246, .84);
-    --nav-pill-glow: rgba(161, 35, 246, .31);
-    --toggle-pill-bg: rgba(60, 100, 60, .12);
-    --toggle-pill-hover: rgba(70, 120, 70, .2);
-    --glass-border: rgba(90, 170, 90, .18);
-    --glass-shadow:
-      inset 0 0 0 1px var(--glass-border),
-      inset 0 1px 1px rgba(255, 255, 255, .07),
-      0 2px 8px rgba(0, 0, 0, .28),
-      0 10px 28px rgba(0, 0, 0, .22);
-  }
-}
-
-*, *::before, *::after {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-html {
-  font-size: 62.5%;
-  -webkit-text-size-adjust: 100%;
-}
+html { -webkit-text-size-adjust: 100%; }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
-    Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
-  font-size: 1.6rem;
-  line-height: 1.6;
-  color: var(--color-fg);
-  background: var(--sunset-bg);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1rem;
+  line-height: 1.5;
+  padding-inline: 1.25rem;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-
-a {
-  color: var(--color-link);
-  text-decoration: none;
+:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
-a:hover {
-  color: var(--color-link-hover);
-  text-decoration: underline;
-}
+::selection { background: rgba(161, 35, 246, .25); }
 
-/* Layout */
+a { color: var(--violet); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 main {
-  max-width: 70ch;
+  max-width: var(--content-w);
   margin-inline: auto;
+  padding: 0 0 4rem;
 }
 
-/* Navigation bar */
+/* ---------- reading-width handle (both pages) ---------- */
 
-body > nav {
-  max-width: 70ch;
-  margin-inline: auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: .75em 1em;
-  gap: .5em;
+#grip {
+  position: fixed;
+  top: 50%;
+  translate: 0 -50%;
+  left: calc(50% + var(--content-w) / 2 + .55rem);
+  width: 1.1rem;
+  height: 3.8rem;
+  display: grid;
+  place-items: center;
+  cursor: col-resize;
+  touch-action: none;
+  border-radius: 999px;
+  z-index: 5;
 }
-
-body > nav > a:first-child {
-  display: inline-block;
-  font-size: .85em;
-  padding: .3em .85em;
-  border-radius: 1em;
-  background-color: color-mix(in srgb, var(--color-card-bg), transparent 40%);
-  color: var(--nav-pill-fg, rgba(161, 35, 246, 1));
-  font-weight: 600;
-  text-decoration: none;
-  -webkit-backdrop-filter: blur(8px) saturate(150%);
-  backdrop-filter: blur(8px) saturate(150%);
-  border: none;
-  box-shadow: var(--glass-shadow);
-  transition: background-color .15s, box-shadow .15s;
+#grip::before {
+  content: "";
+  width: 4px;
+  height: 2.4rem;
+  border-radius: 999px;
+  background: var(--hair);
+  transition: background .15s ease, height .15s ease;
 }
+#grip:hover::before,
+#grip:focus-visible::before,
+#grip.active::before { background: var(--violet); height: 3.1rem; }
+@media (prefers-reduced-motion: reduce) { #grip::before { transition: none; } }
+@media (max-width: 56rem) { #grip { display: none; } }
 
-body > nav > a:first-child:hover {
-  background-color: color-mix(in srgb, var(--color-tag-bg), transparent 30%);
-  text-decoration: none;
-}
-
-/* Position toggle — pure CSS checkbox hack */
-
-#pos {
-  position: absolute;
+#readout {
+  position: fixed;
+  top: 50%;
+  left: 0;
+  translate: 0 -50%;
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: .32rem;
+  align-items: baseline;
+  text-align: right;
+  font: 500 .72rem/1.4 var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+  color: var(--bg);
+  background: var(--ink);
+  padding: .36rem .52rem;
+  border-radius: .4rem;
   opacity: 0;
   pointer-events: none;
+  z-index: 6;
+  transition: opacity .12s ease;
 }
+#readout b { font-weight: 600; }
+#readout i { font-style: normal; text-align: left; opacity: .55; }
+body:has(#grip.active) #readout,
+body:has(#grip:focus-visible) #readout { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { #readout { transition: none; } }
+@media (max-width: 56rem) { #readout { display: none; } }
+body:has(#grip.active) { -webkit-user-select: none; user-select: none; }
 
-body > nav > label[for="pos"] {
-  display: inline-block;
-  font-size: .85em;
-  padding: .25em .7em;
-  border-radius: 1em;
-  background-color: color-mix(in srgb, var(--color-card-bg), transparent 40%);
-  border: none;
-  -webkit-backdrop-filter: blur(8px) saturate(150%);
-  backdrop-filter: blur(8px) saturate(150%);
-  box-shadow: var(--glass-shadow);
-  color: var(--color-faint);
-  cursor: pointer;
-  user-select: none;
-  margin-left: auto;
-  transition: all .15s;
-}
+/* ================= shared site header (cloud + controls) ================= */
 
-body > nav > label[for="pos"]:hover {
-  background-color: color-mix(in srgb, var(--color-tag-bg), transparent 30%);
-  color: var(--color-fg);
-}
-
-body > nav > label[for="pos"]::after {
-  content: "\2190 left";
-}
-
-#pos:checked ~ nav {
+#site {
+  max-width: var(--content-w);
   margin-inline: auto;
+  padding: 1.4rem 0 1.3rem;
+  font-family: var(--sans);
 }
 
-#pos:not(:checked) ~ nav {
-  margin-inline: 0;
-}
-
-#pos:checked ~ main {
-  margin-inline: auto;
-}
-
-#pos:not(:checked) ~ main {
-  margin-inline: 0;
-}
-
-#pos:not(:checked) ~ nav > label[for="pos"]::after {
-  content: "center \2192";
-}
-
-@media (max-width: 85ch) {
-  body > nav > label[for="pos"] { display: none; }
-}
-
-/* Glass cards — all viewports */
-
-main > article {
+/* the cloud IS the header: size = entries, ink = recency, dot = Finder color */
+#cloud {
   position: relative;
-  padding: .7em 1em .6em;
-  background-color: var(--color-card-bg);
-  border-radius: .75em;
-  border: none;
-  -webkit-backdrop-filter: blur(16px) saturate(125%);
-  backdrop-filter: blur(16px) saturate(125%);
-  box-shadow: var(--glass-shadow);
-  transition: box-shadow .15s;
+  max-width: 30rem;
+  margin-inline: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  column-gap: 1.4rem;
+  row-gap: .5rem;
+  padding: 1rem .5rem 2.6rem;
+  line-height: 1.25;
 }
-
-main > article.selected {
-  outline: 1.5px solid var(--nav-pill-bg);
-  outline-offset: -1px;
+#cloud:empty { display: none; }
+#cloud a {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: .38rem;
+  font-weight: 550;
+  letter-spacing: -.011em;
 }
-
-@media (min-width: 70ch) {
-  main {
-    padding: 1em;
-  }
-
-  main > article.selected::before {
-    content: "\276F";
-    position: absolute;
-    left: -.5em;
-    top: 50%;
-    transform: translate(-100%, -50%);
-    color: var(--nav-pill-bg);
-    font-size: 1.2em;
-    font-weight: 700;
-    text-shadow: 0 0 6px var(--nav-pill-glow), 0 0 14px var(--nav-pill-glow);
-  }
-
-  @keyframes arrow-nudge {
-    0%, 100% { transform: translate(-100%, -50%); }
-    50% { transform: translate(-50%, -50%); }
-  }
-
-  main > article.selected.entering::before {
-    animation: arrow-nudge .15s ease-in-out;
-  }
+#cloud a:hover { color: var(--violet) !important; text-decoration: none; }
+/* selected topic wears a quiet Finder-grey pill, drawn out of flow so nothing
+   shifts a pixel on toggle */
+#cloud a[aria-current="true"] { isolation: isolate; }
+#cloud a[aria-current="true"]::after {
+  content: "";
+  position: absolute;
+  inset: calc(-.14em + 1px) -.6em calc(-.14em - 1px);
+  z-index: -1;
+  border-radius: 999px;
+  background: var(--pill);
 }
-
-@media (max-width: 70ch) {
-  main {
-    padding: .5em 1em;
-  }
+#cloud a::before {
+  content: "";
+  align-self: center;
+  translate: 0 .09em;
+  width: .5em;
+  height: .5em;
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 50%;
+  background: var(--tag, var(--tag-gray));
 }
-
-/* Article */
-
-article + article {
-  margin-top: 1.2em;
-}
-
-article > header > time {
-  display: block;
-  color: var(--color-date);
-  font-size: .8em;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-article > header > h1 {
-  margin: .1em 0 .3em;
-  font-size: 2.5em;
-  font-weight: 600;
-  line-height: 1.15;
-}
-
-article > header > h2 {
-  margin-top: .1em;
-  margin-bottom: 0;
-  font-size: 1.5em;
-  font-weight: 600;
-  line-height: 1.3;
-}
-
-article > header > h2 > a {
-  color: inherit;
-  text-decoration: none;
-}
-
-article > header > h2 > a:hover {
-  color: var(--color-link);
-  text-decoration: none;
-}
-
-/* Tags */
-
-article > header > nav {
-  font-size: .8em;
-  padding-top: .5em;
-}
-
-article > header > nav > a {
-  display: inline-block;
-  background-color: color-mix(in srgb, var(--color-tag-bg), transparent 20%);
-  border-radius: 1em;
-  padding: .25em .75em;
-  color: var(--color-tag-fg);
-  border: none;
-  -webkit-backdrop-filter: blur(6px) saturate(150%);
-  backdrop-filter: blur(6px) saturate(150%);
-  box-shadow: var(--glass-shadow);
-  transition: background-color .15s;
-}
-
-article > header > nav > a:hover {
-  text-decoration: none;
-  background: var(--color-tag-hover);
-}
-
-/* Timeline entry preview */
-
-article > a {
-  color: var(--color-muted);
-  text-decoration: none;
-}
-
-article > a:hover {
-  color: var(--color-muted);
-  text-decoration: none;
-}
-
-article > a > p {
-  display: inline;
-  font-size: .95em;
-  line-height: 1.5;
-}
-
-/* Content (rendered entry) */
-
-article > section p {
-  margin: 0 0 1.5em;
-}
-
-article > section h2 {
-  font-size: 1.8em;
-  font-weight: 600;
-  margin: .5em 0 .5em;
-  line-height: 1.2;
-}
-
-article > section h3 {
-  font-size: 1.4em;
+#cloud a > small {
+  font-size: .68em;
   font-weight: 500;
-  margin: .5em 0 .5em;
+  color: var(--faint);
+  font-feature-settings: "tnum";
+  translate: 0 -.07em;
 }
 
-article > section h4,
-article > section h5,
-article > section h6 {
-  font-size: 1.1em;
-  font-weight: 500;
-  margin: .5em 0 .5em;
+/* controls: one quiet line, no rule under it */
+#site form {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .4rem 1.2rem;
+  font: 550 .8rem var(--sans);
+  color: var(--faint);
 }
 
-article > section ul,
-article > section ol {
-  padding-left: 1.3em;
-  margin: 0 0 1.5em;
+/* saved-bookmarks count hangs in the left margin, x-aligned with the rows' marks */
+#navsaved {
+  position: absolute;
+  left: -3.4rem;
+  top: .95rem;
+  translate: 0 -50%;
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  padding: 0 .1rem;
+  color: var(--faint);
 }
-
-article > section li {
-  margin: .4em 0;
-  line-height: 1.6;
+#navsaved:hover { color: var(--violet); text-decoration: none; }
+#navsaved[aria-current="page"] { color: var(--violet); }
+#navsaved svg {
+  width: .85rem;
+  height: .85rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
 }
+#navsaved[aria-current="page"] svg { fill: currentColor; }
+#navsaved output { font: 500 .74rem var(--mono); font-feature-settings: "tnum"; }
+#navsaved i { font-style: normal; font-size: .72rem; opacity: .5; }
+#navsaved[hidden] { display: none; }
 
-article > section ul {
-  list-style: disc;
-}
-
-article > section ol {
-  list-style: decimal;
-}
-
-article > section blockquote {
-  margin: 1.5em 0;
-  padding: 0 1.6em;
-  border-left: .3em solid var(--color-blockquote-border);
-}
-
-article > section blockquote p {
-  font-size: 1.1em;
-  font-weight: 300;
-}
-
-article > section pre {
-  overflow-x: auto;
-  padding: 1em;
-  margin: 0 0 1.5em;
-  background: var(--color-code-bg);
-  border-radius: .4em;
-  font-size: .85em;
-  line-height: 1.5;
-}
-
-article > section code {
-  font-family: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  font-size: .9em;
-  background: var(--color-code-bg);
-  padding: .15em .35em;
-  border-radius: .25em;
-}
-
-article > section pre > code {
-  background: none;
+#site form p { display: inline-flex; gap: .55rem; align-items: center; margin: 0; }
+/* stepped bars, lit to the current level */
+#site form p > svg { width: 1.1rem; height: 1.1rem; fill: currentColor; }
+#site form p > svg rect { opacity: .3; }
+#site form p > svg rect[data-on] { opacity: 1; }
+#site form p > a#favonly {
   padding: 0;
-  font-size: inherit;
+  border: none;
+  background: none;
+  color: var(--faint);
+  font: inherit;
+  cursor: pointer;
+}
+#site form p > a#favonly > b { color: var(--violet); font-weight: 500; }
+#site form p > a#favonly:hover { color: var(--violet); text-decoration: none; }
+#site form p > a#favonly[aria-current="true"] { color: var(--ink); }
+
+/* segmented control: a sliding thumb in a quiet glass capsule */
+#site form p > span {
+  position: relative;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--glass);
+  border: .5px solid var(--glass-edge);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, .55), rgba(255, 255, 255, .08));
+}
+#site form p > span > u {
+  position: absolute;
+  inset-block: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / 3);
+  border-radius: 999px;
+  background: light-dark(#fff, rgba(178, 205, 184, .14));
+  box-shadow: 0 1px 3px light-dark(rgba(20, 24, 20, .16), rgba(0, 0, 0, .4));
+  transition: left .18s ease;
+}
+#site form p > span > a {
+  position: relative;
+  padding: .3em .9em;
+  border-radius: 999px;
+  color: var(--faint);
+  text-align: center;
+}
+#site form p > span > a:hover { color: var(--violet); text-decoration: none; }
+#site form p > span > a[aria-current="true"] { color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { #site form p > span > u { transition: none; } }
+
+/* search, always visible, on its own line */
+#site form search { flex-basis: 100%; margin: .4rem 0 0; display: inline-flex; align-items: center; gap: .55rem; }
+#site form search button { display: inline-flex; padding: 0; border: none; background: none; color: var(--faint); cursor: pointer; }
+#site form search button:hover { color: var(--violet); }
+#site form search button svg { width: 1.1rem; height: 1.1rem; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; }
+#site form search input {
+  width: 11rem;
+  padding: .2rem 0;
+  border: none;
+  border-bottom: 1px solid var(--hair);
+  border-radius: 0;
+  background: none;
+  color: var(--ink);
+  font: .85rem var(--sans);
+}
+#site form search input::placeholder { color: var(--faint); }
+#site form search input:focus { outline: none; border-bottom-color: var(--violet); }
+
+/* ---------- crumbs (entry page): up-left on the post ---------- */
+#crumbs {
+  max-width: var(--content-w);
+  margin-inline: auto;
+  display: flex;
+  gap: 1.2rem;
+  margin-bottom: 1.4rem;
+  font: 550 .8rem var(--sans);
+}
+#crumbs a, #crumbs button {
+  padding: 0; border: none; background: none; cursor: pointer;
+  color: var(--faint); font: inherit;
+}
+#crumbs a:hover, #crumbs button:hover { color: var(--violet); text-decoration: none; }
+
+/* ================= timeline: month headings + rows ================= */
+
+main section > h2 {
+  margin: 2.3rem 0 .7rem;
+  font: 650 .95rem var(--sans);
+  font-feature-settings: "tnum";
+  letter-spacing: -.011em;
+  color: var(--soft);
+}
+main section:first-of-type > h2 { margin-top: .9rem; }
+main section > ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
+
+main section article {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--rail) 1fr;
+  column-gap: 1.25rem;
+  padding: .75rem .6rem;
+  margin-inline: -.6rem;
+  border-radius: 14px;
+  background: var(--glass);
+  border: .5px solid var(--glass-edge);
+  -webkit-backdrop-filter: blur(18px) saturate(170%);
+  backdrop-filter: blur(18px) saturate(170%);
+  box-shadow: var(--glass-shadow);
+  transition: transform .16s ease, box-shadow .16s ease;
+}
+main section article:hover { transform: translateY(-1px); box-shadow: var(--glass-shadow-hover); }
+main section article.selected { background: color-mix(in srgb, var(--violet) 9%, var(--glass)); }
+@media (prefers-reduced-motion: reduce) {
+  main section article { transition: none; }
+  main section article:hover { transform: none; }
 }
 
-/* Pandoc Skylighting — syntax highlighting tokens */
-/* kate theme (light), breezedark theme (dark) */
+/* the row's hover zone reaches into the margin its marks hang in */
+main section article::before {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0;
+  left: -3.4rem;
+  width: 3.4rem;
+}
 
+/* left rail: date, quality meter, tags — one straight scan line */
+main section article > aside { display: flex; flex-direction: column; align-items: flex-start; }
+main section article > aside > time {
+  font: 500 .74rem var(--mono);
+  line-height: 1.5rem;
+  font-feature-settings: "tnum";
+  letter-spacing: .02em;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+/* quality: a hairline meter with ticks at the notable/best thresholds */
+main section article > aside > span.meter {
+  position: relative;
+  width: 2.9rem;
+  height: 2px;
+  margin-top: .55rem;
+  border-radius: 1px;
+  background: var(--hair);
+}
+main section article > aside > span.meter > i { position: absolute; inset: 0 auto 0 0; border-radius: 1px; background: var(--faint); }
+main section article:hover > aside > span.meter > i,
+main section article.selected > aside > span.meter > i { background: var(--violet); }
+main section article > aside > span.meter::before,
+main section article > aside > span.meter::after {
+  content: ""; position: absolute; top: -2px; width: 1px; height: 6px; background: var(--hair);
+}
+main section article > aside > span.meter::before { left: 50%; }
+main section article > aside > span.meter::after { left: 78%; }
+
+/* tags: vertical, in their Finder colors */
+main section article > aside > nav { display: flex; flex-direction: column; align-items: flex-start; gap: .18rem; margin-top: .6rem; }
+main section article > aside > nav a { display: inline-flex; align-items: center; gap: .35rem; font: 550 .74rem var(--sans); color: var(--soft); }
+main section article > aside > nav a:hover { color: var(--violet); text-decoration: none; }
+main section article > aside > nav a::before { content: ""; width: .42rem; height: .42rem; border-radius: 50%; background: var(--tag, var(--tag-gray)); }
+
+/* hanging marks, like footnotes: ★ nearest, bookmark outside it */
+main section article aside > b {
+  position: absolute; top: .75rem; left: -1.4rem;
+  color: var(--violet); font-size: .8rem; font-weight: 500; line-height: 1.5rem;
+}
+main section article aside > button {
+  position: absolute; top: .75rem; left: -2.8rem;
+  display: inline-flex; align-items: center; height: 1.5rem; padding: 0 .1rem;
+  border: none; background: none; color: var(--faint); cursor: pointer;
+  opacity: .32;
+  transition: opacity .15s ease, color .15s ease;
+}
+main section article aside > button.near,
+main section article aside > button:focus-visible,
+main section article aside > button[aria-pressed="true"] { opacity: 1; }
+main section article aside > button:hover { color: var(--violet); }
+main section article aside > button[aria-pressed="true"] { color: var(--violet); }
+main section article aside > button svg { width: .85rem; height: .85rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+main section article aside > button[aria-pressed="true"] svg { fill: currentColor; }
+@media (prefers-reduced-motion: reduce) { main section article aside > button { transition: none; } }
+
+/* content: every title the same size */
+main section article h3 { font-size: 1rem; font-weight: 650; letter-spacing: -.011em; line-height: 1.5; margin: 0; }
+main section article h3 a { color: var(--ink); }
+main section article h3 a:hover { color: var(--violet); text-decoration: none; }
+main section article h3 small { font-size: 1em; font-weight: inherit; color: var(--soft); }
+main section article h3 i { font-weight: 450; color: var(--faint); }
+
+main > p.empty { padding: 3rem 0; text-align: center; font-size: .875rem; color: var(--soft); }
+main > p.empty[hidden] { display: none; }
+
+/* compact: no margin to hang into, marks flow inline after the date */
+@media (max-width: 56rem) {
+  main section article aside > b,
+  main section article aside > button { position: static; height: auto; }
+  main section article::before { content: none; }
+  main section article { grid-template-columns: 1fr; row-gap: .15rem; }
+  main section article > aside { flex-direction: row; flex-wrap: wrap; align-items: center; column-gap: .6rem; }
+  main section article > aside > span.meter { margin-top: 0; }
+  main section article > aside > nav { flex-direction: row; margin-top: 0; column-gap: .6rem; }
+  #navsaved { position: static; translate: none; }
+  #cloud { column-gap: 1.2rem; }
+}
+
+/* ================= entry post (plain typography) ================= */
+
+article#post > header > time {
+  display: block;
+  font: 500 .78rem var(--mono);
+  font-feature-settings: "tnum";
+  letter-spacing: .02em;
+  color: var(--faint);
+}
+article#post > header > nav { margin-top: .6rem; display: flex; flex-wrap: wrap; gap: .8rem; font-size: .8rem; }
+article#post > header > nav a { display: inline-flex; align-items: center; gap: .35rem; color: var(--soft); font-weight: 550; }
+article#post > header > nav a:hover { color: var(--violet); text-decoration: none; }
+article#post > header > nav a::before { content: ""; width: .42rem; height: .42rem; border-radius: 50%; background: var(--tag, var(--tag-gray)); }
+
+article#post > section { margin-top: 1.8rem; font-size: 1.05rem; line-height: 1.7; color: var(--ink); }
+article#post > section p { margin: 0 0 1.4em; }
+article#post > section h2 { font-size: 1.5em; font-weight: 650; margin: 1.6em 0 .5em; line-height: 1.2; letter-spacing: -.011em; }
+article#post > section h3 { font-size: 1.2em; font-weight: 600; margin: 1.4em 0 .5em; }
+article#post > section h4, article#post > section h5, article#post > section h6 { font-size: 1em; font-weight: 600; margin: 1.4em 0 .4em; }
+article#post > section ul, article#post > section ol { padding-left: 1.3em; margin: 0 0 1.4em; }
+article#post > section li { margin: .4em 0; }
+article#post > section ul { list-style: disc; }
+article#post > section ol { list-style: decimal; }
+article#post > section blockquote { margin: 1.5em 0; padding: 0 1.4em; border-left: .2em solid var(--hair); color: var(--soft); }
+article#post > section pre { overflow-x: auto; padding: 1em; margin: 0 0 1.4em; background: var(--code-bg); border-radius: .5em; font-size: .85em; line-height: 1.5; }
+article#post > section code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); padding: .15em .35em; border-radius: .3em; }
+article#post > section pre > code { background: none; padding: 0; font-size: inherit; }
+article#post > section img { max-width: 100%; height: auto; border-radius: .5em; }
+article#post > section hr { border: 0; border-top: 1px solid var(--hair); margin: 2.5em 0; }
+article#post > section a { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--violet), transparent 55%); text-underline-offset: .15em; }
+article#post > section a:hover { text-decoration-color: currentColor; }
+
+article#post > footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--hair); font-size: .8rem; }
+article#post > footer a { color: var(--faint); margin-right: 1rem; }
+article#post > footer a:hover { color: var(--ink); text-decoration: none; }
+
+/* image viewer */
+figure { margin-top: 1.5rem; text-align: center; }
+figure > img { max-width: 100%; max-height: 85vh; border-radius: .5em; }
+figure > figcaption { margin-top: .5rem; font-size: .85rem; color: var(--faint); }
+
+/* ---------- Pandoc Skylighting: kate (light) + breezedark (dark) ---------- */
 :root {
-  --hl-keyword: #1f1c1b;
-  --hl-keyword-weight: 700;
-  --hl-datatype: #0057ae;
-  --hl-function: #644a9b;
-  --hl-string: #bf0303;
-  --hl-char: #924c9d;
-  --hl-specialchar: #3daee9;
-  --hl-comment: #898887;
-  --hl-annotation: #ca60ca;
-  --hl-number: #b08000;
-  --hl-operator: #1f1c1b;
-  --hl-controlflow: #1f1c1b;
-  --hl-controlflow-weight: 700;
-  --hl-builtin: #644a9b;
-  --hl-builtin-weight: 700;
-  --hl-variable: #0057ae;
-  --hl-preprocessor: #006e28;
-  --hl-attribute: #0057ae;
-  --hl-import: #ff5500;
-  --hl-error: #bf0303;
-  --hl-alert-fg: #bf0303;
-  --hl-alert-bg: #f7e6e6;
-  --hl-constant: #aa5500;
-  --hl-specialstring: #ff5500;
-  --hl-documentation: #607880;
-  --hl-other: #006e28;
-  --hl-information: #b08000;
+  --hl-keyword: #1f1c1b; --hl-keyword-weight: 700; --hl-datatype: #0057ae;
+  --hl-function: #644a9b; --hl-string: #bf0303; --hl-char: #924c9d;
+  --hl-specialchar: #3daee9; --hl-comment: #898887; --hl-annotation: #ca60ca;
+  --hl-number: #b08000; --hl-operator: #1f1c1b; --hl-controlflow: #1f1c1b;
+  --hl-controlflow-weight: 700; --hl-builtin: #644a9b; --hl-builtin-weight: 700;
+  --hl-variable: #0057ae; --hl-preprocessor: #006e28; --hl-attribute: #0057ae;
+  --hl-import: #ff5500; --hl-error: #bf0303; --hl-alert-fg: #bf0303;
+  --hl-alert-bg: #f7e6e6; --hl-constant: #aa5500; --hl-specialstring: #ff5500;
+  --hl-documentation: #607880; --hl-other: #006e28; --hl-information: #b08000;
 }
-
 @media (prefers-color-scheme: dark) {
   :root {
-    --hl-keyword: #cfcfc2;
-    --hl-keyword-weight: 700;
-    --hl-datatype: #2980b9;
-    --hl-function: #8e44ad;
-    --hl-string: #f44f4f;
-    --hl-char: #3daee9;
-    --hl-specialchar: #3daee9;
-    --hl-comment: #7a7c7d;
-    --hl-annotation: #3f8058;
-    --hl-number: #f67400;
-    --hl-operator: #cfcfc2;
-    --hl-controlflow: #fdbc4b;
-    --hl-controlflow-weight: 700;
-    --hl-builtin: #7f8c8d;
-    --hl-builtin-weight: normal;
-    --hl-variable: #27aeae;
-    --hl-preprocessor: #27ae60;
-    --hl-attribute: #2980b9;
-    --hl-import: #27ae60;
-    --hl-error: #da4453;
-    --hl-alert-fg: #95da4c;
-    --hl-alert-bg: #4d1f24;
-    --hl-constant: #27aeae;
-    --hl-specialstring: #da4453;
-    --hl-documentation: #a43340;
-    --hl-other: #27ae60;
-    --hl-information: #c45b00;
+    --hl-keyword: #cfcfc2; --hl-keyword-weight: 700; --hl-datatype: #2980b9;
+    --hl-function: #8e44ad; --hl-string: #f44f4f; --hl-char: #3daee9;
+    --hl-specialchar: #3daee9; --hl-comment: #7a7c7d; --hl-annotation: #3f8058;
+    --hl-number: #f67400; --hl-operator: #cfcfc2; --hl-controlflow: #fdbc4b;
+    --hl-controlflow-weight: 700; --hl-builtin: #7f8c8d; --hl-builtin-weight: normal;
+    --hl-variable: #27aeae; --hl-preprocessor: #27ae60; --hl-attribute: #2980b9;
+    --hl-import: #27ae60; --hl-error: #da4453; --hl-alert-fg: #95da4c;
+    --hl-alert-bg: #4d1f24; --hl-constant: #27aeae; --hl-specialstring: #da4453;
+    --hl-documentation: #a43340; --hl-other: #27ae60; --hl-information: #c45b00;
   }
 }
-
 div.sourceCode { position: relative; }
-pre.sourceCode { background: var(--color-code-bg); }
-
+pre.sourceCode { background: var(--code-bg); }
 code span.kw { color: var(--hl-keyword); font-weight: var(--hl-keyword-weight); }
 code span.dt { color: var(--hl-datatype); }
 code span.fu { color: var(--hl-function); }
@@ -521,96 +557,446 @@ code span.in { color: var(--hl-information); }
 code span.wa { color: var(--hl-error); }
 code span.vs { color: var(--hl-string); }
 code span.ex { color: var(--hl-function); font-weight: 700; }
+code > span > a { color: var(--faint); text-decoration: none; user-select: none; }
 
-/* Line numbers in code blocks */
-code > span > a { color: var(--color-faint); text-decoration: none; user-select: none; }
+/* ================= help dialog + footer ================= */
 
-article > section img {
-  max-width: 100%;
-  height: auto;
-  border-radius: .4em;
+dialog {
+  min-width: min(21rem, calc(100vw - 3rem));
+  margin: auto auto 4.4rem;
+  border: .5px solid var(--glass-edge);
+  border-radius: 14px;
+  padding: 1.3rem 1.5rem 1.4rem;
+  background: var(--glass-strong);
+  color: var(--ink);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  backdrop-filter: blur(26px) saturate(180%);
+  box-shadow: 0 12px 32px light-dark(rgba(20, 24, 20, .14), rgba(0, 0, 0, .5));
 }
+dialog::backdrop { background: rgba(10, 12, 11, .25); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); }
+dialog h2 { font-size: .95rem; font-weight: 650; margin-bottom: .8rem; }
+dialog dl { display: grid; grid-template-columns: auto 1fr; gap: .4rem 1rem; font-size: .85rem; color: var(--soft); }
+dialog dt { text-align: right; }
+dialog p { margin-top: 1rem; padding-top: .8rem; border-top: 1px solid var(--hair); font-size: .8rem; color: var(--soft); }
+dialog p b { color: var(--violet); font-weight: 500; }
+kbd { font: 500 .95em var(--mono); }
 
-article > section hr {
-  border: 0;
-  border-top: 1px solid var(--color-border);
-  margin: 2.5em 0 3.5em;
-}
-
-article > section a {
-  text-decoration: underline;
-  text-decoration-color: var(--color-link-underline);
-  text-underline-offset: .15em;
-}
-
-article > section a:hover {
-  text-decoration-color: currentColor;
-}
-
-/* Image viewer */
-
-figure {
-  margin-top: 1.5em;
+body > footer {
+  max-width: var(--content-w);
+  margin-inline: auto;
+  padding-bottom: 3rem;
+  font: .8rem var(--sans);
+  color: var(--soft);
   text-align: center;
 }
+body > footer button { padding: 0; border: none; background: none; color: inherit; font: inherit; cursor: pointer; }
+body > footer button:hover { color: var(--violet); }
+"##;
 
-figure > img {
-  max-width: 100%;
-  max-height: 85vh;
-  border-radius: .4em;
+// ============================================================================
+// Client script — ported from the mockups. The cloud, rows and filtering are
+// server-rendered (controls are real links), so this only carries the
+// progressive enhancements: reading-width grip, help dialog, and on the
+// timeline the bookmarks/saved-view/keyboard/proximity behaviors.
+// ============================================================================
+
+const JS: &str = r##"
+(function () {
+  var store = window.localStorage;
+  var WIDTH = "esko-width", SAVED = "esko-saved";
+  var body = document.body, page = body.dataset.page;
+  var help = document.getElementById("help");
+  var helpbtn = document.getElementById("helpbtn");
+
+  /* ---------- help dialog (both pages) ---------- */
+  if (helpbtn && help) helpbtn.addEventListener("click", function () { help.showModal(); });
+  if (help) help.addEventListener("click", function (e) { if (e.target === help) help.close(); });
+
+  /* ---------- reading width: shared grip + store on both pages ---------- */
+  var grip = document.getElementById("grip");
+  var readout = document.getElementById("readout");
+  var rootEl = document.documentElement;
+  var mainEl = document.querySelector("main");
+  var segSpan = document.querySelector("#site form p > span");
+  var qInput = document.getElementById("q");
+  var qbtn = document.getElementById("qbtn");
+  /* the magnifier focuses the field rather than submitting an empty search;
+     without JS it stays a submit button, so search still works. */
+  if (qbtn && qInput) qbtn.addEventListener("click", function (e) { e.preventDefault(); qInput.focus(); });
+  var MINW = 480;
+  var maxW = function () { return Math.min(1160, window.innerWidth - 64); };
+  var clampW = function (v) { return Math.max(MINW, Math.min(maxW(), v)); };
+  var width = parseFloat(store.getItem(WIDTH)) || null;
+  var remPx = parseFloat(getComputedStyle(rootEl).fontSize) || 16;
+  var chPx = 0;
+
+  function measureCh() {
+    if (!mainEl) return;
+    var probe = document.createElement("span");
+    probe.textContent = "0".repeat(50);
+    probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;top:-9999px";
+    var cs = getComputedStyle(mainEl);
+    probe.style.font = cs.font || (cs.fontSize + " " + cs.fontFamily);
+    document.body.appendChild(probe);
+    chPx = probe.getBoundingClientRect().width / 50;
+    probe.remove();
+  }
+  function syncSearchWidth() {
+    if (!qInput || !segSpan) return;
+    if (window.matchMedia("(max-width: 56rem)").matches) { qInput.style.width = ""; return; }
+    qInput.style.width = segSpan.getBoundingClientRect().width + "px";
+  }
+  function applyWidth() {
+    if (width) rootEl.style.setProperty("--content-w", clampW(width) + "px");
+    else rootEl.style.removeProperty("--content-w");
+    if (grip && mainEl) {
+      var px = Math.round(mainEl.getBoundingClientRect().width);
+      grip.setAttribute("aria-valuenow", px);
+      grip.setAttribute("aria-valuemax", Math.round(maxW()));
+      if (!chPx) measureCh();
+      var cells = "<b>" + px + "</b><i>px</i><b>" + (px / remPx).toFixed(1) + "</b><i>rem</i>";
+      if (chPx) cells += "<b>" + Math.round(px / chPx) + "</b><i>ch</i>";
+      if (readout) {
+        readout.innerHTML = cells;
+        var gr = grip.getBoundingClientRect();
+        var room = window.innerWidth - readout.offsetWidth - 10;
+        readout.style.left = Math.max(6, Math.min(gr.right + 6, room)) + "px";
+      }
+    }
+    syncSearchWidth();
+  }
+  if (grip && mainEl) {
+    var dragging = false, grabDX = 0;
+    grip.addEventListener("pointerdown", function (e) {
+      dragging = true; grip.classList.add("active"); grip.setPointerCapture(e.pointerId);
+      grabDX = e.clientX - mainEl.getBoundingClientRect().right;
+    });
+    grip.addEventListener("pointermove", function (e) {
+      if (!dragging) return;
+      var right = e.clientX - grabDX;
+      width = clampW((right - window.innerWidth / 2) * 2);
+      applyWidth();
+    });
+    grip.addEventListener("pointerup", function () {
+      dragging = false; grip.classList.remove("active");
+      if (width) store.setItem(WIDTH, width);
+    });
+    grip.addEventListener("dblclick", function () {
+      width = null; store.removeItem(WIDTH); applyWidth();
+    });
+    grip.addEventListener("keydown", function (e) {
+      var cur = mainEl.getBoundingClientRect().width;
+      if (e.key === "ArrowRight") width = clampW(cur + 24);
+      else if (e.key === "ArrowLeft") width = clampW(cur - 24);
+      else if (e.key === "Home") width = null;
+      else return;
+      e.preventDefault();
+      if (width) store.setItem(WIDTH, width); else store.removeItem(WIDTH);
+      applyWidth();
+    });
+  }
+  window.addEventListener("resize", applyWidth);
+  applyWidth();
+
+  /* ---------- entry page: land on the post, menu button jumps back up ---------- */
+  if (page === "entry") {
+    var landing = document.getElementById("crumbs") || mainEl;
+    var jump = function (y) { window.scrollTo(0, y); };
+    if (landing) jump(landing.getBoundingClientRect().top + window.pageYOffset);
+    var toMenu = document.getElementById("tomenu");
+    if (toMenu) toMenu.addEventListener("click", function () { jump(0); });
+  }
+
+  /* ---------- timeline: bookmarks, saved view, keyboard, proximity ---------- */
+  if (page === "timeline") {
+    var saved = new Set(JSON.parse(store.getItem(SAVED) || "[]"));
+    var navsaved = document.getElementById("navsaved");
+    var count = navsaved && navsaved.querySelector("output");
+    var savedView = body.dataset.view === "saved";
+    var arts = function () { return Array.prototype.slice.call(document.querySelectorAll("main article")); };
+    var keyOf = function (a) { return a.dataset.key; };
+
+    function refreshMarks() {
+      arts().forEach(function (a) {
+        var b = a.querySelector("aside > button");
+        if (b) b.setAttribute("aria-pressed", saved.has(keyOf(a)));
+      });
+    }
+    function refreshNav() {
+      if (!navsaved) return;
+      navsaved.hidden = !(saved.size > 0 || savedView);
+      if (count) count.textContent = saved.size;
+      navsaved.setAttribute("aria-current", savedView ? "page" : "false");
+    }
+    function applySavedView() {
+      if (!savedView) return;
+      var any = false;
+      arts().forEach(function (a) {
+        var li = a.closest("li"), vis = saved.has(keyOf(a));
+        if (li) li.hidden = !vis;
+        if (vis) any = true;
+      });
+      document.querySelectorAll("main section").forEach(function (s) {
+        var vis = Array.prototype.some.call(s.querySelectorAll("li"), function (li) { return !li.hidden; });
+        s.hidden = !vis;
+      });
+      var msg = document.getElementById("saved-empty");
+      if (msg) msg.hidden = any;
+    }
+    refreshMarks(); refreshNav(); applySavedView();
+
+    if (mainEl) mainEl.addEventListener("click", function (e) {
+      var b = e.target.closest("aside > button"); if (!b) return;
+      var a = b.closest("article"), k = keyOf(a);
+      if (saved.has(k)) saved.delete(k); else saved.add(k);
+      store.setItem(SAVED, JSON.stringify(Array.from(saved)));
+      b.setAttribute("aria-pressed", saved.has(k));
+      refreshNav();
+      if (savedView) applySavedView();
+    });
+
+    /* proximity glow: the mark rests dim, lifts to full within ~50px (still
+       grey), turns violet only on direct hover */
+    var NEAR = 50, nearRaf = 0, nx = -1e4, ny = -1e4;
+    function updateNear() {
+      nearRaf = 0;
+      document.querySelectorAll("main article aside > button").forEach(function (b) {
+        var r = b.getBoundingClientRect();
+        var dx = Math.max(r.left - nx, 0, nx - r.right);
+        var dy = Math.max(r.top - ny, 0, ny - r.bottom);
+        b.classList.toggle("near", dx * dx + dy * dy <= NEAR * NEAR);
+      });
+    }
+    function queueNear() { if (!nearRaf) nearRaf = requestAnimationFrame(updateNear); }
+    document.addEventListener("pointermove", function (e) {
+      if (e.pointerType === "touch") return;
+      nx = e.clientX; ny = e.clientY; queueNear();
+    });
+    document.documentElement.addEventListener("pointerleave", function () { nx = ny = -1e4; queueNear(); });
+
+    /* keyboard */
+    var visible = function () { return arts().filter(function (a) { var li = a.closest("li"); return !li || !li.hidden; }); };
+    function move(delta) {
+      var r = visible(); if (!r.length) return;
+      var cur = r.findIndex(function (a) { return a.classList.contains("selected"); });
+      var next = cur < 0 ? (delta > 0 ? 0 : r.length - 1) : Math.max(0, Math.min(r.length - 1, cur + delta));
+      r.forEach(function (a) { a.classList.remove("selected"); });
+      r[next].classList.add("selected");
+      r[next].scrollIntoView({ block: "nearest" });
+    }
+    function clearSel() { document.querySelectorAll("main article.selected").forEach(function (a) { a.classList.remove("selected"); }); }
+    document.addEventListener("keydown", function (e) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (qInput && e.target === qInput) { if (e.key === "Escape") { qInput.blur(); } return; }
+      if (e.target.closest("input, textarea") || (help && help.open)) return;
+      switch (e.key) {
+        case "j": case "ArrowDown": e.preventDefault(); move(1); break;
+        case "k": case "ArrowUp": e.preventDefault(); move(-1); break;
+        case "Enter": { var a = document.querySelector("main article.selected h3 a"); if (a) a.click(); break; }
+        case "b": { var b = document.querySelector("main article.selected aside > button"); if (b) b.click(); break; }
+        case "/": e.preventDefault(); if (qInput) qInput.focus(); break;
+        case "?": if (help) help.showModal(); break;
+        case "Escape": clearSel(); break;
+      }
+    });
+  }
+})();
+"##;
+
+// ---------------------------------------------------------------------------
+// URL / query helpers
+// ---------------------------------------------------------------------------
+
+/// Percent-encode a query-component value (space → %20, RFC 3986 unreserved set
+/// passes through). Keeps search URLs correct without a dependency.
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
 }
 
-figure > figcaption {
-  margin-top: .5em;
-  font-size: .85em;
-  color: var(--color-faint);
-}
-
-/* Footer links */
-
-article > footer {
-  margin-top: 1.5em;
-  font-size: .8em;
-}
-
-article > footer > a {
-  color: var(--color-faint);
-  margin-right: .75em;
-}
-
-article > footer > a:hover {
-  color: var(--color-fg);
-  text-decoration: none;
-}
-
-/* 404 */
-
-.not-found {
-  text-align: center;
-  padding: 6em 0;
-}
-
-.not-found > h1 {
-  font-size: 4em;
-  font-weight: 600;
-  color: var(--color-404);
-}
-
-.not-found > p {
-  margin-top: .5em;
-  color: var(--color-faint);
-  font-size: 1.1em;
-}
-
-"#;
-
-/// Wrap content in a full HTML page shell.
-pub fn page_shell(title: &str, body: &str, show_timeline: bool) -> String {
-    let nav_link = if show_timeline {
-        r#"<a href="/">&#x2196; Timeline</a>"#
+/// Build the query string for a view filter: "" when default, else "?level=…&…".
+fn query_string(view: &ViewFilter) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if view.level > 0 {
+        parts.push(format!("level={}", view.level_word()));
+    }
+    if view.fav {
+        parts.push("fav=1".to_string());
+    }
+    if let Some(ref q) = view.q {
+        parts.push(format!("q={}", percent_encode(q)));
+    }
+    if parts.is_empty() {
+        String::new()
     } else {
-        ""
+        format!("?{}", parts.join("&"))
+    }
+}
+
+/// A raw (un-escaped) URL: path + composed query string.
+fn make_url(path: &str, view: &ViewFilter) -> String {
+    format!("{}{}", path, query_string(view))
+}
+
+// ---------------------------------------------------------------------------
+// Shared site header (the timeline's header, whole) — one component, both pages
+// ---------------------------------------------------------------------------
+
+/// Everything the shared header needs to render itself and reflect the request.
+pub struct HeaderContext<'a> {
+    /// Statistics for the tag cloud, built from all public entries.
+    pub cloud: &'a CloudStats,
+    /// The single active topic (grey pill), if the timeline is filtered to one.
+    pub active_tag: Option<&'a str>,
+    /// The current view filter (level / favorites / search).
+    pub view: &'a ViewFilter,
+    /// The path portion the controls compose their queries onto (e.g. "/",
+    /// "/+design"). Cloud topics always link from root.
+    pub base_path: &'a str,
+    /// Whether this is the reader's saved-bookmarks view.
+    pub saved_view: bool,
+}
+
+impl<'a> HeaderContext<'a> {
+    /// A default (unfiltered) header — used on entry/image pages, where every
+    /// control simply links to the timeline with that filter applied.
+    fn plain(cloud: &'a CloudStats, view: &'a ViewFilter) -> Self {
+        HeaderContext { cloud, active_tag: None, view, base_path: "/", saved_view: false }
+    }
+}
+
+const BOOKMARK_SVG: &str =
+    r#"<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.5h11V21l-5.5-4-5.5 4z"/></svg>"#;
+
+/// Render the tag cloud from real stats.
+fn render_cloud(ctx: &HeaderContext) -> String {
+    let mut out = String::new();
+    for tag in &ctx.cloud.tags {
+        let is_active = ctx.active_tag == Some(tag.name.as_str());
+        // Clicking the active topic clears it; any other selects it (from root),
+        // preserving the current level/favorites/search.
+        let href = if is_active {
+            make_url("/", ctx.view)
+        } else {
+            make_url(&format!("/+{}", tag.name), ctx.view)
+        };
+        let size = ctx.cloud.size_rem(tag.count);
+        let (ink, weight) = ctx.cloud.ink(tag.last_active);
+        let entries_word = if tag.count == 1 { "entry" } else { "entries" };
+        out.push_str(&format!(
+            r#"<a href="{href}" data-tag="{tag}" aria-current="{cur}" style="--tag:{color};font-size:{size:.2}rem;color:{ink};font-weight:{weight}" title="{count} {word}, last active {last}">{tag} <small>{count}</small></a>"#,
+            href = html_escape(&href),
+            tag = html_escape(&tag.name),
+            cur = if is_active { "true" } else { "false" },
+            color = finder_color_var(tag.color),
+            size = size,
+            ink = ink,
+            weight = weight,
+            count = tag.count,
+            word = entries_word,
+            last = tag.last_active.format("%Y-%m-%d"),
+        ));
+    }
+    out
+}
+
+/// Render the whole shared header: cloud + the one quiet controls line.
+fn render_site_header(ctx: &HeaderContext) -> String {
+    let view = ctx.view;
+
+    // Level segmented control: three links, each setting its level while
+    // preserving favorites/search; the thumb + stepped bars reflect the state.
+    let level_link = |lvl: u8, label: &str| {
+        let target = ViewFilter { level: lvl, fav: view.fav, q: view.q.clone() };
+        format!(
+            r#"<a href="{href}" data-level="{lvl}" aria-current="{cur}">{label}</a>"#,
+            href = html_escape(&make_url(ctx.base_path, &target)),
+            lvl = lvl,
+            cur = if view.level == lvl { "true" } else { "false" },
+            label = label,
+        )
     };
+    let thumb_pos = format!("calc(2px + {} * (100% - 4px) / 3)", view.level);
+    let bar = |i: u8| if i <= view.level { " data-on" } else { "" };
+    let level_tip = match view.level {
+        2 => "Showing only the best — graded top 22%",
+        1 => "Showing notable and better — graded top 50%",
+        _ => "Showing everything",
+    };
+
+    // Favorites toggle (independent axis): flips the fav flag, preserves the rest.
+    let fav_target = ViewFilter { level: view.level, fav: !view.fav, q: view.q.clone() };
+    let fav_href = html_escape(&make_url(ctx.base_path, &fav_target));
+
+    // Saved-bookmarks link: to /saved, or back to root when already there.
+    let saved_href = if ctx.saved_view { "/" } else { "/saved" };
+    let saved_current = if ctx.saved_view { "page" } else { "false" };
+
+    // Search preserves level/favorites via hidden fields; action is the path.
+    let mut hidden = String::new();
+    if view.level > 0 {
+        hidden.push_str(&format!(
+            r#"<input type="hidden" name="level" value="{}">"#,
+            view.level_word()
+        ));
+    }
+    if view.fav {
+        hidden.push_str(r#"<input type="hidden" name="fav" value="1">"#);
+    }
+    let q_value = view.q.as_deref().map(html_escape).unwrap_or_default();
+    let action = if ctx.base_path.is_empty() { "/" } else { ctx.base_path };
+
+    format!(
+        r#"<header id="site">
+<nav id="cloud" aria-label="Topics">{cloud}</nav>
+<form method="get" action="{action}">
+<a href="{saved_href}" id="navsaved" hidden aria-current="{saved_current}" aria-label="Saved for later">{bookmark}<i aria-hidden="true">&times;</i><output>0</output></a>
+<p aria-label="How much to show">
+<svg viewBox="0 0 24 24"><title>{tip}</title><rect x="2" y="14" width="5.5" height="8" rx="2.4"{b0}/><rect x="9.25" y="8" width="5.5" height="14" rx="2.4"{b1}/><rect x="16.5" y="2" width="5.5" height="20" rx="2.4"{b2}/></svg>
+<span><u style="left:{thumb}"></u>{everything}{notable}{best}</span>
+<a href="{fav_href}" id="favonly" aria-current="{fav_cur}"><b>&#9733;</b> favorites</a>
+</p>
+<search>
+<button type="submit" id="qbtn" aria-label="Search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M15.2 15.2 21.5 21.5"/></svg></button>
+<input type="search" name="q" id="q" value="{q_value}" placeholder="Search" aria-label="Search entries">
+</search>
+{hidden}
+</form>
+</header>"#,
+        cloud = render_cloud(ctx),
+        action = html_escape(action),
+        saved_href = saved_href,
+        saved_current = saved_current,
+        bookmark = BOOKMARK_SVG,
+        tip = level_tip,
+        b0 = bar(0),
+        b1 = bar(1),
+        b2 = bar(2),
+        thumb = thumb_pos,
+        everything = level_link(0, "everything"),
+        notable = level_link(1, "notable"),
+        best = level_link(2, "best"),
+        fav_href = fav_href,
+        fav_cur = if view.fav { "true" } else { "false" },
+        q_value = q_value,
+        hidden = hidden,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Page shell
+// ---------------------------------------------------------------------------
+
+/// Wrap page content in the full HTML document.
+/// `page_kind` is "timeline" | "entry" | "plain"; `saved_view` marks /saved.
+fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> String {
+    let view_attr = if saved_view { r#" data-view="saved""# } else { "" };
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -620,66 +1006,40 @@ pub fn page_shell(title: &str, body: &str, show_timeline: bool) -> String {
 <title>{title}</title>
 <style>{css}{embed_css}</style>
 </head>
-<body>
-<input type="checkbox" id="pos" checked>
-<nav>
-{nav_link}
-<label for="pos"></label>
-</nav>
-<main>
+<body data-page="{page_kind}"{view_attr}>
+<div id="grip" role="slider" tabindex="0" aria-label="Reading width" aria-orientation="horizontal" aria-valuemin="480" aria-valuemax="1160" aria-valuenow="736" title="Drag to set reading width. Double-click resets."></div>
+<div id="readout" aria-hidden="true"></div>
 {body}
-</main>
-<script>
-!function(){{
-var p=document.getElementById("pos"),s=localStorage.getItem("pos");
-if(s!==null)p.checked=s==="1";
-p.onchange=function(){{localStorage.setItem("pos",p.checked?"1":"0")}};
-var arts=Array.from(document.querySelectorAll("main > article")),sel=-1;
-function pick(i){{
-if(sel>=0&&sel<arts.length){{arts[sel].classList.remove("selected");arts[sel].classList.remove("entering")}}
-sel=i;
-if(sel>=0&&sel<arts.length){{arts[sel].classList.add("selected");arts[sel].scrollIntoView({{block:"nearest",behavior:"smooth"}})}}
-}}
-document.addEventListener("keydown",function(e){{
-if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA"||e.target.isContentEditable)return;
-var k=e.key;
-if(k==="j"||k==="ArrowDown"){{
-e.preventDefault();
-if(arts.length<=1){{window.scrollBy(0,100);return}}
-if(sel<0){{pick(0);return}}
-if(sel>=arts.length-1){{window.scrollBy(0,100);return}}
-pick(sel+1)
-}}else if(k==="k"||k==="ArrowUp"){{
-e.preventDefault();
-if(arts.length<=1){{window.scrollBy(0,-100);return}}
-if(sel<0){{pick(arts.length-1);return}}
-if(sel<=0){{window.scrollBy(0,-100);return}}
-pick(sel-1)
-}}else if(k==="l"||k==="Enter"){{
-if(sel>=0){{var a=arts[sel].querySelector("a[href]");if(a){{e.preventDefault();arts[sel].classList.add("entering");setTimeout(function(){{window.location.href=a.href}},120)}}}}
-}}else if(k==="h"||k==="Backspace"){{
-e.preventDefault();history.back()
-}}
-}});
-window.addEventListener("pageshow",function(e){{if(e.persisted){{var el=document.querySelector(".entering");if(el)el.classList.remove("entering")}}}});
-}}();
-</script>
+<footer><button type="button" id="helpbtn"><kbd>?</kbd> shortcuts</button></footer>
+<dialog id="help" aria-label="Keyboard shortcuts">
+<h2>Keyboard</h2>
+<dl>
+<dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>select next / previous</dd>
+<dt><kbd>Enter</kbd></dt><dd>open the selected entry</dd>
+<dt><kbd>b</kbd></dt><dd>save for later</dd>
+<dt><kbd>/</kbd></dt><dd>search</dd>
+<dt><kbd>Esc</kbd></dt><dd>clear, close</dd>
+<dt><kbd>?</kbd></dt><dd>this help</dd>
+</dl>
+<p><b>&#9733;</b> marks my favorites. Bookmarks are yours &mdash; they never leave this browser.</p>
+</dialog>
+<script>{js}</script>
 </body>
 </html>"#,
         title = html_escape(title),
         css = CSS,
         embed_css = crate::embed::EMBED_CSS,
-        nav_link = nav_link,
+        page_kind = page_kind,
+        view_attr = view_attr,
         body = body,
+        js = JS,
     )
 }
 
-/// Format date with time, month name, and day name: "2026-03-03 17:00 (March, Tuesday)"
-fn format_date_display(ts: &chrono::NaiveDateTime) -> String {
-    ts.format("%Y-%m-%d %H:%M (%B, %A)").to_string()
-}
+// ---------------------------------------------------------------------------
+// Date / label / href helpers
+// ---------------------------------------------------------------------------
 
-/// Format datetime for the HTML `datetime` attribute (ISO 8601).
 fn format_datetime_attr(ts: &chrono::NaiveDateTime) -> String {
     ts.format("%Y-%m-%dT%H:%M:%S").to_string()
 }
@@ -702,7 +1062,15 @@ fn entry_raw_href(entry: &Entry, unique_label: bool) -> String {
     }
 }
 
-/// Count how many times each label appears in a set of entries.
+/// A stable per-entry key for the reader's localStorage bookmarks: the label,
+/// or the timestamp+extension when unlabeled (mirrors the mockup's keyOf).
+fn bookmark_key(entry: &Entry) -> String {
+    match &entry.label {
+        Some(label) => label.clone(),
+        None => format!("{}.{}", entry.timestamp.format("%Y-%m-%dT%H%M%S"), entry.extension),
+    }
+}
+
 fn label_counts(all_entries: &[&Entry]) -> std::collections::HashMap<String, usize> {
     let mut counts = std::collections::HashMap::new();
     for entry in all_entries {
@@ -713,7 +1081,6 @@ fn label_counts(all_entries: &[&Entry]) -> std::collections::HashMap<String, usi
     counts
 }
 
-/// Check if an entry's label is unique across all entries.
 fn is_label_unique(entry: &Entry, counts: &std::collections::HashMap<String, usize>) -> bool {
     match &entry.label {
         Some(label) => counts.get(&label.to_lowercase()).copied().unwrap_or(0) <= 1,
@@ -721,131 +1088,271 @@ fn is_label_unique(entry: &Entry, counts: &std::collections::HashMap<String, usi
     }
 }
 
-/// Render tags as a <nav> with pill links. Empty string if no tags.
-fn tags_nav(tags: &[String]) -> String {
-    if tags.is_empty() {
-        return String::new();
-    }
-    let pills: String = tags
-        .iter()
-        .map(|t| format!(r#"<a href="/+{tag}">{tag}</a>"#, tag = html_escape(t)))
+/// Render an entry's topical tags as a vertical rail nav with Finder-color dots.
+fn rail_tags(entry: &Entry) -> String {
+    let pills: String = entry
+        .topical_tags()
+        .map(|t| {
+            format!(
+                r#"<a href="/+{tag}" data-tag="{tag}" style="--tag:{color}">{tag}</a>"#,
+                tag = html_escape(&t.name),
+                color = finder_color_var(t.color),
+            )
+        })
         .collect::<Vec<_>>()
-        .join(" ");
-    format!("<nav>{}</nav>\n", pills)
+        .join("");
+    if pills.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<nav aria-label="Tags">{}</nav>"#, pills)
+    }
 }
 
-/// Render the timeline page.
-/// `all_entries` is used to determine label uniqueness for URL generation.
-pub fn timeline_page(entries: &[&Entry], filter_desc: &str, all_entries: &[&Entry]) -> String {
-    let title = if filter_desc.is_empty() {
-        "Esko".to_string()
+// ---------------------------------------------------------------------------
+// Timeline page
+// ---------------------------------------------------------------------------
+
+/// Render one timeline row.
+fn render_row(entry: &Entry, unique: bool) -> String {
+    let datetime = format_datetime_attr(&entry.timestamp);
+    let date = entry.timestamp.format("%Y-%m-%d").to_string();
+    let href = entry_href(entry, unique);
+    let key = bookmark_key(entry);
+
+    let star = if entry.is_favorite() {
+        r#"<b title="A favorite of mine">&#9733;</b>"#.to_string()
     } else {
-        format!("{} — Esko", filter_desc)
+        String::new()
+    };
+
+    // The meter only appears once an entry is graded (no grading flow yet).
+    let meter = match entry.grade {
+        Some(q) => {
+            let pct = ((1.0 - q) * 100.0).round().max(1.0) as i32;
+            format!(
+                r#"<span class="meter" title="Graded top {pct}%" aria-label="Graded top {pct}%"><i style="width:{fill}%"></i></span>"#,
+                pct = pct,
+                fill = (q * 100.0).round() as i32,
+            )
+        }
+        None => String::new(),
+    };
+
+    let title = match entry.display_label.as_deref().or(entry.label.as_deref()) {
+        Some(label) => format!(
+            "{}<small>{}</small>",
+            html_escape(label),
+            html_escape(&ext_suffix(entry))
+        ),
+        None => format!(r#"<i>(untitled)</i><small>{}</small>"#, html_escape(&ext_suffix(entry))),
+    };
+
+    format!(
+        r#"<li><article data-key="{key}">
+<aside>
+<time datetime="{datetime}">{date}</time>
+{star}<button type="button" aria-pressed="false" aria-label="Save for later (stays in this browser)" title="Save for later &mdash; stays in this browser">{bookmark}</button>
+{meter}{tags}
+</aside>
+<div><h3><a href="{href}">{title}</a></h3></div>
+</article></li>"#,
+        key = html_escape(&key),
+        datetime = html_escape(&datetime),
+        date = html_escape(&date),
+        star = star,
+        bookmark = BOOKMARK_SVG,
+        meter = meter,
+        tags = rail_tags(entry),
+        href = html_escape(&href),
+        title = title,
+    )
+}
+
+/// The type suffix shown at the title's end: ".md", ".jpg", or "/" for folders.
+fn ext_suffix(entry: &Entry) -> String {
+    match entry.extension.as_str() {
+        "" | "/" => "/".to_string(),
+        ext => format!(".{}", ext),
+    }
+}
+
+/// Render the timeline: shared header + month-grouped rows.
+pub fn timeline_page(
+    entries: &[&Entry],
+    all_entries: &[&Entry],
+    ctx: &HeaderContext,
+    filter_desc: &str,
+) -> String {
+    let title = if filter_desc.is_empty() {
+        "esko.bar".to_string()
+    } else {
+        format!("esko.bar — {}", filter_desc)
     };
 
     let counts = label_counts(all_entries);
 
-    let mut html = String::new();
+    let mut rows = String::new();
+    let mut current_month = String::new();
+    let mut open_section = false;
     for entry in entries {
-        let datetime = format_datetime_attr(&entry.timestamp);
-        let date_display = format_date_display(&entry.timestamp);
+        let month = entry.timestamp.format("%B %Y").to_string();
+        if month != current_month {
+            if open_section {
+                rows.push_str("</ul></section>");
+            }
+            rows.push_str(&format!(
+                r#"<section><h2>{}</h2><ul>"#,
+                html_escape(&month)
+            ));
+            current_month = month;
+            open_section = true;
+        }
         let unique = is_label_unique(entry, &counts);
-        let href = entry_href(entry, unique);
-        let tags = tags_nav(&entry.tags);
-        let label = entry.display_label.as_deref()
-            .or(entry.label.as_deref())
-            .unwrap_or("(Untitled)");
-
-        html.push_str(&format!(
-            r#"<article>
-<header>
-<time datetime="{datetime}">{date_display}</time>
-{tags}<h2><a href="{href}">{label}</a></h2>
-</header>
-</article>
-"#,
-            datetime = html_escape(&datetime),
-            date_display = html_escape(&date_display),
-            tags = tags,
-            href = html_escape(&href),
-            label = html_escape(label),
-        ));
+        rows.push_str(&render_row(entry, unique));
+    }
+    if open_section {
+        rows.push_str("</ul></section>");
     }
 
-    if html.is_empty() {
-        html = "<p>No entries found.</p>".to_string();
+    // Empty states. In the saved view the server sends the full set (the reader's
+    // bookmarks live only in their browser), so the "nothing saved" message is a
+    // JS-toggled element rather than a server verdict.
+    if ctx.saved_view {
+        rows.push_str(
+            r#"<p class="empty" id="saved-empty" hidden>Nothing saved yet &mdash; the bookmark on any entry keeps it here, in this browser.</p>"#,
+        );
+    } else if rows.is_empty() {
+        rows.push_str(r#"<p class="empty">Nothing matches.</p>"#);
     }
 
-    page_shell(&title, &html, false)
+    let body = format!("{}\n<main>{}</main>", render_site_header(ctx), rows);
+    page_shell(&title, &body, "timeline", ctx.saved_view)
 }
 
-/// Render a single entry page with rendered content.
-pub fn entry_page(entry: &Entry, rendered_html: &str, label_unique: bool) -> String {
-    let label = entry.display_label.as_deref()
+// ---------------------------------------------------------------------------
+// Entry / image / 404 pages
+// ---------------------------------------------------------------------------
+
+/// The crumbs row on entry pages: back to the timeline, up to the menu.
+fn crumbs() -> &'static str {
+    r#"<nav id="crumbs" aria-label="Site">
+<a href="/">&#8592; Timeline</a>
+<button type="button" id="tomenu">&#8593; Menu</button>
+</nav>"#
+}
+
+/// Render a single entry page: shared header (linking to the timeline), crumbs,
+/// then the post in plain typography.
+pub fn entry_page(
+    entry: &Entry,
+    rendered_html: &str,
+    label_unique: bool,
+    all_entries: &[&Entry],
+) -> String {
+    let cloud = compute_cloud(all_entries);
+    let view = ViewFilter::default();
+    let ctx = HeaderContext::plain(&cloud, &view);
+
+    let label = entry
+        .display_label
+        .as_deref()
         .or(entry.label.as_deref())
         .unwrap_or("Untitled");
     let datetime = format_datetime_attr(&entry.timestamp);
-    let date_display = format_date_display(&entry.timestamp);
-    let tags = tags_nav(&entry.tags);
+    let date = entry.timestamp.format("%Y-%m-%d %H:%M").to_string();
     let raw_href = entry_raw_href(entry, label_unique);
 
     let body = format!(
-        r#"<article>
+        r#"{header}
+{crumbs}
+<main>
+<article id="post">
 <header>
-<time datetime="{datetime}">{date_display}</time>
+<time datetime="{datetime}">{date}</time>
 {tags}
 </header>
 <section>{content}</section>
 <footer><a href="{raw_href}">source</a> <a href="/">timeline</a></footer>
-</article>"#,
+</article>
+</main>"#,
+        header = render_site_header(&ctx),
+        crumbs = crumbs(),
         datetime = html_escape(&datetime),
-        date_display = html_escape(&date_display),
-        tags = tags,
+        date = html_escape(&date),
+        tags = post_tags(entry),
         content = rendered_html,
         raw_href = html_escape(&raw_href),
     );
 
-    page_shell(label, &body, true)
+    page_shell(&format!("esko.bar — {}", label), &body, "entry", false)
 }
 
 /// Render an image viewer page.
-pub fn image_page(entry: &Entry, _mime: &str, label_unique: bool) -> String {
+pub fn image_page(entry: &Entry, _mime: &str, label_unique: bool, all_entries: &[&Entry]) -> String {
+    let cloud = compute_cloud(all_entries);
+    let view = ViewFilter::default();
+    let ctx = HeaderContext::plain(&cloud, &view);
+
     let label = entry.label.as_deref().unwrap_or("Image");
     let datetime = format_datetime_attr(&entry.timestamp);
-    let date_display = format_date_display(&entry.timestamp);
-    let tags = tags_nav(&entry.tags);
+    let date = entry.timestamp.format("%Y-%m-%d %H:%M").to_string();
     let src = entry_raw_href(entry, label_unique);
 
     let body = format!(
-        r#"<article>
+        r#"{header}
+{crumbs}
+<main>
+<article id="post">
 <header>
-<time datetime="{datetime}">{date_display}</time>
+<time datetime="{datetime}">{date}</time>
 {tags}
 </header>
-<figure>
-<img src="{src}" alt="{alt}">
-</figure>
+<figure><img src="{src}" alt="{alt}"></figure>
 <footer><a href="{src}">original</a> <a href="/">timeline</a></footer>
-</article>"#,
+</article>
+</main>"#,
+        header = render_site_header(&ctx),
+        crumbs = crumbs(),
         datetime = html_escape(&datetime),
-        date_display = html_escape(&date_display),
-        tags = tags,
+        date = html_escape(&date),
+        tags = post_tags(entry),
         src = html_escape(&src),
         alt = html_escape(label),
     );
 
-    page_shell(label, &body, true)
+    page_shell(&format!("esko.bar — {}", label), &body, "entry", false)
 }
 
-/// Render the 404 page.
+/// Post-header tags (horizontal, Finder-color dots) for entry/image pages.
+fn post_tags(entry: &Entry) -> String {
+    let pills: String = entry
+        .topical_tags()
+        .map(|t| {
+            format!(
+                r#"<a href="/+{tag}" style="--tag:{color}">{tag}</a>"#,
+                tag = html_escape(&t.name),
+                color = finder_color_var(t.color),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    if pills.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<nav aria-label="Tags">{}</nav>"#, pills)
+    }
+}
+
+/// Render the 404 page (minimal — no cloud, just the way home).
 pub fn not_found_page() -> String {
-    let body = r#"<article>
-<div class="not-found">
-<h1>404</h1>
-<p>Nothing here.</p>
-</div>
-</article>"#;
-    page_shell("Not Found — Esko", body, true)
+    let body = r#"<nav id="crumbs" aria-label="Site"><a href="/">&#8592; Timeline</a></nav>
+<main>
+<article id="post">
+<header><time>404</time></header>
+<section><p>Nothing here.</p></section>
+</article>
+</main>"#;
+    page_shell("esko.bar — Not Found", body, "plain", false)
 }
 
 fn html_escape(s: &str) -> String {

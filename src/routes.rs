@@ -1,23 +1,111 @@
 use axum::body::Body;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::content::ContentStore;
 use crate::entry::Entry;
 use crate::render::{render_entry, RenderedContent};
-use crate::templates;
-use crate::url::parse_url_path;
+use crate::stats::{compute_cloud, ViewFilter};
+use crate::templates::{self, HeaderContext};
+use crate::url::{parse_url_path, ContentQuery};
 
 pub type AppState = Arc<RwLock<ContentStore>>;
 
+/// Parse the query string into a view filter (level / favorites / search).
+fn view_from_query(params: &HashMap<String, String>) -> ViewFilter {
+    let fav = params
+        .get("fav")
+        .map_or(false, |v| v != "0" && v != "false");
+    ViewFilter::from_params(
+        params.get("level").map(String::as_str),
+        fav,
+        params.get("q").map(String::as_str),
+    )
+}
+
+/// Human-readable filter description for the page title.
+fn filter_title(path_desc: &str, view: &ViewFilter, saved: bool) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if saved {
+        parts.push("Saved".to_string());
+    }
+    if !path_desc.is_empty() {
+        parts.push(path_desc.to_string());
+    }
+    if view.level > 0 {
+        parts.push(view.level_word().to_string());
+    }
+    if view.fav {
+        parts.push("favorites".to_string());
+    }
+    if let Some(ref q) = view.q {
+        parts.push(format!("\u{201c}{}\u{201d}", q));
+    }
+    parts.join(" · ")
+}
+
+/// The single active topic, if the path filters to exactly one tag.
+fn active_tag(query: &ContentQuery) -> Option<&str> {
+    if query.and_tags.len() == 1
+        && query.or_tags.is_empty()
+        && query.date_prefix.is_none()
+        && query.label.is_none()
+    {
+        Some(query.and_tags[0].as_str())
+    } else {
+        None
+    }
+}
+
 /// GET / — timeline
-pub async fn index(State(store): State<AppState>) -> impl IntoResponse {
+pub async fn index(
+    State(store): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
     let store = store.read().await;
     let all: Vec<&Entry> = store.entries.iter().collect();
-    Html(templates::timeline_page(&all, "", &all))
+    let view = view_from_query(&params);
+
+    let display: Vec<&Entry> = all.iter().copied().filter(|e| view.matches(e)).collect();
+
+    let cloud = compute_cloud(&all);
+    let ctx = HeaderContext {
+        cloud: &cloud,
+        active_tag: None,
+        view: &view,
+        base_path: "/",
+        saved_view: false,
+    };
+    let title = filter_title("", &view, false);
+    Html(templates::timeline_page(&display, &all, &ctx, &title))
+}
+
+/// GET /saved — the reader's saved bookmarks (a client-side view: the server
+/// renders the full timeline and the browser filters to what it has saved).
+pub async fn saved(
+    State(store): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let store = store.read().await;
+    let all: Vec<&Entry> = store.entries.iter().collect();
+    let view = view_from_query(&params);
+
+    let display: Vec<&Entry> = all.iter().copied().filter(|e| view.matches(e)).collect();
+
+    let cloud = compute_cloud(&all);
+    let ctx = HeaderContext {
+        cloud: &cloud,
+        active_tag: None,
+        view: &view,
+        base_path: "/saved",
+        saved_view: true,
+    };
+    let title = filter_title("", &view, true);
+    Html(templates::timeline_page(&display, &all, &ctx, &title))
 }
 
 /// GET /static/{*path} — serve static assets with aggressive caching.
@@ -56,17 +144,19 @@ pub async fn serve_static(Path(path): Path<String>) -> Response {
 pub async fn catch_all(
     State(store): State<AppState>,
     Path(path): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let query = parse_url_path(&format!("/{}", path));
+    let view = view_from_query(&params);
     let store = store.read().await;
 
     let all_entries: Vec<&Entry> = store.entries.iter().collect();
 
-    // Filter entries matching the query
+    // Filter entries matching the path query
     let matching: Vec<&Entry> = store
         .entries
         .iter()
-        .filter(|e| query.matches(&e.timestamp, &e.label, &e.tags))
+        .filter(|e| query.matches(&e.timestamp, &e.label, &e.tag_names()))
         .collect();
 
     // Raw file request (URL has extension like sunset.jpg)
@@ -76,8 +166,7 @@ pub async fn catch_all(
 
     // Listing (trailing slash or date-only or tag-only filter)
     if query.is_listing || (query.label.is_none() && (query.date_prefix.is_some() || !query.and_tags.is_empty() || !query.or_tags.is_empty())) {
-        let desc = build_filter_description(&query);
-        return Html(templates::timeline_page(&matching, &desc, &all_entries)).into_response();
+        return render_listing(&matching, &all_entries, &query, &view, &path);
     }
 
     // If date+label URL and a single match with a unique label, redirect to label-only URL
@@ -112,8 +201,30 @@ pub async fn catch_all(
     }
 
     // Multiple matches — show as listing
-    let desc = build_filter_description(&query);
-    Html(templates::timeline_page(&matching, &desc, &all_entries)).into_response()
+    render_listing(&matching, &all_entries, &query, &view, &path)
+}
+
+/// Render a filtered timeline listing: apply the view filter, build the shared
+/// header reflecting the active topic and view, and hand off to the template.
+fn render_listing(
+    matching: &[&Entry],
+    all_entries: &[&Entry],
+    query: &ContentQuery,
+    view: &ViewFilter,
+    path: &str,
+) -> Response {
+    let display: Vec<&Entry> = matching.iter().copied().filter(|e| view.matches(e)).collect();
+    let cloud = compute_cloud(all_entries);
+    let base_path = format!("/{}", path);
+    let ctx = HeaderContext {
+        cloud: &cloud,
+        active_tag: active_tag(query),
+        view,
+        base_path: &base_path,
+        saved_view: false,
+    };
+    let title = filter_title(&build_filter_description(query), view, false);
+    Html(templates::timeline_page(&display, all_entries, &ctx, &title)).into_response()
 }
 
 /// GET /_embed/{entry_name}/{asset_name} — serve a cached sidecar asset (OG images, etc.).
@@ -208,12 +319,14 @@ fn is_label_unique_in(label: &str, entries: &[&Entry]) -> bool {
 
 /// Serve a single entry as a rendered HTML page.
 async fn serve_entry(entry: &Entry, store: &ContentStore, label_unique: bool) -> Response {
+    let all: Vec<&Entry> = store.entries.iter().collect();
+
     // Check if this entry has a cached embed
     if let Some(embed_data) = store.embed_cache.get(&entry.path) {
         if !embed_data.is_upstream_deleted() {
             let cache_dir = crate::embed::cache_dir_for(&entry.path);
             let card_html = crate::embed::render_embed_card(embed_data, &cache_dir);
-            return Html(templates::entry_page(entry, &card_html, label_unique)).into_response();
+            return Html(templates::entry_page(entry, &card_html, label_unique, &all)).into_response();
         }
     }
 
@@ -226,20 +339,20 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, label_unique: bool) ->
         Ok(RenderedContent::Html(html)) => {
             // Expand inline URLs in rendered HTML to embed cards
             let html = crate::embed::expand_inline_embeds(&html, &store.embed_cache);
-            Html(templates::entry_page(entry, &html, label_unique)).into_response()
+            Html(templates::entry_page(entry, &html, label_unique, &all)).into_response()
         }
         Ok(RenderedContent::Standalone(html)) => {
             Html(html).into_response()
         }
         Ok(RenderedContent::PreformattedText(text)) => {
             let pre = format!("<pre>{}</pre>", html_escape_content(&text));
-            Html(templates::entry_page(entry, &pre, label_unique)).into_response()
+            Html(templates::entry_page(entry, &pre, label_unique, &all)).into_response()
         }
         Ok(RenderedContent::Embed(card_html)) => {
-            Html(templates::entry_page(entry, &card_html, label_unique)).into_response()
+            Html(templates::entry_page(entry, &card_html, label_unique, &all)).into_response()
         }
         Ok(RenderedContent::Image { mime }) => {
-            Html(templates::image_page(entry, &mime, label_unique)).into_response()
+            Html(templates::image_page(entry, &mime, label_unique, &all)).into_response()
         }
         Ok(RenderedContent::Download { .. }) => {
             serve_raw_bytes(entry).await
@@ -247,7 +360,7 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, label_unique: bool) ->
         Err(e) => {
             tracing::error!("Render error for {}: {}", entry.path.display(), e);
             let body = format!("<p>Rendering error: {}</p>", html_escape_content(&e));
-            Html(templates::entry_page(entry, &body, label_unique)).into_response()
+            Html(templates::entry_page(entry, &body, label_unique, &all)).into_response()
         }
     }
 }

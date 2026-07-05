@@ -3,6 +3,7 @@ mod embed;
 mod entry;
 mod render;
 mod routes;
+mod stats;
 mod tags;
 mod templates;
 mod url;
@@ -125,6 +126,7 @@ async fn main() {
 
     let app = axum::Router::new()
         .route("/", axum::routing::get(routes::index))
+        .route("/saved", axum::routing::get(routes::saved))
         .route("/_rescan", axum::routing::post(routes::rescan))
         .route(
             "/_embed/{entry_name}/{asset_name}",
