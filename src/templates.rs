@@ -105,25 +105,32 @@ main {
   left: calc(50% + var(--content-w) / 2 + .55rem);
   width: 1.1rem;
   height: 3.8rem;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .3rem;
   cursor: col-resize;
   touch-action: none;
   border-radius: 999px;
   z-index: 5;
 }
-#grip::before {
+#grip::before,
+#grip::after {
   content: "";
   width: 4px;
-  height: 2.4rem;
+  height: 1.05rem;
   border-radius: 999px;
   background: var(--hair);
   transition: background .15s ease, height .15s ease;
 }
 #grip:hover::before,
+#grip:hover::after,
 #grip:focus-visible::before,
-#grip.active::before { background: var(--violet); height: 3.1rem; }
-@media (prefers-reduced-motion: reduce) { #grip::before { transition: none; } }
+#grip:focus-visible::after,
+#grip.active::before,
+#grip.active::after { background: var(--violet); height: 1.35rem; }
+@media (prefers-reduced-motion: reduce) { #grip::before, #grip::after { transition: none; } }
 @media (max-width: 56rem) { #grip { display: none; } }
 
 #readout {
@@ -438,7 +445,7 @@ main section article aside > button:focus-visible,
 main section article aside > button[aria-pressed="true"] { opacity: 1; }
 main section article aside > button:hover { color: var(--violet); }
 main section article aside > button[aria-pressed="true"] { color: var(--violet); }
-main section article aside > button svg { width: .85rem; height: .85rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+main section article aside > button svg { width: .85rem; height: .85rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; translate: 0 -1px; }
 main section article aside > button[aria-pressed="true"] svg { fill: currentColor; }
 @media (prefers-reduced-motion: reduce) { main section article aside > button { transition: none; } }
 
