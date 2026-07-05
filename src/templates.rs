@@ -1,5 +1,7 @@
+use std::collections::VecDeque;
+
 use crate::entry::Entry;
-use crate::stats::{compute_cloud, finder_color_var, CloudStats, ViewFilter};
+use crate::stats::{compute_cloud, finder_color_var, CloudStats, TagStat, ViewFilter};
 
 // ============================================================================
 // Stylesheet — ported from the mockups (timeline-glass-mockup.html, the "rows"
@@ -876,9 +878,27 @@ const BOOKMARK_SVG: &str =
     r#"<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.5h11V21l-5.5-4-5.5 4z"/></svg>"#;
 
 /// Render the tag cloud from real stats.
+/// Order the cloud "center-out": the busiest topic lands in the middle of the
+/// sequence and sizes fall off toward both edges. Sort by count descending
+/// (ties broken alphabetically by name), then alternate back/front into a
+/// deque so the first (largest) sits centered. Presentation only.
+fn center_out(tags: &[TagStat]) -> VecDeque<&TagStat> {
+    let mut sorted: Vec<&TagStat> = tags.iter().collect();
+    sorted.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
+    let mut ordered = VecDeque::with_capacity(sorted.len());
+    for (i, tag) in sorted.into_iter().enumerate() {
+        if i % 2 == 0 {
+            ordered.push_back(tag);
+        } else {
+            ordered.push_front(tag);
+        }
+    }
+    ordered
+}
+
 fn render_cloud(ctx: &HeaderContext) -> String {
     let mut out = String::new();
-    for tag in &ctx.cloud.tags {
+    for tag in center_out(&ctx.cloud.tags) {
         let is_active = ctx.active_tag == Some(tag.name.as_str());
         // Clicking the active topic clears it; any other selects it (from root),
         // preserving the current level/favorites/search.
@@ -1442,4 +1462,43 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn tag(name: &str, count: usize) -> TagStat {
+        TagStat {
+            name: name.to_string(),
+            count,
+            last_active: NaiveDate::from_ymd_opt(2026, 7, 5).unwrap(),
+            color: 0,
+        }
+    }
+
+    #[test]
+    fn center_out_puts_largest_in_the_middle() {
+        let tags = vec![
+            tag("a", 1),
+            tag("b", 2),
+            tag("c", 3),
+            tag("d", 4),
+            tag("e", 5),
+        ];
+        // Sorted desc by count: e(5), d(4), c(3), b(2), a(1); alternating
+        // back/front from the largest yields b, d, e, c, a with e centered.
+        let order: Vec<&str> = center_out(&tags).iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(order, ["b", "d", "e", "c", "a"]);
+    }
+
+    #[test]
+    fn center_out_breaks_count_ties_alphabetically() {
+        let tags = vec![tag("zebra", 3), tag("apple", 3), tag("mango", 3)];
+        // All equal counts: alphabetical order apple, mango, zebra, then
+        // alternating back/front centers the first (apple): mango, apple, zebra.
+        let order: Vec<&str> = center_out(&tags).iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(order, ["mango", "apple", "zebra"]);
+    }
 }
