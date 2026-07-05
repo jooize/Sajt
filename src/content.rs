@@ -217,8 +217,12 @@ fn entry_from_plain_filename(path: &Path, name: &str) -> Option<Entry> {
         .created()
         .or_else(|_| metadata.modified())
         .ok()?;
-    let datetime: chrono::DateTime<chrono::Utc> = timestamp.into();
-    let naive = datetime.naive_utc();
+    // Read the filesystem creation time as LOCAL wall-clock — that is how the
+    // clean-name convention records dates (Finder/`SetFile` set the birthtime in
+    // local time), and how the old `YYYY-MM-DDTHHMMSS_` filenames were written.
+    // Using naive_utc here would shift every date by the machine's UTC offset.
+    let datetime: chrono::DateTime<chrono::Local> = timestamp.into();
+    let naive = datetime.naive_local();
 
     let tags = read_tags_colored(path);
 
