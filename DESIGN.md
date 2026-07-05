@@ -173,6 +173,19 @@ Old date+label URLs 301-redirect to label-only. `/best` and `/everything`
 are retired (DECIDED 2026-07-04): the timeline with its filter row
 (everything · notable · best · ★ favorites) covers both — see Presentation.
 
+**View filters — DECIDED 2026-07-05.** Topics stay path-based (`/+design`,
+`/+design+rust` AND, `/+design,rust` OR): permanent, linkable cool-URIs. The
+transient view state rides in composable query params — `?level=notable|best`,
+`?fav`, and search on the universal `?q=…` — layering onto any path
+(`/+design?level=best&fav`). Every header control is a real `<a>` / GET-form
+(no JS required), so the address bar always reflects the current view and
+right-click → Copy Link shares the exact filtered timeline; no separate "link
+these filters" affordance is needed. `/saved` is the reader's bookmarks, a
+client-side view (the server renders the full timeline, the browser filters to
+what it has in `localStorage`). Tag order in a multi-tag path is left
+as-composed for now (a sorted `rel="canonical"` to fold `+a+b`/`+b+a` is a
+later SEO nicety).
+
 ## Authoring formats
 
 - **CommonMark** (`.md`) — Pandoc `commonmark_x`, as today. Bare URLs on their
@@ -197,12 +210,19 @@ are retired (DECIDED 2026-07-04): the timeline with its filter row
 
 ## Presentation
 
-**DECIDED 2026-07-03: no glass, anywhere.** Plain, typography-first, serious.
-Structure carries the beauty. Reference realization:
+**DECIDED 2026-07-05: the "rows" glass variant** (supersedes the 2026-07-03
+"no glass, anywhere"). After comparing plain / rows / full in
+`static/timeline-glass-mockup.html`, Tilde chose *rows*: on the timeline every
+entry floats as a glass card, and the segmented level control and the help
+dialog pick up the same glass material. The tag-cloud header and the entry-post
+body stay plain — the "full" variant that also glasses the cloud header was
+passed over. The glass sits directly on the plain background (no tinted wall).
+Reference realizations: `static/timeline-glass-mockup.html` (rows) and
 `static/entry-page-mockup.html`.
 
-- **Entry pages** — pure typography on the page background. No cards, no
-  materials, no backdrop filters.
+- **Entry pages** — the *post body* stays pure typography on the page
+  background: no card, no material, no backdrop filter. Only the timeline rows
+  and the two chrome pieces above wear glass.
 - **Site nav — DECIDED 2026-07-04: there isn't one.** The timeline is the
   site root, and its header is the tag cloud itself — a nav row saying
   "Timeline" on the timeline is noise, and **Everything is dropped** (the

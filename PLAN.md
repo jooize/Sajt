@@ -100,9 +100,37 @@ launch (no compat needed pre-v1.0.0).
 
 ## Suggested order (one commit each)
 
-1. Extract a shared header component in templates.rs; render on timeline +
-   entry pages with real tag stats. Decide + implement filter URL scheme.
+1. **DONE 2026-07-05.** Extract a shared header component in templates.rs;
+   render on timeline + entry pages with real tag stats. Decide + implement
+   filter URL scheme. Because the whole design system is one stylesheet, this
+   pass also threw out the old glass-card CSS and ported the timeline visuals
+   (foundation + cloud header + rows-glass rows) and put the shared header on
+   the entry page. What landed:
+   - `src/tags.rs` keeps the Finder color index (0-7) per tag; `src/stats.rs`
+     is new — tag-cloud stats (count/recency/color), the grade thresholds
+     (`NOTABLE`/`BEST`, single source of truth), and the `ViewFilter`
+     (level/fav/q). `Entry` gained `grade: Option<f32>` (always `None` — no
+     grading flow yet) and `tags: Vec<Tag>`, plus `is_favorite`/`kind`/
+     `topical_tags` helpers.
+   - `templates.rs` rewritten: shared `render_site_header`, the ported
+     rows-glass timeline, plain entry post + crumbs, one client `JS` (grip,
+     help, bookmarks, saved view, keyboard j/k/Enter/b//, proximity glow,
+     land-on-post). `routes.rs` parses `?level/&fav/&q`, applies the view
+     filter server-side, adds `/saved`.
+   - URL scheme (decided): tags path-based `/+tag`; level/fav/q as composable
+     query params; controls are real links so the URL bar is the shareable
+     filter link. See DESIGN.md.
+   - Deferred out of this pass (kept for later stages): in-place client
+     re-render so level/tag/search don't reload (a JSON data island seeding
+     the mockup's `paint()`); the full entry-body port (sidenotes, heading
+     anchors, continue-reading — stages 3-4); the interim embed-CSS token
+     bridge in templates.rs (compat `--color-*` aliases) until the entry body
+     is ported. **Grades don't exist yet**, so the quality meter never draws
+     and `notable`/`best` filter to empty until the grading flow lands.
 2. Timeline page: rows/rail/marks/keyboard/help/saved from the mockup.
+   *(Visual rows/rail/marks + keyboard/help/saved shipped in stage 1; what
+   remains here is the no-reload in-place filtering via a JSON data island,
+   and the saved-view "hidden by filters → show them" note it enables.)*
 3. Entry page: land-on-post + crumbs + anchors + proximity JS.
 4. Sidenotes/footnotes two-mode system (pandoc integration: emit `.sn`
    spans + build footnote list; or emit both server-side and hide one).
@@ -116,7 +144,8 @@ then https://localhost. Restart server after changes (Tilde watches live).
 
 ## Open decisions for Tilde
 
-- Glass: plain, rows, or full? (timeline-glass-mockup.html, `g` cycles)
-- Filter URL scheme for production (`/+tag` pattern vs query params)
-- Does the serif/sans typeface toggle ship, and where does it live?
+- ~~Glass: plain, rows, or full?~~ **RESOLVED 2026-07-05: rows.**
+- ~~Filter URL scheme for production~~ **RESOLVED 2026-07-05: tags as paths,
+  view state as composable query params (`?level/&fav/&q`).**
+- Does the serif/sans typeface toggle ship, and where does it live? (still open)
 - Previous-post crumb: deferred as probably too busy.
