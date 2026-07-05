@@ -98,6 +98,11 @@ leaves the browser (help dialog says so). Rename mockup keys `mock-width`,
 `mock-saved`, `mock-type`, `mock-autoload` to real names once, before
 launch (no compat needed pre-v1.0.0).
 
+**DONE 2026-07-05: keys route through a provisional `NS = "site"` constant**,
+so they are `site-width`, `site-saved`, `site-type`, `site-autoload` (NOT the
+`esko-*` this doc's older prose below says — the engine is generic/unbranded;
+rename the one constant once the site is named, pre-1.0, no migration).
+
 ## Suggested order (one commit each)
 
 1. **DONE 2026-07-05.** Extract a shared header component in templates.rs;
@@ -131,9 +136,14 @@ launch (no compat needed pre-v1.0.0).
    *(Visual rows/rail/marks + keyboard/help/saved shipped in stage 1; what
    remains here is the no-reload in-place filtering via a JSON data island,
    and the saved-view "hidden by filters → show them" note it enables.)*
-3. Entry page: land-on-post + crumbs + anchors + proximity JS.
-4. Sidenotes/footnotes two-mode system (pandoc integration: emit `.sn`
+3. **DONE 2026-07-05.** Entry page: land-on-post + crumbs + anchors + proximity JS.
+4. **DONE 2026-07-05.** Sidenotes/footnotes two-mode system (pandoc integration: emit `.sn`
    spans + build footnote list; or emit both server-side and hide one).
+   *(Stages 3–4 shipped together as the entry-body port — see section A below.
+   Continue is a FULL inline-load, not just a plain link; the URL-follow is
+   reading-line / Discourse-style — the address reflects whichever article's
+   top has crossed ~30% of the viewport, stepping through every entry including
+   short link cards.)*
 5. Width grip + readout, shared store, both pages.
 6. Glass variant IF decided; update DESIGN.md either way.
 7. Prune interim glass card styles from templates.rs (DESIGN.md notes they
@@ -171,10 +181,17 @@ Verify with `nix develop --command cargo test` and by running the server.
   URL says so: `/?grade=notable&favorites&q=…`. Internal field stays
   `ViewFilter.level` (it's a floor over grades); `level_word()` renamed
   `grade_word()`; `data-level` attr → `data-grade`.
-- **Tag cloud: center-out.** Sort tags by count desc (ties alphabetical),
+- **Tag cloud: center-out.** ~~Sort tags by count desc (ties alphabetical),
   then alternate push-back/push-front so the largest lands mid-sequence and
   sizes fall off toward both edges. Presentation-only, in `render_cloud`.
-  (Trade-off accepted: loses alphabetical scanning.)
+  (Trade-off accepted: loses alphabetical scanning.)~~ **SUPERSEDED
+  2026-07-05: reverted to flat, left-aligned, stable alphabetical**
+  (case-insensitive). Center-out was shipped (commit 6664175) then judged
+  disorienting — a cloud that rearranges/reshapes between visits loses the
+  predictability that lets you find a topic by muscle memory. Size curve
+  unchanged (`0.82 + share*0.43`). `static/cloud-mockup.html` keeps the
+  compared, rejected alternatives (by-count, center-out, a centered "diamond
+  mass", a literal-3D depth version).
 - **Grip: split handle.** The single 2.4rem bar reads as a scrollbar. Make
   it two short bars with a gap (::before + ::after, 4px × ~1.05rem,
   ~.3rem gap, same radius/colors/hover-to-violet). No exact native macOS
@@ -327,6 +344,12 @@ FILESYSTEM stops being the version store and the SERVER must take over:
 - Privacy fails closed: archived versions are served only while the entry
   is public; unpublish hides all versions. Never archive entries that were
   never public.
+- **Untitled entries are dropped (DECIDED 2026-07-05).** A filename that is
+  only a timestamp (no label) currently mints a bare-timestamp canonical URL
+  (`/2026-03-04T091500`) that collides with the date-filter route — it renders
+  a timeline instead of the entry, so Continue can't inline-load it. Since the
+  filename becomes the name, every entry has a label: this migration stops
+  `parse_filename` minting `None` labels, dropping untitled entries entirely.
 - NOT this session's work — do it together with the filename-convention
   migration (one-shot conversion, pre-v1.0.0). macOS Versions still ruled
   out (below).
@@ -346,5 +369,274 @@ filenames, content hashes) IS the version store, and it's portable.
 - ~~Glass: plain, rows, or full?~~ **RESOLVED 2026-07-05: rows.**
 - ~~Filter URL scheme for production~~ **RESOLVED 2026-07-05: tags as paths,
   view state as composable query params (`?level/&fav/&q`).**
-- Does the serif/sans typeface toggle ship, and where does it live? (still open)
+- ~~Does the serif/sans typeface toggle ship, and where does it live?~~
+  **RESOLVED 2026-07-05: ships; `t` key + a footer control on entry pages,
+  persisted `esko-type`.**
 - Previous-post crumb: deferred as probably too busy.
+
+================================================================================
+
+# 2026-07-05 SESSION 2 HANDOFF (read this first after /clear)
+
+Written just before a context clear. This session was mostly a **design
+conversation** with Tilde that produced a complete, coherent "Phase 2" (identity
++ grading + a URL-grammar redesign), plus it advanced the entry-body port. Two
+buckets below: (A) finish the in-flight entry-body port, then (B) Phase 2.
+
+## A. Entry-body port — EXACT current state
+
+**DONE 2026-07-05 (committed): the entire entry-body port shipped** — the JS
+and Rust halves specced below are all implemented. `enhancePost()` (h1
+canonical-chain anchor + h2 `#` anchors via JS-injected `<a class="anchor">`,
+mini-TOC when ≥ 3 h2s, code copy pills, blockquote quote/deep-link menu),
+`buildFootnotes()` (clone pandoc's bottom `.footnotes` into right-margin `.sn`
+notes; margin-vs-bottom via `(innerWidth - mainWidth)/2 >= 330`, set as
+`html[data-sn]`), serif body + persisted typeface toggle, land-on-post +
+min-height pad, and the FULL inline Continue load are all live. The URL-follow
+was changed from viewport-majority to **reading-line / Discourse-style** (the
+address reflects the article whose top has crossed ~30% of the viewport, so
+short link cards are no longer skipped); a failed inline load falls back to a
+real navigation (click only). Proximity glow now runs on BOTH the timeline and
+entry pages. The entry-body selectors were generalized `article#post` →
+`main > article` so appended articles render identically. Storage keys use
+`NS = "site"` (see Client-side above), NOT the `esko-*` the spec below names.
+The TODO spec is kept below as the record of what was built.
+
+`src/templates.rs` reached this via **uncommitted, working** edits where the
+CSS half landed first (do NOT rewrite it); the JS + Rust halves (specs below)
+then landed and the whole port was committed together. Even mid-port the tree
+compiled and the entry page rendered in serif with working no-JS fallbacks
+(bottom footnotes visible, Continue degrades to a plain link).
+
+### CSS that already landed (in the `CSS` const, uncommitted)
+- Added `--serif` and `--code-hair` tokens.
+- Factored the timeline meter into a shared `.meter` class (so the post header
+  reuses it); `main section article > aside > span.meter` keeps only its
+  margin/violet-on-hover specifics.
+- Rewrote the `article#post` block into the ported serif design, adapted to
+  **pandoc's real output** (verified live): pandoc emits `<h1 id>`/`<h2 id>`
+  (auto ids), `<a class="footnote-ref"><sup>N</sup></a>`, a
+  `<section class="footnotes footnotes-end-of-document"><hr><ol><li id=fnN>…
+  <a class="footnote-back">↩︎</a></li></ol></section>`, and code as
+  `<div class="sourceCode"><pre class="sourceCode lang"><code>` (bare ``` blocks
+  are plain `<pre><code>`). CSS covers: flex post header (time·meter·tags),
+  serif body + `html[data-type="sans"]` swap, h1 clamp/h2 sizes,
+  `:is(h1,h2) > a.anchor` (left-margin, opacity .32, `.near`/`:focus-visible`→1,
+  hover violet, h1 chain svg .58em), `button.pill` (copy + quote/link), copy pill
+  on `div.sourceCode/pre`, blockquote (violet bar, hover `> menu`),
+  `a.footnote-ref sup`, `.sn` two-mode (`html[data-sn="margin"]` shows margin
+  notes and hides `.footnotes`; default/unset = bottom = no-JS-safe),
+  `.footnotes` restyle (hide its `<hr>`, `::before` "Footnotes" heading,
+  `.lit` glow), `#toc` details, `#continue` + autoload `> label`,
+  `main > article + article` border, compact `@media(56rem)` anchors-inline,
+  footer flex + `#typeface`.
+
+### JS still TODO (extend the `JS` const) — full spec
+localStorage keys: `esko-width`, `esko-saved`, `esko-type`, `esko-autoload`.
+- **Generalize proximity glow to BOTH pages**: pull it out of the timeline
+  block; one system over selector `"main article aside > button, main .anchor"`
+  (rAF-throttled, `.near` within 50px; touch ignored). Timeline matches buttons,
+  entry matches injected anchors; appended articles' anchors auto-included.
+- **`enhancePost(post)`** (run on the first `#post` AND each appended article):
+  ensure h2 ids (slugify+uniquify fallback; pandoc usually supplies); capture
+  clean TOC text BEFORE injecting anchors; append h1 chain `a.anchor`
+  (href = `post.dataset.canonical`, SVG via a CHAIN const, **createElement +
+  setAttribute, never innerHTML for attribute values** — labels can hold quotes);
+  append h2 `#id` `a.anchor`; build mini-TOC `<details id="toc">` after the h1
+  when ≥3 h2s; `buildFootnotes(post)`; copy pill on each `pre > code` (host =
+  `div.sourceCode` parent if present else the `pre`); blockquote quote/link
+  `<menu>` (quote copies “lines”+cite; link copies
+  `location.origin + article.dataset.canonical + "#:~:text=" + first line`).
+- **`buildFootnotes`** (scoped per article — handles appended dup ids): for the
+  `.footnotes` section, clone each `ol>li` (strip `.footnote-back`, unwrap a lone
+  `<p>`) into a `<span class="sn"><sup>N</sup>…</span>` inserted after the Nth
+  `a.footnote-ref`; ref click → margin mode `glow(sn)` / bottom mode
+  `li.scrollIntoView + glow(li)`; hover lights the margin note; backref click →
+  scroll to ref; all `preventDefault` (URL stays clean).
+- **`updateSidenotes()` inside `applyWidth`**: set `html[data-sn] =
+  (innerWidth - mainWidth)/2 >= 330 ? "margin" : "bottom"`, but **only once
+  `.sn` spans exist** (guard on `document.querySelector("main .sn")`), so no-JS /
+  pre-enhance stays bottom (footnotes visible). Call `applyWidth()` again after
+  `enhancePost`.
+- **Typeface**: `setType(v)` sets `html[data-type]`, stores `esko-type`, updates
+  the footer `#typeface span` text; wire the footer button + the `t` key (guard
+  inputs/slider). Default serif; brief flash for sans users accepted.
+- **Land-on-post + pad** (`page==="entry"`): `recomputePad()` clears
+  `main.style.minHeight`, measures `#crumbs` absolute top, pads `main` so
+  `scrollHeight >= landingTop + innerHeight`; on load if `!location.hash &&
+  scrollY===0` → pad then `scrollTo(0, landingTop)`; resize re-pads (NO re-jump);
+  `#tomenu` → `scrollTo(0,0)` (instant).
+- **Continue inline-load** (`#continue` present only when a next entry exists):
+  teaser click → `fetch(href)` → `DOMParser` → take `article#post`,
+  `removeAttribute("id")`, `importNode`, insert before `#continue`,
+  `enhancePost`, `applyWidth`, `io.observe`; advance the teaser from the fetched
+  doc's own `#continue > a` (copy href + innerHTML) or, if none, remove teaser +
+  autolabel and set the `<p>` to "That's everything"; reveal the autoload
+  `<label>` after first load. URL-follow: IntersectionObserver over
+  `main > article` picks the viewport-majority article →
+  `history.replaceState(null,"",a.dataset.canonical)` + `document.title` from
+  `a.dataset.title`. Autoload: `esko-autoload` opt-in; IO on `#continue`
+  (rootMargin 200px) calls the loader. **No-JS: Continue is a plain link — must
+  keep working.**
+- Helpers: `glow` (add `.lit`, clear at 1600ms), `copyText` (clipboard +
+  textarea fallback), `flash` (restore innerHTML at 1400ms), `CHAIN` svg,
+  `slugify`.
+
+### Rust markup still TODO (`src/templates.rs`)
+- `entry_page` + `image_page`: add `data-title="{escaped label}"` to
+  `<article id="post">` (URL-follow reads it).
+- `continue_nav`: add `<label hidden><input type="checkbox" id="autoload"> keep
+  loading as I scroll</label>` inside `#continue`.
+- `page_shell`: render a footer typeface control **on entry pages only**, e.g.
+  `<button id="typeface" title="Reading typeface (press t)"><kbd>t</kbd>
+  <span>serif</span></button>` with a `·` separator after the help button.
+
+### Then
+`nix develop --command cargo test`; **restart the server with the sandbox
+disabled** (bind fails otherwise — kill the old instance holding :1234 first);
+click a document entry (hello-world / code-highlighting has 6 h2s → TOC),
+verify anchors/copy/footnotes/typeface/Continue. Commit the whole port as ONE
+commit. Then PLAN items 5 (docs: DESIGN.md/PLAN.md/.claude-memory) and 6 (grep
+`level=`/`fav=`/`data-level`/`entry_href`/`label_unique` — zero outside docs).
+
+## B. PHASE 2 — identity + grading + URL grammar (all DECIDED this session)
+
+Backed by a web prior-art sweep (condensed below). Sequence: write a design doc
+first (`identity-grading-urls.md`, ref from DESIGN.md), then build 2b→2d.
+
+### Entry identity (unlocks the rename Tilde wants)
+- **Server-assigned UUIDv7** per entry, on first sight. Time-ordered (sorts by
+  creation). **NEVER stored as a tag.**
+- Home, tiered: custom **xattr `bar.esko.id`** (invisible in Finder — a
+  different key than `com.apple.metadata:_kMDItemUserTags`; survives an offline
+  Finder rename, inode-attached) **mirrored to a hidden full-name sidecar**
+  (`entry.ext.<suffix>` — survives edits/zip/iCloud where xattrs get stripped);
+  **folder-entries keep the id in an inner file** (most robust — rename the
+  folder = atomic). Content-hash is a **fallback re-pair signal only**, never the
+  identity. A UUID is a *stored fact* → offline edit+rename works with **no
+  daemon running** (the reason hash+name lost).
+- **Do NOT auto-fold** dropped files into folders — it would kill the `.md`-vs-`/`
+  type display and the `/name.md` raw view. File-vs-folder stays a meaningful
+  user choice; folders are opt-in (Tilde's "promote a file to a folder" gesture)
+  for robust identity / multi-file entries.
+
+### Grading
+- **Pairwise** ("A > B"). **Append-only ledger**: a single hidden file
+  **`.esko.bar-grading-ledger.jsonl`** in the content root; server **unions +
+  dedupes** all `.esko.bar-grading-ledger*.jsonl` it finds (lossless merge of
+  iCloud conflict copies). The
+  **disposable derived-rank cache lives in the server state dir OUTSIDE the
+  content tree** (rebuildable, unsynced).
+- Derive `grade` = **P(entry beats a random entry)** via **Bradley-Terry (batch
+  MLE, order-independent, fully recomputable) + a Bayesian prior** (stays finite
+  when deletions fragment the comparison graph — plain BT MLE is undefined on a
+  disconnected graph). NOT live Elo (order-dependent, un-auditable, can't
+  un-count deletions).
+- Thresholds already in `stats.rs`: notable ≥ .50, best ≥ .78. URL stays
+  `?grade=notable|best` (extends to `?grade=0.8` later — same "minimum grade"
+  meaning). `?q=` is search (confirmed). Deletion: tombstone + skip-dangling +
+  prior.
+- Grading surface: a **private authenticated management API** (HTTPS-only, strong
+  auth e.g. passkey/token, unreachable from the public site, fail-closed; raw
+  scores/judgments never render to visitors). Web grader now / native app later
+  both consume it; OpenAPI as the contract, hand-written handlers. Not this
+  phase's build.
+
+### URL grammar redesign (`src/url.rs`) — CHANGES the current scheme
+- **Dates = slash hierarchy** (time IS hierarchy): `/2026/`, `/2026/03/`,
+  `/2026/03/25/`. Truncatable in the URL bar with no trailing-hyphen cleanup.
+  (Replaces the current hyphen-single-segment `/2026-03`.)
+- **Tags = one flat segment**: `/+design+dev+!meme`. `+` = include & join,
+  **`!` = exclude** (can't use `-`: it's a legal tag char, ambiguous inside a
+  packed segment). `ContentQuery` gains `not_tags`. Cloud gets a **three-state
+  cycle** neutral→include→exclude→neutral, each tag a real link to its next
+  state (server-rendered, no JS); excluded tags render **strikethrough** +
+  muted. The header must reflect the **full include/exclude SET** (upgrade from
+  today's single `active_tag`, which also fixes the single-pill limitation).
+- Combined: `/2026/03/25/+design+!meme`.
+- **Entry canonical** `/name` (newest owns bare label). **Older version**:
+  shortest disambiguating **day** prefix `/2026/03/20/name`; `?time=124522`
+  ONLY for same-day collisions. Every non-canonical resolving URL 301s to
+  canonical, query preserved. (Timestamps are currently naive-local — decide
+  UTC/`Z` normalization.)
+
+### Filename rename migration (Tilde's original ask — non-destructive)
+- Drop the `YYYY-MM-DDTHHMMSS_` prefix → clean names. Depends on the UUID
+  identity above so renames stay safe.
+- **NEVER overwrite.** Collisions exist: THREE `cookie-consent-tests.html`
+  (`2026-03-12T133513`, `2026-03-12T170005`, `2026-03-18T222420`); scan for
+  others. Only the **newest keeps the clean name on disk**; older versions' bytes
+  move to a **server-side content-addressed archive** (existing PLAN direction).
+  **Save an index** of original→new name + first-seen + hash.
+- Server stops parsing timestamps from filenames (`entry.rs::parse_filename`);
+  reads first-seen from index/filesystem, identity from UUID. One-shot,
+  pre-1.0.
+
+### Prior-art (condensed, from the research sweep)
+- **Pure sidecar-only pairwise ranking: essentially nobody does it** — a
+  judgment is an *edge* between two items, so tools centralize the graph and at
+  most write the *derived scalar* to sidecars (Photo Mechanic/Lightroom/Narrative
+  XMP ratings; Elo cullers `rank_photos`/`elosort`/`Kura` use a central store).
+  Honest file-native form = append-only ledger (source of truth) + disposable
+  derived index.
+- **Append-only + recompute** is the norm at scale: Chatbot Arena (Bradley-Terry
+  MLE over all votes, order-independent) and gwern's `resorter` (CSV in/out,
+  most-uncertain-pair querying).
+- **Identity across rename+edit**: assigned opaque id wins — **Perkeep permanode**
+  ("a signed random number"), **DEVONthink UUID**, **org-roam `:ID:`**. Every
+  content-hash scheme breaks on edit / rename+edit-together and patches it with
+  fragile heuristics — **TMSU repairs "moved OR modified, but not both"**,
+  git-annex "copies metadata forward" (ambiguous). Confirms UUID over hash.
+- **Sidecars**: full-name (`photo.jpg.xmp`, darktable/digiKam/Immich) beats
+  base-name (collides among siblings sharing a stem). Sidecars join by filename →
+  a rename orphans them unless the join is the embedded id → prefer xattr/folder
+  for the durable copy, sidecar as the portable mirror.
+- **Percentile**: "All Our Ideas" (Salganik–Levy) defines a score as the
+  probability an item beats a random item — exactly our `grade`, robust to sparse
+  counts.
+- Pitfalls to avoid: content-hash-as-identity; base-name sidecar collisions; BT
+  graph disconnection after deletion (→ use a prior); order-dependent online
+  ratings; filename-joined sidecars.
+
+### Execution order (next sessions)
+1. **Finish entry-body port (A)** → test → commit → docs → grep. *(immediate)*
+2. **Phase 2a**: design doc `identity-grading-urls.md` + DESIGN.md refs.
+3. **Phase 2b**: URL grammar (`url.rs` slash-dates; flat `+/!` tags + `not_tags`;
+   cloud three-state + strikethrough + full include/exclude set; `?time=`).
+4. **Phase 2c**: UUID identity (xattr `bar.esko.id` + sidecar mirror / folder
+   inner; hash-heal) → rename migration (non-destructive, index, server archive,
+   stop parsing filename timestamps).
+5. **Phase 2d**: grading (`.esko.bar-grading-ledger.jsonl`, BT+prior, management
+   API, private grading surface).
+
+================================================================================
+
+# 2026-07-05 SESSION 3 HANDOFF (read after /clear)
+
+**Committed this session:** the entry-body port (heading anchors, mini-TOC,
+copy/quote pills, two-mode footnotes/sidenotes, serif body + persisted typeface
+toggle, land-on-post, FULL inline Continue with a reading-line / Discourse-style
+URL-follow) and the tag cloud reverted to **flat, left-aligned, alphabetical**
+(supersedes center-out; the rejected alternatives are kept in
+`static/cloud-mockup.html`). Client storage keys use `NS = "site"`. Docs
+(DESIGN.md, PLAN.md) updated to match.
+
+**Still open from stage 2:** in-place, no-reload filtering (level/tag/search
+without a full page load) via a JSON data island seeding the mockup's `paint()`,
+plus the saved-view "hidden by filters → show them" note it enables.
+
+**Next: Phase 2, in the documented order —**
+1. **2a** — write the design doc `identity-grading-urls.md`, referenced from
+   DESIGN.md.
+2. **2b** — URL grammar: slash-hierarchy dates (`/2026/03/25/`), one flat tag
+   segment with `+` include / `!` exclude, `?time=` for same-day collisions,
+   the full include/exclude set in the header. **Re-evaluate the cloud
+   three-state cycle** (neutral→include→exclude→neutral): the cloud is now
+   alphabetical/stable, so check that interaction and the strikethrough-excluded
+   rendering against the new order before building.
+3. **2c** — UUID identity (`bar.esko.id` xattr + sidecar mirror / folder inner
+   file, content-hash as re-pair fallback) → non-destructive filename rename
+   migration, which **also drops untitled entries** (see the filename-direction
+   section above).
+4. **2d** — grading (`.esko.bar-grading-ledger.jsonl`, Bradley-Terry + prior,
+   private authenticated management API).

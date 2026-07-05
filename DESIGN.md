@@ -173,6 +173,13 @@ Old date+label URLs 301-redirect to label-only. `/best` and `/everything`
 are retired (DECIDED 2026-07-04): the timeline with its filter row
 (everything · notable · best · ★ favorites) covers both — see Presentation.
 
+**Untitled entries go away — DECIDED 2026-07-05.** A filename that is only a
+timestamp mints a bare-timestamp canonical URL that collides with the
+date-filter route (the entry renders as a timeline, so Continue can't
+inline-load it). Since the filename *is* the entry's name, every entry has a
+label: the Phase 2c filename migration stops `parse_filename` minting `None`
+labels, so untitled/bare-timestamp entries are dropped entirely.
+
 **View filters — DECIDED 2026-07-05.** Topics stay path-based (`/+design`,
 `/+design+rust` AND, `/+design,rust` OR): permanent, linkable cool-URIs. The
 transient view state rides in composable query params — `?level=notable|best`,
@@ -320,12 +327,17 @@ Reference realizations: `static/timeline-glass-mockup.html` (rows) and
 - **Tag cloud — DECIDED (v2) 2026-07-04: legible, three readable axes.**
   **Size** = entry count, **ink** (weight/contrast) = recency of last
   activity, **color dot** = the tag's Finder color (dots ride a touch
-  below center, on the label's optical midline). Position stays
-  alphabetical on purpose — scatter clouds read terribly; legibility beats
-  cleverness. The cloud is deliberately narrow so it wraps into a few
-  lines; the block sits at the left edge of the content column while the
-  lines stay centered within it (DECIDED 2026-07-04) — cloud-shaped, not
-  left-leaning, not stretched edge to edge. Since v4 it lives at the top of the timeline as the site
+  below center, on the label's optical midline). **Position — DECIDED
+  2026-07-05: flat, left-aligned, alphabetical** (case-insensitive) — a
+  stable, predictable order so a topic never moves or reshapes between
+  visits. This supersedes the briefly-shipped center-out ordering (a cloud
+  that rearranges was judged disorienting); `static/cloud-mockup.html` keeps
+  the compared, rejected alternatives (by-count, center-out, a centered
+  "diamond mass", a literal-3D depth version). Scatter clouds read terribly;
+  legibility beats cleverness. The cloud is deliberately narrow so it wraps
+  into a few lines; the block sits at the left edge of the content column,
+  its lines left-aligned within it (revised 2026-07-05 from the earlier
+  centered cloud shape). Since v4 it lives at the top of the timeline as the site
   header (`static/timeline-mockup.html`). **The standalone `/topics` page
   is removed** (DECIDED 2026-07-04) — the cloud on the timeline replaced
   it; its by-latest-activity list goes with it (git history is the
@@ -385,7 +397,11 @@ Reference realizations: `static/timeline-glass-mockup.html` (rows) and
 - **CSS conventions** — class-less (element selectors + structural
   combinators) in real templates; `color-scheme: light dark` with custom
   properties; plain-value fallbacks before modern functions so old browsers
-  degrade to a readable page.
+  degrade to a readable page. **Class exceptions** (the only classes the
+  templates use — JS state, JS-injected markup, or pandoc output):
+  `.selected`, `.near`, `.anchor`, `.sn`, `.lit`, `.backref`, `.pill`
+  (JS-driven state or JS-injected) and pandoc's `.footnote-ref` /
+  `.footnote-back` / `.sourceCode` / `.footnotes` (renderer output).
 
 ## Smart features
 
@@ -455,6 +471,24 @@ Content-hash dividends and quiet touches (DECIDED 2026-07-04):
 
 Done 2026-07-03: effects/variants/theme-switcher pruned from templates;
 unreferenced prototypes archived (git history keeps them).
+
+Done 2026-07-05: the mockup design is ported into `src/templates.rs`. Stage 1
+shipped the shared `render_site_header` (tag cloud + controls) on both the
+timeline and entry pages plus the rows-glass timeline. The **entry-body port**
+then shipped in full: JS-injected heading anchors (h1 chains to the entry's
+canonical URL, h2s get `#` section links), a mini-TOC `<details>` when a post
+has ≥ 3 `h2`s, copy pills on code blocks and quote/deep-link pills on
+blockquotes, the two-mode footnote/sidenote system (right-margin `.sn` notes
+when there is room, a bottom footnote list otherwise — no-JS shows the bottom
+list), serif body with a persisted typeface toggle (`t` key + footer control),
+land-on-post scrolling, and an inline Continue that fetches the next entry and
+appends it below with a reading-line (Discourse-style) URL that reflects the
+article whose top has crossed ~30% of the viewport. The entry-body selectors
+were generalized from `article#post` to `main > article` so Continue-appended
+posts render identically. Client storage keys route through a provisional
+`NS = "site"` namespace (`site-width` / `-saved` / `-type` / `-autoload`) — the
+engine is generic, so the one constant is renamed once the site is named
+(pre-1.0, no migration).
 
 Later: grading flow in production, symlink ledger, visitor favorites +
 infinite-scroll continue, Share Extension, passkey auth for `private`,
