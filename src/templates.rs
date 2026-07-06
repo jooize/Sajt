@@ -923,12 +923,19 @@ const JS: &str = r##"
   var readout = document.getElementById("readout");
   var rootEl = document.documentElement;
   var mainEl = document.querySelector("main");
-  var segSpan = document.querySelector("#site form p > span");
-  var qInput = document.getElementById("q");
-  var qbtn = document.getElementById("qbtn");
-  /* the magnifier focuses the field rather than submitting an empty search;
-     without JS it stays a submit button, so search still works. */
-  if (qbtn && qInput) qbtn.addEventListener("click", function (e) { e.preventDefault(); qInput.focus(); });
+  /* header refs live inside #site, which the timeline swaps wholesale on an
+     in-place filter change — so acquire them (and bind the magnifier) through
+     bindHeader(), re-run after every swap. */
+  var segSpan, qInput, qbtn;
+  function bindHeader() {
+    segSpan = document.querySelector("#site form p > span");
+    qInput = document.getElementById("q");
+    qbtn = document.getElementById("qbtn");
+    /* the magnifier focuses the field rather than submitting an empty search;
+       without JS it stays a submit button, so search still works. */
+    if (qbtn && qInput) qbtn.addEventListener("click", function (e) { e.preventDefault(); qInput.focus(); });
+  }
+  bindHeader();
   var MINW = 480;
   var maxW = function () { return Math.min(1160, window.innerWidth - 64); };
   var clampW = function (v) { return Math.max(MINW, Math.min(maxW(), v)); };
@@ -1320,12 +1327,11 @@ const JS: &str = r##"
     }
   }
 
-  /* ---------- timeline: bookmarks, saved view, keyboard, proximity ---------- */
+  /* ---------- timeline: bookmarks, saved view, in-place filtering, keyboard ---------- */
   if (page === "timeline") {
     var saved = new Set(JSON.parse(store.getItem(SAVED) || "[]"));
-    var navsaved = document.getElementById("navsaved");
-    var count = navsaved && navsaved.querySelector("output");
     var savedView = body.dataset.view === "saved";
+    var navsaved, count;
     var arts = function () { return Array.prototype.slice.call(document.querySelectorAll("main article")); };
     var keyOf = function (a) { return a.dataset.key; };
 
@@ -1356,8 +1362,19 @@ const JS: &str = r##"
       var msg = document.getElementById("saved-empty");
       if (msg) msg.hidden = any;
     }
-    refreshMarks(); refreshNav(); applySavedView();
 
+    /* re-read per-render state after an in-place swap: the header (hence
+       #navsaved) is replaced, and body[data-view] flips between / and /saved. */
+    function reinitTimeline() {
+      savedView = body.dataset.view === "saved";
+      navsaved = document.getElementById("navsaved");
+      count = navsaved && navsaved.querySelector("output");
+      refreshMarks(); refreshNav(); applySavedView();
+    }
+    reinitTimeline();
+
+    /* bookmark toggle — delegated on the persistent <main>, so it survives the
+       innerHTML swaps that in-place filtering does. */
     if (mainEl) mainEl.addEventListener("click", function (e) {
       var b = e.target.closest("aside > button"); if (!b) return;
       var a = b.closest("article"), k = keyOf(a);
@@ -1366,6 +1383,82 @@ const JS: &str = r##"
       b.setAttribute("aria-pressed", saved.has(k));
       refreshNav();
       if (savedView) applySavedView();
+    });
+
+    /* ---------- in-place filtering ----------
+       Every header control is a real <a> / GET-form, so this is pure
+       enhancement: with JS off the same clicks navigate. We fetch the target's
+       server-rendered HTML and swap the list (<main>) — and, for a control
+       change, the header (#site) too — then push the URL. No row markup is ever
+       built in JS, so the in-place result cannot drift from a full page load. A
+       sequence token makes the latest request win and drops stale responses. */
+    var swapSeq = 0;
+    function localURL(href) {
+      try { return new URL(href, location.href).origin === location.origin; }
+      catch (e) { return false; }
+    }
+    function swapTo(href, mode, headerToo) {
+      var seq = ++swapSeq;
+      fetch(href, { headers: { "Accept": "text/html" } })
+        .then(function (r) { return r.text(); })
+        .then(function (t) {
+          if (seq !== swapSeq) return;
+          var doc = new DOMParser().parseFromString(t, "text/html");
+          var newMain = doc.querySelector("main");
+          if (!newMain || !mainEl) throw new Error("shape");
+          mainEl.innerHTML = newMain.innerHTML;
+          if (headerToo) {
+            var newSite = doc.getElementById("site"), curSite = document.getElementById("site");
+            if (newSite && curSite) { curSite.innerHTML = newSite.innerHTML; bindHeader(); }
+          }
+          body.dataset.view = doc.body.dataset.view || "";
+          document.title = doc.title;
+          if (mode === "push") history.pushState({ tl: 1 }, "", href);
+          else if (mode === "replace") history.replaceState({ tl: 1 }, "", href);
+          reinitTimeline();
+          applyWidth();
+          if (headerToo && mode === "push") window.scrollTo(0, 0);
+        })
+        .catch(function () { if (seq === swapSeq) location.assign(href); });
+    }
+
+    /* intercept the filter controls: header links (#site) + month headings +
+       the saved-view "show them" link. Row links and all else navigate. */
+    document.addEventListener("click", function (e) {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button) return;
+      var a = e.target.closest("a"); if (!a) return;
+      if (!a.closest("#site") && !a.matches("main section > h2 > a") && a.id !== "unhide") return;
+      var href = a.getAttribute("href");
+      if (!href || !localURL(href)) return;
+      e.preventDefault();
+      swapTo(href, "push", true);
+    });
+
+    /* search: Enter submits, typing live-updates (debounced) — both swap only
+       the list, leaving the focused field untouched. */
+    function searchURL(form) {
+      var u = new URL(form.getAttribute("action") || "/", location.origin);
+      new FormData(form).forEach(function (v, k) {
+        if (k === "q") { if (v.trim()) u.searchParams.set("q", v); }
+        else if (k === "favorites") u.searchParams.set("favorites", "");
+        else if (v) u.searchParams.set(k, v);
+      });
+      return u.pathname + u.search;
+    }
+    var qTimer = 0;
+    document.addEventListener("submit", function (e) {
+      var form = e.target.closest("#site form"); if (!form) return;
+      e.preventDefault(); clearTimeout(qTimer);
+      swapTo(searchURL(form), "push", false);
+    });
+    document.addEventListener("input", function (e) {
+      if (!qInput || e.target !== qInput) return;
+      var form = qInput.form; if (!form) return;
+      clearTimeout(qTimer);
+      qTimer = setTimeout(function () { swapTo(searchURL(form), "replace", false); }, 300);
+    });
+    window.addEventListener("popstate", function () {
+      swapTo(location.pathname + location.search, "none", true);
     });
 
     /* keyboard */
@@ -1381,7 +1474,13 @@ const JS: &str = r##"
     function clearSel() { document.querySelectorAll("main article.selected").forEach(function (a) { a.classList.remove("selected"); }); }
     document.addEventListener("keydown", function (e) {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (qInput && e.target === qInput) { if (e.key === "Escape") { qInput.blur(); } return; }
+      if (qInput && e.target === qInput) {
+        if (e.key === "Escape") {
+          if (qInput.value) { qInput.value = ""; swapTo(searchURL(qInput.form), "push", false); }
+          else qInput.blur();
+        }
+        return;
+      }
       if (e.target.closest("input, textarea") || (help && help.open)) return;
       switch (e.key) {
         case "j": case "ArrowDown": e.preventDefault(); move(1); break;
@@ -1390,7 +1489,11 @@ const JS: &str = r##"
         case "b": { var b = document.querySelector("main article.selected aside > button"); if (b) b.click(); break; }
         case "/": e.preventDefault(); if (qInput) qInput.focus(); break;
         case "?": if (help) help.showModal(); break;
-        case "Escape": clearSel(); break;
+        case "Escape":
+          /* clear a row selection first; otherwise drop any active filter. */
+          if (document.querySelector("main article.selected")) clearSel();
+          else if (location.pathname !== "/" || location.search) swapTo("/", "push", true);
+          break;
       }
     });
   }
