@@ -1,6 +1,7 @@
 mod content;
 mod embed;
 mod entry;
+mod migrate;
 mod render;
 mod routes;
 mod stats;
@@ -8,7 +9,7 @@ mod tags;
 mod templates;
 mod url;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use notify::Watcher;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -36,6 +37,21 @@ struct Args {
     /// Embed liveness check interval in hours (0 = disabled)
     #[arg(long, default_value_t = 24)]
     embed_check_hours: u64,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// One-shot: convert old flat `YYYY-MM-DDTHHMMSS[_label].ext` files into
+    /// folder posts (see entry-model.md). DRY-RUN unless `--apply` is given;
+    /// never overwrites. Run once, pre-1.0.
+    Migrate {
+        /// Perform the migration. Without this, only the plan is printed.
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 /// Platform cache directory used when `--cache-dir` isn't given. Falls back to a
@@ -57,6 +73,15 @@ async fn main() {
         .content_dir
         .canonicalize()
         .unwrap_or_else(|_| args.content_dir.clone());
+
+    // One-shot subcommands run and exit before any server setup.
+    if let Some(Command::Migrate { apply }) = args.command {
+        if let Err(e) = migrate::run(&content_dir, apply) {
+            eprintln!("Migration failed: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
 
     tracing::info!("Content directory: {}", content_dir.display());
 
