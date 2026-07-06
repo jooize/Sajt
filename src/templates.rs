@@ -317,7 +317,7 @@ body:has(#grip.active) { -webkit-user-select: none; user-select: none; }
 }
 #site form p > a#favonly > b { color: var(--violet); font-weight: 500; }
 #site form p > a#favonly:hover { color: var(--violet); text-decoration: none; }
-#site form p > a#favonly[aria-current="true"] { color: var(--ink); }
+#site form p > a#favonly[aria-current="true"] { color: var(--ink); box-shadow: 0 2px 0 -.5px var(--violet); }
 
 /* segmented control: a sliding thumb in a quiet glass capsule */
 #site form p > span {
@@ -627,6 +627,10 @@ main > article > section blockquote {
 }
 main > article > section blockquote p { margin: 0 0 .6rem; }
 main > article > section blockquote p:last-child { margin-bottom: 0; }
+main > article > section blockquote :is(footer, cite) {
+  display: block; margin-top: .35rem; font: .8rem var(--sans);
+  font-style: normal; color: var(--faint);
+}
 main > article > section blockquote > menu {
   position: absolute; top: .05rem; right: 0;
   display: flex; gap: .35rem; margin: 0; padding: 0; list-style: none;
@@ -1134,7 +1138,7 @@ const JS: &str = r##"
         var details = document.createElement("details");
         details.id = "toc";
         var summary = document.createElement("summary");
-        summary.textContent = "Contents";
+        summary.textContent = "On this page";
         details.appendChild(summary);
         var ol = document.createElement("ol");
         toc.forEach(function (t) {
@@ -1756,6 +1760,21 @@ fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> Str
     } else {
         ""
     };
+    // The help dialog lists only the shortcuts that actually work on this page:
+    // j/k/Enter/b are timeline-only; t (typeface) is entry-only.
+    let shortcuts = if page_kind == "entry" {
+        r#"<dt><kbd>t</kbd></dt><dd>reading typeface (serif / sans)</dd>
+<dt><kbd>/</kbd></dt><dd>search</dd>
+<dt><kbd>Esc</kbd></dt><dd>close</dd>
+<dt><kbd>?</kbd></dt><dd>this help</dd>"#
+    } else {
+        r#"<dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>select next / previous</dd>
+<dt><kbd>Enter</kbd></dt><dd>open the selected entry</dd>
+<dt><kbd>b</kbd></dt><dd>save for later</dd>
+<dt><kbd>/</kbd></dt><dd>search</dd>
+<dt><kbd>Esc</kbd></dt><dd>clear, close</dd>
+<dt><kbd>?</kbd></dt><dd>this help</dd>"#
+    };
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -1772,14 +1791,7 @@ fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> Str
 <footer><button type="button" id="helpbtn"><kbd>?</kbd> shortcuts</button>{typeface}</footer>
 <dialog id="help" aria-label="Keyboard shortcuts">
 <h2>Keyboard</h2>
-<dl>
-<dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>select next / previous</dd>
-<dt><kbd>Enter</kbd></dt><dd>open the selected entry</dd>
-<dt><kbd>b</kbd></dt><dd>save for later</dd>
-<dt><kbd>/</kbd></dt><dd>search</dd>
-<dt><kbd>Esc</kbd></dt><dd>clear, close</dd>
-<dt><kbd>?</kbd></dt><dd>this help</dd>
-</dl>
+<dl>{shortcuts}</dl>
 <p><b>&#9733;</b> marks my favorites. Bookmarks are yours &mdash; they never leave this browser.</p>
 </dialog>
 <script>{js}</script>
@@ -1792,6 +1804,7 @@ fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> Str
         view_attr = view_attr,
         body = body,
         typeface = typeface,
+        shortcuts = shortcuts,
         js = JS,
     )
 }
