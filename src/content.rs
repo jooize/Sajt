@@ -130,6 +130,7 @@ fn build_bare_post(item: &TopItem) -> Entry {
     let (stem, ext) = split_name(&item.name);
     let tags = read_tags_colored(&item.path);
     let timestamp = mtime_local(&item.path).unwrap_or_else(epoch);
+    let excerpt = extract_excerpt(&item.path, ext);
 
     // Copies were already routed away, so a space in a bare label means the name
     // parsed as no known grammar (a typo or look-alike char) — fail closed.
@@ -146,6 +147,7 @@ fn build_bare_post(item: &TopItem) -> Entry {
         edited: None,
         label: Some(stem.to_string()),
         display_label: None,
+        excerpt,
         extension: ext.to_string(),
         tags,
         grade: None,
@@ -183,6 +185,7 @@ fn build_folder_post(item: &TopItem) -> Entry {
 
     let primary = scan.primary.expect("a folder post with no error has a primary");
     let (_, ext) = split_name(&primary.name);
+    let excerpt = extract_excerpt(&primary.path, ext);
 
     // Publish date: the date marker, else the primary's mtime. The edited line is
     // the primary's mtime, shown only when it is meaningfully later than publish.
@@ -201,6 +204,7 @@ fn build_folder_post(item: &TopItem) -> Entry {
         edited,
         label: Some(label),
         display_label: None,
+        excerpt,
         extension: ext.to_string(),
         tags,
         grade: None,
@@ -220,6 +224,7 @@ fn errored_folder(item: &TopItem, tags: Vec<Tag>, error: PostError) -> Entry {
         edited: None,
         label: Some(item.name.clone()),
         display_label: None,
+        excerpt: None,
         extension: String::new(),
         tags,
         grade: None,
@@ -227,6 +232,169 @@ fn errored_folder(item: &TopItem, tags: Vec<Tag>, error: PostError) -> Entry {
         revisions: Vec::new(),
         error: Some(error),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Row excerpt — the first prose paragraph of a text post
+// ---------------------------------------------------------------------------
+
+/// A one-line row description: the first prose paragraph of a text post,
+/// stripped to plain text and length-capped. `None` for non-text posts
+/// (photos, links, folders, other files) and — deliberately — for HTML pages,
+/// whose `<style>`/`<script>` text must never leak into a description.
+fn extract_excerpt(path: &Path, ext: &str) -> Option<String> {
+    const MAX_READ: u64 = 16 * 1024;
+    const MAX_LEN: usize = 200;
+    let text_like = matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "md" | "markdown" | "txt" | "text" | "adoc" | "asciidoc" | "rst" | "org" | "tex"
+    );
+    if !text_like {
+        return None;
+    }
+    // A description never needs the whole file — read only a prefix.
+    let mut buf = Vec::new();
+    {
+        use std::io::Read;
+        let file = std::fs::File::open(path).ok()?;
+        file.take(MAX_READ).read_to_end(&mut buf).ok()?;
+    }
+    let text = String::from_utf8_lossy(&buf);
+    let para = collapse_ws(&first_prose_paragraph(&text)?);
+    if para.is_empty() {
+        None
+    } else {
+        Some(truncate_words(&para, MAX_LEN))
+    }
+}
+
+/// The first run of prose lines: skips leading blanks, ATX headings, block
+/// quotes, tables, fenced code, comments and thematic breaks, then joins the
+/// first paragraph and strips inline markup. Best-effort, format-agnostic.
+fn first_prose_paragraph(text: &str) -> Option<String> {
+    let mut in_fence = false;
+    let mut para: Vec<String> = Vec::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with("```") || line.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        if line.is_empty() {
+            if para.is_empty() {
+                continue; // still skipping leading blanks
+            }
+            break; // a blank ends the first paragraph
+        }
+        if is_block_marker(line) {
+            if para.is_empty() {
+                continue; // skip a leading heading / marker (e.g. the title)
+            }
+            break;
+        }
+        para.push(strip_inline_markup(line));
+    }
+    if para.is_empty() {
+        None
+    } else {
+        Some(para.join(" "))
+    }
+}
+
+/// A trimmed, non-empty line that opens a non-prose block we skip over.
+fn is_block_marker(line: &str) -> bool {
+    let first = line.as_bytes()[0];
+    matches!(first, b'#' | b'>' | b'|')
+        || line.starts_with("- ")
+        || line.starts_with("* ")
+        || line.starts_with("+ ")
+        || line.starts_with("<!--")
+        || line == "---"
+        || line == "***"
+        || line == "___"
+        || line.starts_with("// ")                        // asciidoc comment
+        || (first == b'=' && line[1..].starts_with(' '))  // asciidoc "= Title"
+}
+
+/// Strip HTML tags, markdown links/images, and emphasis/code markers, leaving
+/// readable text: `[text](url)` -> `text`, `![alt](url)` -> `alt`.
+fn strip_inline_markup(s: &str) -> String {
+    // 1) drop HTML tags
+    let mut no_tags = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => no_tags.push(c),
+            _ => {}
+        }
+    }
+    // 2) resolve markdown links/images to their visible text
+    let delinked = delink(&no_tags);
+    // 3) drop emphasis / code / strikethrough markers
+    delinked.chars().filter(|c| !matches!(c, '*' | '`' | '~')).collect()
+}
+
+/// Replace `[text](url)` / `![alt](url)` with their visible text. Unmatched or
+/// reference-style brackets degrade to their inner text (best-effort).
+fn delink(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(open) = rest.find('[') {
+        out.push_str(&rest[..open]);
+        if out.ends_with('!') {
+            out.pop(); // it was an image ![alt](...) — drop the marker
+        }
+        let after_open = &rest[open + 1..];
+        let Some(close) = after_open.find(']') else {
+            out.push_str(after_open);
+            return out;
+        };
+        out.push_str(&after_open[..close]);
+        let after_close = &after_open[close + 1..];
+        if let Some(stripped) = after_close.strip_prefix('(') {
+            if let Some(paren) = stripped.find(')') {
+                rest = &stripped[paren + 1..];
+                continue;
+            }
+        }
+        rest = after_close;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Collapse all runs of whitespace to single spaces and trim.
+fn collapse_ws(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Truncate to at most `max` characters on a word boundary, appending an
+/// ellipsis when the text was shortened.
+fn truncate_words(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    for word in s.split(' ') {
+        let sep = usize::from(!out.is_empty());
+        if out.chars().count() + sep + word.chars().count() > max {
+            break;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(word);
+    }
+    if out.is_empty() {
+        out = s.chars().take(max).collect();
+    }
+    out.push('\u{2026}');
+    out
 }
 
 /// The resolved primary file of a folder post.
@@ -605,6 +773,61 @@ fn epoch() -> NaiveDateTime {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    #[test]
+    fn excerpt_skips_heading_takes_first_paragraph() {
+        assert_eq!(
+            first_prose_paragraph("# Title\n\nFirst real paragraph here.\n\nSecond."),
+            Some("First real paragraph here.".to_string())
+        );
+    }
+
+    #[test]
+    fn excerpt_strips_markup_links_and_images() {
+        assert_eq!(
+            first_prose_paragraph("A **bold** word, a [link](https://x.test) and `code`."),
+            Some("A bold word, a link and code.".to_string())
+        );
+        assert_eq!(
+            first_prose_paragraph("See ![alt text](img.png) inline."),
+            Some("See alt text inline.".to_string())
+        );
+    }
+
+    #[test]
+    fn excerpt_skips_fenced_code_and_block_markers() {
+        let src = "```\ncode line\n```\n\n> a quote\n\nProse at last.";
+        assert_eq!(first_prose_paragraph(src), Some("Prose at last.".to_string()));
+    }
+
+    #[test]
+    fn excerpt_none_without_prose() {
+        assert_eq!(first_prose_paragraph("# Only a heading"), None);
+        assert_eq!(first_prose_paragraph(""), None);
+    }
+
+    #[test]
+    fn excerpt_truncates_on_word_boundary() {
+        let out = truncate_words("one two three four five", 12);
+        assert!(out.ends_with('\u{2026}'), "got {out:?}");
+        assert!(out.starts_with("one two"));
+        assert_eq!(truncate_words("short", 12), "short");
+    }
+
+    #[test]
+    fn extract_excerpt_text_only_never_html() {
+        let d = TmpDir::new();
+        touch(d.path(), "note.md", "# Hi\n\nHello world, this is the body.");
+        touch(d.path(), "pic.jpg", "not read");
+        touch(d.path(), "page.html", "<style>body{color:red}</style><p>Body</p>");
+        assert_eq!(
+            extract_excerpt(&d.path().join("note.md"), "md"),
+            Some("Hello world, this is the body.".to_string())
+        );
+        assert_eq!(extract_excerpt(&d.path().join("pic.jpg"), "jpg"), None);
+        // HTML is deliberately excluded so <style>/<script> text can never leak.
+        assert_eq!(extract_excerpt(&d.path().join("page.html"), "html"), None);
+    }
 
     /// A throwaway directory under the OS temp dir, removed on drop. Avoids a
     /// dev-dependency; uniqueness is pid + a process-wide counter.

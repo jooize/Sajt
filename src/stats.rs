@@ -163,11 +163,15 @@ impl ViewFilter {
         true
     }
 
-    /// Everything a search query is matched against: label, tags, type, ext.
+    /// Everything a search query is matched against: label, description, tags,
+    /// type, ext.
     fn haystack(&self, entry: &Entry) -> String {
         let mut parts: Vec<String> = Vec::new();
         if let Some(l) = entry.display_label.as_deref().or(entry.label.as_deref()) {
             parts.push(l.to_string());
+        }
+        if let Some(e) = entry.excerpt.as_deref() {
+            parts.push(e.to_string());
         }
         parts.push(entry.kind().to_string());
         parts.push(entry.extension.clone());

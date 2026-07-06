@@ -485,6 +485,7 @@ main section article h3 a { color: var(--ink); }
 main section article h3 a:hover { color: var(--violet); text-decoration: none; }
 main section article h3 small { font-size: 1em; font-weight: inherit; color: var(--soft); }
 main section article h3 i { font-weight: 450; color: var(--faint); }
+main section article > div > p { margin: .12rem 0 0; font-size: .875rem; line-height: 1.5; color: var(--soft); }
 
 main > p.empty { padding: 3rem 0; text-align: center; font-size: .875rem; color: var(--soft); }
 main > p.empty[hidden] { display: none; }
@@ -2088,6 +2089,12 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
         None => format!(r#"<i>(untitled)</i><small>{}</small>"#, html_escape(&ext_suffix(entry))),
     };
 
+    // The one-line description under the title (text posts only).
+    let excerpt = match entry.excerpt.as_deref() {
+        Some(e) => format!("<p>{}</p>", html_escape(e)),
+        None => String::new(),
+    };
+
     // A subtle, expandable note on rows that carry archived revisions.
     let revisions = if entry.revisions.is_empty() {
         String::new()
@@ -2108,7 +2115,7 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
 {star}<button type="button" aria-pressed="false" aria-label="Save for later (stays in this browser)" title="Save for later &mdash; stays in this browser">{bookmark}</button>
 {meter}{tags}
 </aside>
-<div><h3><a href="{href}">{title}</a></h3>{revisions}</div>
+<div><h3><a href="{href}">{title}</a></h3>{excerpt}{revisions}</div>
 </article></li>"#,
         key = html_escape(&key),
         datetime = html_escape(&datetime),
@@ -2119,6 +2126,7 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
         tags = rail_tags(entry),
         href = html_escape(&href),
         title = title,
+        excerpt = excerpt,
         revisions = revisions,
     )
 }
@@ -2574,6 +2582,7 @@ mod tests {
             edited: None,
             label: Some(label.to_string()),
             display_label: None,
+            excerpt: None,
             extension: "md".to_string(),
             tags: Vec::new(),
             grade: None,
