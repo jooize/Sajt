@@ -303,7 +303,7 @@ body:has(#grip.active) { -webkit-user-select: none; user-select: none; }
 #navsaved[hidden] { display: none; }
 
 #site form p { display: inline-flex; gap: .55rem; align-items: center; margin: 0; }
-/* stepped bars, lit to the current level */
+/* stepped bars, lit to the current grade floor */
 #site form p > svg { width: 1.1rem; height: 1.1rem; fill: currentColor; }
 #site form p > svg rect { opacity: .3; }
 #site form p > svg rect[data-on] { opacity: 1; }
@@ -337,7 +337,7 @@ body:has(#grip.active) { -webkit-user-select: none; user-select: none; }
   position: absolute;
   inset-block: 2px;
   left: 2px;
-  width: calc((100% - 4px) / 3);
+  width: calc((100% - 4px) / 2);
   border-radius: 999px;
   background: light-dark(#fff, rgba(178, 205, 184, .14));
   box-shadow: 0 1px 3px light-dark(rgba(20, 24, 20, .16), rgba(0, 0, 0, .4));
@@ -443,13 +443,11 @@ main section article > aside > time {
   white-space: nowrap;
 }
 
-/* quality meter — a hairline with ticks at the notable/best thresholds, shared
+/* quality meter — a hairline with a tick at the notable threshold, shared
    by the timeline rows and the entry-post header */
 .meter { position: relative; width: 2.9rem; height: 2px; flex: none; border-radius: 1px; background: var(--hair); }
 .meter > i { position: absolute; inset: 0 auto 0 0; border-radius: 1px; background: var(--faint); }
-.meter::before, .meter::after { content: ""; position: absolute; top: -2px; width: 1px; height: 6px; background: var(--hair); }
-.meter::before { left: 50%; }
-.meter::after { left: 78%; }
+.meter::before { content: ""; position: absolute; top: -2px; left: 50%; width: 1px; height: 6px; background: var(--hair); }
 main section article > aside > span.meter { margin-top: .55rem; }
 main section article:hover .meter > i,
 main section article.selected .meter > i { background: var(--violet); }
@@ -1420,7 +1418,7 @@ fn percent_encode(s: &str) -> String {
 /// "?grade=notable&favorites&q=…". `favorites` is a bare presence flag.
 fn query_string(view: &ViewFilter) -> String {
     let mut parts: Vec<String> = Vec::new();
-    if view.level > 0 {
+    if view.notable {
         parts.push(format!("grade={}", view.grade_word()));
     }
     if view.fav {
@@ -1460,7 +1458,7 @@ pub struct HeaderContext<'a> {
     pub cloud: &'a CloudStats,
     /// The single active topic (grey pill), if the timeline is filtered to one.
     pub active_tag: Option<&'a str>,
-    /// The current view filter (level / favorites / search).
+    /// The current view filter (grade / favorites / search).
     pub view: &'a ViewFilter,
     /// The path portion the controls compose their queries onto (e.g. "/",
     /// "/+design"). Cloud topics always link from root.
@@ -1513,7 +1511,7 @@ fn render_cloud(ctx: &HeaderContext) -> String {
     for tag in cloud_order(&ctx.cloud.tags) {
         let is_active = ctx.active_tag == Some(tag.name.as_str());
         // Clicking the active topic clears it; any other selects it (from root),
-        // preserving the current level/favorites/search.
+        // preserving the current grade/favorites/search.
         let href = if is_active {
             make_url("/", ctx.view)
         } else {
@@ -1543,28 +1541,34 @@ fn render_cloud(ctx: &HeaderContext) -> String {
 fn render_site_header(ctx: &HeaderContext) -> String {
     let view = ctx.view;
 
-    // Grade segmented control: three links, each setting its floor while
-    // preserving favorites/search; the thumb + stepped bars reflect the state.
-    let level_link = |lvl: u8, label: &str| {
-        let target = ViewFilter { level: lvl, fav: view.fav, q: view.q.clone() };
+    // Grade segmented control: two links (everything | notable) that set the
+    // grade floor while preserving favorites/search; the thumb + stepped bars
+    // reflect the state. The word doubles as the `data-grade` hook.
+    let grade_link = |on: bool, label: &str| {
+        let target = ViewFilter { notable: on, fav: view.fav, q: view.q.clone() };
         format!(
-            r#"<a href="{href}" data-grade="{lvl}" aria-current="{cur}">{label}</a>"#,
+            r#"<a href="{href}" data-grade="{label}" aria-current="{cur}">{label}</a>"#,
             href = html_escape(&make_url(ctx.base_path, &target)),
-            lvl = lvl,
-            cur = if view.level == lvl { "true" } else { "false" },
+            cur = if view.notable == on { "true" } else { "false" },
             label = label,
         )
     };
-    let thumb_pos = format!("calc(2px + {} * (100% - 4px) / 3)", view.level);
-    let bar = |i: u8| if i <= view.level { " data-on" } else { "" };
-    let level_tip = match view.level {
-        2 => "Showing only the best — graded top 22%",
-        1 => "Showing notable and better — graded top 50%",
-        _ => "Showing everything",
+    // Two segments, so the thumb rests at the left edge or the halfway mark.
+    let thumb_pos = if view.notable {
+        "calc(2px + (100% - 4px) / 2)"
+    } else {
+        "2px"
+    };
+    // The short bar is always lit ("everything"); the tall one lights at "notable".
+    let bar_notable = if view.notable { " data-on" } else { "" };
+    let grade_tip = if view.notable {
+        "Showing notable and better — graded top 50%"
+    } else {
+        "Showing everything"
     };
 
     // Favorites toggle (independent axis): flips the fav flag, preserves the rest.
-    let fav_target = ViewFilter { level: view.level, fav: !view.fav, q: view.q.clone() };
+    let fav_target = ViewFilter { notable: view.notable, fav: !view.fav, q: view.q.clone() };
     let fav_href = html_escape(&make_url(ctx.base_path, &fav_target));
 
     // Saved-bookmarks link: to /saved, or back to root when already there.
@@ -1575,7 +1579,7 @@ fn render_site_header(ctx: &HeaderContext) -> String {
     // (A form can't emit a valueless key, so `favorites=` stands in for the
     // bare `?favorites` the links use — the parser treats both as presence.)
     let mut hidden = String::new();
-    if view.level > 0 {
+    if view.notable {
         hidden.push_str(&format!(
             r#"<input type="hidden" name="grade" value="{}">"#,
             view.grade_word()
@@ -1588,7 +1592,7 @@ fn render_site_header(ctx: &HeaderContext) -> String {
     let action = if ctx.base_path.is_empty() { "/" } else { ctx.base_path };
 
     // Active date scope: a quiet removable chip under the cloud. The × returns
-    // to the tag path (or root), keeping the current level/favorites/search.
+    // to the tag path (or root), keeping the current grade/favorites/search.
     let scope = match &ctx.date_scope {
         Some(s) => format!(
             r#"<p id="scope"><span>{label}</span><a href="{clear}" aria-label="Clear date filter" title="Clear date filter">&times;</a></p>"#,
@@ -1605,8 +1609,8 @@ fn render_site_header(ctx: &HeaderContext) -> String {
 <form method="get" action="{action}">
 <a href="{saved_href}" id="navsaved" hidden aria-current="{saved_current}" aria-label="Saved for later">{bookmark}<i aria-hidden="true">&times;</i><output>0</output></a>
 <p aria-label="How much to show">
-<svg viewBox="0 0 24 24"><title>{tip}</title><rect x="2" y="14" width="5.5" height="8" rx="2.4"{b0}/><rect x="9.25" y="8" width="5.5" height="14" rx="2.4"{b1}/><rect x="16.5" y="2" width="5.5" height="20" rx="2.4"{b2}/></svg>
-<span><u style="left:{thumb}"></u>{everything}{notable}{best}</span>
+<svg viewBox="0 0 24 24"><title>{tip}</title><rect x="5.5" y="12" width="5.5" height="10" rx="2.4" data-on/><rect x="13" y="4" width="5.5" height="18" rx="2.4"{b1}/></svg>
+<span><u style="left:{thumb}"></u>{everything}{notable}</span>
 <a href="{fav_href}" id="favonly" aria-current="{fav_cur}"><b>&#9733;</b> favorites</a>
 </p>
 <search>
@@ -1622,14 +1626,11 @@ fn render_site_header(ctx: &HeaderContext) -> String {
         saved_href = saved_href,
         saved_current = saved_current,
         bookmark = BOOKMARK_SVG,
-        tip = level_tip,
-        b0 = bar(0),
-        b1 = bar(1),
-        b2 = bar(2),
+        tip = grade_tip,
+        b1 = bar_notable,
         thumb = thumb_pos,
-        everything = level_link(0, "everything"),
-        notable = level_link(1, "notable"),
-        best = level_link(2, "best"),
+        everything = grade_link(false, "everything"),
+        notable = grade_link(true, "notable"),
         fav_href = fav_href,
         fav_cur = if view.fav { "true" } else { "false" },
         q_value = q_value,
@@ -1846,7 +1847,7 @@ pub fn canonical_location(entry: &Entry, all_entries: &[&Entry], view: &ViewFilt
     if let Some(t) = &c.time {
         parts.push(format!("time={}", percent_encode(t)));
     }
-    if view.level > 0 {
+    if view.notable {
         parts.push(format!("grade={}", view.grade_word()));
     }
     if view.fav {

@@ -82,7 +82,7 @@ pub struct Entry {
     pub tags: Vec<Tag>,
     /// Pairwise-grade percentile in `0.0..=1.0`, or `None` until the entry has
     /// been graded. No grading flow exists yet, so this is always `None` today;
-    /// the quality meter and level filter read it when it exists.
+    /// the quality meter and grade filter read it when it exists.
     pub grade: Option<f32>,
     /// Extra addresses declared by `alias <name>/` marker folders. Each is an
     /// additional address for this post (served by a 301 to the canonical one).

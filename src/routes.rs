@@ -37,7 +37,7 @@ fn filter_title(path_desc: &str, view: &ViewFilter, saved: bool) -> String {
     if !path_desc.is_empty() {
         parts.push(path_desc.to_string());
     }
-    if view.level > 0 {
+    if view.notable {
         parts.push(view.grade_word().to_string());
     }
     if view.fav {

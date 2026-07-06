@@ -1,25 +1,23 @@
-//! Derived presentation data: the tag-cloud statistics, the grade thresholds
-//! that drive both the quality meter and the level filter, the Finder-color
-//! mapping, and the view filter (level / favorites / search) applied per request.
+//! Derived presentation data: the tag-cloud statistics, the notable-grade
+//! threshold that drives both the quality meter and the grade filter, the
+//! Finder-color mapping, and the view filter (notable / favorites / search)
+//! applied per request.
 
 use crate::entry::Entry;
 use chrono::NaiveDate;
 use std::collections::BTreeMap;
 
-/// Grade thresholds, kept in ONE place because they drive two things at once:
-/// the meter ticks on each row and the level filter's cutoffs. `notable` is the
-/// top 50%, `best` the top 22% (a grade is a percentile in `0.0..=1.0`).
+/// The one grade threshold, kept in a single place because it drives two things
+/// at once: the tick on every quality meter and the `?grade=notable` filter's
+/// cutoff. A grade is a percentile in `0.0..=1.0`; `notable` is the top 50%.
+/// The scale is deliberately two-state — everything vs. notable — so there is
+/// no separate "best" tier.
 pub const NOTABLE: f32 = 0.50;
-pub const BEST: f32 = 0.78;
 
-/// Quality tier of a grade: 1 = ungraded/ordinary, 2 = notable, 3 = best.
-/// An ungraded entry (`None`) is tier 1 — it shows under "everything" only.
-pub fn tier(grade: Option<f32>) -> u8 {
-    match grade {
-        Some(q) if q >= BEST => 3,
-        Some(q) if q >= NOTABLE => 2,
-        _ => 1,
-    }
+/// Whether a grade clears the notable threshold. An ungraded entry (`None`) is
+/// never notable — it shows only under "everything".
+pub fn is_notable(grade: Option<f32>) -> bool {
+    matches!(grade, Some(q) if q >= NOTABLE)
 }
 
 /// Map a Finder color index (0-7) to the CSS custom property that paints it.
@@ -115,43 +113,42 @@ impl CloudStats {
 }
 
 /// The transient view filter carried in the query string: the grade floor
-/// (`?grade=notable|best`), favorites-only (`?favorites`), and a free-text
-/// search (`?q=…`). Composes with the path filter (tags / date) that
-/// `ContentQuery` already handles.
+/// (`?grade=notable`), favorites-only (`?favorites`), and a free-text search
+/// (`?q=…`). Composes with the path filter (tags / date) that `ContentQuery`
+/// already handles.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ViewFilter {
-    /// Grade floor: 0 everything, 1 notable, 2 best.
-    pub level: u8,
+    /// Show only notable-and-better entries (`?grade=notable`).
+    pub notable: bool,
     pub fav: bool,
     pub q: Option<String>,
 }
 
 impl ViewFilter {
-    /// Parse from decoded query parameters (`grade`, `favorites`, `q`).
+    /// Parse from decoded query parameters (`grade`, `favorites`, `q`). The
+    /// grade scale is two-state: `notable` (or `1`) turns the floor on;
+    /// anything else means "everything".
     pub fn from_params(grade: Option<&str>, fav: bool, q: Option<&str>) -> Self {
-        let level = match grade.map(|s| s.to_ascii_lowercase()) {
-            Some(ref s) if s == "best" || s == "2" => 2,
-            Some(ref s) if s == "notable" || s == "1" => 1,
-            _ => 0,
-        };
+        let grade = grade.map(|s| s.to_ascii_lowercase());
+        let notable = matches!(grade.as_deref(), Some("notable") | Some("1"));
         let q = q
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        ViewFilter { level, fav, q }
+        ViewFilter { notable, fav, q }
     }
 
     /// The grade floor as its URL/UI word.
     pub fn grade_word(&self) -> &'static str {
-        match self.level {
-            2 => "best",
-            1 => "notable",
-            _ => "everything",
+        if self.notable {
+            "notable"
+        } else {
+            "everything"
         }
     }
 
     /// Does an entry pass the view filter?
     pub fn matches(&self, entry: &Entry) -> bool {
-        if tier(entry.grade) < self.level + 1 {
+        if self.notable && !is_notable(entry.grade) {
             return false;
         }
         if self.fav && !entry.is_favorite() {
@@ -186,22 +183,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tiers() {
-        assert_eq!(tier(None), 1);
-        assert_eq!(tier(Some(0.1)), 1);
-        assert_eq!(tier(Some(0.5)), 2);
-        assert_eq!(tier(Some(0.77)), 2);
-        assert_eq!(tier(Some(0.78)), 3);
-        assert_eq!(tier(Some(1.0)), 3);
+    fn notability() {
+        assert!(!is_notable(None));
+        assert!(!is_notable(Some(0.1)));
+        assert!(!is_notable(Some(0.49)));
+        assert!(is_notable(Some(0.5)));
+        assert!(is_notable(Some(1.0)));
     }
 
     #[test]
-    fn level_parsing() {
-        assert_eq!(ViewFilter::from_params(Some("best"), false, None).level, 2);
-        assert_eq!(ViewFilter::from_params(Some("notable"), false, None).level, 1);
-        assert_eq!(ViewFilter::from_params(Some("everything"), false, None).level, 0);
-        assert_eq!(ViewFilter::from_params(None, false, None).level, 0);
-        assert_eq!(ViewFilter::from_params(Some("garbage"), false, None).level, 0);
+    fn grade_parsing() {
+        assert!(ViewFilter::from_params(Some("notable"), false, None).notable);
+        assert!(ViewFilter::from_params(Some("1"), false, None).notable);
+        assert!(!ViewFilter::from_params(Some("everything"), false, None).notable);
+        assert!(!ViewFilter::from_params(None, false, None).notable);
+        // "best" is a parked, no-longer-recognized value → falls to everything.
+        assert!(!ViewFilter::from_params(Some("best"), false, None).notable);
+        assert!(!ViewFilter::from_params(Some("garbage"), false, None).notable);
     }
 
     #[test]
