@@ -36,22 +36,36 @@ Tagline: **"Tag it `public` — it's published."**
 ### Entries
 
 An entry is a file **or a folder** in the single content directory.
+**DECIDED 2026-07-06 — full spec in `entry-model.md` (canonical; supersedes
+the timestamp-prefix convention, birthtime dates, and the `.id`/UUID identity
+plan):**
 
-- **Files** — as today: `sunset.md`, `IMG_4392.jpg`, `talk.pdf`, `post.link`.
-  Timestamp-prefix names (`2026-03-03T143052_sunset.md`) remain supported and
-  act as an explicit date override. **Files stay first-class (reaffirmed
-  2026-07-04): no folder, no sidecar is ever required to publish one.**
-  Dates and tags are native metadata (birthtime, xattrs); everything else —
-  grades, first-seen dates, the ledger — lives in the server-side index.
-  The extension gives the timeline its type indication for free.
-- **Folders as entries** — **DECIDED 2026-07-03: clean names, native dates.**
-  A folder named `open-source-licenses/` *is* `esko.bar/open-source-licenses`.
-  No timestamp prefix: the date comes from the folder's native creation date,
-  recorded into the server's index the first time it is seen (so it survives
-  later syncs that mangle birthtime). Finder/Files sort it by real date
-  columns; the web sorts it by the same date. Tags on the folder apply to the
-  entry. A timestamp-prefixed folder name is still honored as a date override,
-  same rule as files.
+- **Files stay first-class**: a bare `sunset.md` is a complete post. Its
+  **publish date is its mtime** (the one timestamp every sync tool preserves,
+  settable on every OS — birthtime/Date Added are not portable to the Linux
+  host). Trade: editing a bare file republishes it; fold it into a folder when
+  the date must outlive edits. The extension gives the timeline its type
+  indication for free.
+- **Folders as entries** — `open-source-licenses/` *is*
+  `esko.bar/open-source-licenses`. Publish date = an **empty date-named
+  subfolder** (`2026-03-03T1430/`), editable on any device (Finder/iOS Files
+  "New Folder"); zero markers → mtime fallback, two+ → error (fail-closed).
+  Exactly one primary content file (stem `index` or = folder name, or the
+  sole file); intra-post ambiguity errors the page. `alias <name>/` marker
+  folders give extra addresses / rename survival — **no server-assigned
+  identity, no `.id`**. Revisions: **the unsuffixed name is always current**;
+  Cmd-D before editing freezes the old state into `label copy/` /
+  `label copy 2/` (or ` copy` files inside the post as snapshots) — the copy
+  is the archive, dated by its own mtime, never shown on the timeline;
+  deleting any copy never breaks the post. Names + aliases
+  share one flat namespace; **multiple claims on a name -> oldest claim keeps
+  the bare URL** (established URLs never change meaning), others reachable at
+  date paths, share surfaced on-page + logged. Tags on the folder apply to
+  the entry.
+- **The server never writes into the content tree** (read-only; all caches
+  outside it, disposable). Sync is one-way, authoring devices → server. No
+  companion software is required on Mac or iPhone; a future app is a
+  concierge (fold, stamp dates, grade), never a dependency.
 - **Bundles** — a folder-entry may contain an `index.md` / `index.adoc`
   (hand-written page), a `.prompt` (AI-generated page from sibling files), or
   neither (auto gallery/listing of its contents). Files inside a bundle
@@ -182,9 +196,10 @@ labels, so untitled/bare-timestamp entries are dropped entirely.
 
 **View filters — DECIDED 2026-07-05.** Topics stay path-based (`/+design`,
 `/+design+rust` AND, `/+design,rust` OR): permanent, linkable cool-URIs. The
-transient view state rides in composable query params — `?level=notable|best`,
-`?fav`, and search on the universal `?q=…` — layering onto any path
-(`/+design?level=best&fav`). Every header control is a real `<a>` / GET-form
+transient view state rides in composable query params — `?grade=notable`
+(renamed from `?level=`; the scale collapses to everything/notable, and with
+no grading ledger present the bucket is simply empty), `?fav`, and search on
+the universal `?q=…` — layering onto any path (`/+design?grade=notable&fav`). Every header control is a real `<a>` / GET-form
 (no JS required), so the address bar always reflects the current view and
 right-click → Copy Link shares the exact filtered timeline; no separate "link
 these filters" affordance is needed. `/saved` is the reader's bookmarks, a

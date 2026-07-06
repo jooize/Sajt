@@ -501,6 +501,18 @@ commit. Then PLAN items 5 (docs: DESIGN.md/PLAN.md/.claude-memory) and 6 (grep
 
 ## B. PHASE 2 — identity + grading + URL grammar (all DECIDED this session)
 
+> **SUPERSEDED IN PART, 2026-07-06 — see `entry-model.md` (canonical) and the
+> SESSION 4 HANDOFF below.** What changed: **UUID/`.id` identity is dropped**
+> (identity = post name + user-created `alias <name>/` marker folders;
+> collisions fail closed). **Publish date** = empty date-named subfolder, or
+> mtime for bare files (birthtime/Date Added ruled out — not portable to the
+> Linux host). **The server never writes into the content tree** (no
+> auto-fold, no DoRename; caches live outside). Ledger renamed
+> **`.esko.bar-grade-judgements.jsonl`**; param renamed **`?grade=`**; scale
+> collapses to **everything/notable** (+ deliberate favorites tag); site is
+> fully functional with no ledger. The URL-grammar section below (2b) shipped
+> and stands; the prior-art sweep stands as research record.
+
 Backed by a web prior-art sweep (condensed below). Sequence: write a design doc
 first (`identity-grading-urls.md`, ref from DESIGN.md), then build 2b→2d.
 
@@ -640,3 +652,122 @@ plus the saved-view "hidden by filters → show them" note it enables.
    section above).
 4. **2d** — grading (`.esko.bar-grading-ledger.jsonl`, Bradley-Terry + prior,
    private authenticated management API).
+
+================================================================================
+
+# 2026-07-06 SESSION 4 HANDOFF (read after /clear)
+
+**Shipped earlier (committed 7008c9a, d1ce97e, 1bac760):** slash-hierarchy
+date URLs (`/2026/03/25`, `src/url.rs` rewrite, 67 tests), canonical
+`?time=HHMMSS` disambiguation, date-scope chip + clear + month links,
+plain-filename entries read fs time as naive_local.
+
+**DECIDED this session (canonical spec: `entry-model.md`, rewritten):**
+- Post = bare file (publish date = mtime; edit republishes) OR folder
+  (publish date = empty date-named subfolder `YYYY-MM-DDTHHMM[SS][zone]/`,
+  exactly one, zero -> mtime fallback, two+ -> error; edited = primary mtime).
+- Primary file resolution: stem `index` or = folder name; exactly one, else
+  the sole non-dotfile file; ambiguity -> error page. No symlinks.
+- **No `.id`, no UUID, no Mac-app requirement.** Identity = name +
+  `alias <name>/` empty marker folders (rename survival, extra names,
+  shortlinks). One flat namespace for posts + aliases; **multiple claims on a
+  name -> oldest claim keeps the bare URL** (2026-07-06 refinement: replaces
+  both-error; others reachable at date paths, share surfaced on-page +
+  logged). **Revisions**: the unsuffixed name is ALWAYS current (keeps URL,
+  tags, timeline position); Cmd-D before editing freezes the archive into
+  `label copy/` / `label copy 2/` (or ` copy` files inside the post =
+  snapshots). Copies ignore inherited date markers — dated by primary
+  mtime; timeline shows only current; copies via revision nav + date URLs.
+  Workflow: Cmd-D, edit the original, nothing else. Fold gesture:
+  Ctrl-Cmd-N New Folder with Selection. "copy" keyword = one constant
+  (English-Finder only; configurable later). Unparseable spaced names fail
+  closed (incl. lookalike-char typos). Fail-closed errors otherwise only
+  for intra-post ambiguity.
+- **Server strictly read-only on content**; all caches (embed, index, derived
+  grades) outside the content tree, disposable. One-way sync, nothing back.
+  Auto-fold and DoRename are dead; a future companion app (fold/stamp/grade)
+  is a concierge, never a dependency.
+- Grading: optional `.esko.bar-grade-judgements.jsonl` in content root,
+  author-written (app or hand), synced forward; `?grade=` (renamed from
+  `?level=`) with scale collapsed to everything/**notable**; empty ledger ->
+  empty bucket, site fully works. Favorites remain a deliberate Finder tag.
+  Grade is NOT a tag and NOT renamed to "effort".
+
+**Docs updated to match:** entry-model.md (rewritten), DESIGN.md (Entries
+section + view-filters `?grade=`), PLAN.md (supersession banner on Phase 2).
+
+**BUILD PLAN (approved 2026-07-06 — hand off to a coding session; spec =
+`entry-model.md`, read it first and treat it as canonical over this list).**
+Commit per step. Restart the server after each step so Tilde can look
+(sandbox off for the bind). `nix develop --command cargo test` throughout.
+
+*Step 1 — entry model + scanner rewrite* (`src/entry.rs`, `src/content.rs`)
+- `Entry` gains: `edited: Option<NaiveDateTime>` (primary mtime when
+  meaningfully later than publish), `aliases: Vec<String>`,
+  `revisions: Vec<Revision>` (`Revision { date, path }`, newest first),
+  `error: Option<PostError>` (a post that scans wrong still renders — as a
+  fail-closed error page). `kind`/extension come from the primary file.
+- Scanner: top-level regular file -> bare post (label = stem, timestamp =
+  mtime as naive_local, no edited line). Top-level dir -> folder post:
+  - subfolders: date marker (lenient ISO basic parse, must be empty of
+    non-dotfiles; 0 markers -> primary-mtime fallback, 2+ -> PostError),
+    `alias <name>/` markers, everything else ignored (`.embed-cache` etc.);
+  - primary resolution per spec (stem = `index` or folder name; else sole
+    non-dotfile file; ambiguity -> PostError); other files = assets;
+  - ` copy [n]` sibling dirs and `<primary-stem> copy [n].*` files =
+    archived revisions, dated by their primary/own mtime (inherited date
+    markers IGNORED for copies), excluded from the timeline list proper;
+  - names containing spaces that parse as no known grammar -> PostError
+    (lookalike-char protection).
+- Claim resolution across the flat namespace (post names, bare-file stems,
+  alias names): unique -> resolves; multiple -> oldest publish date owns the
+  bare `/name`, others keep date-path URLs; record share partners on each
+  entry for the on-page notice; loud tracing::warn.
+- DELETE: `parse_filename` timestamp convention, `process_do_rename`, the
+  birthtime fallback in `entry_from_plain_filename` (mtime only now).
+  Update/replace their tests; add scanner tests over a tempdir fixture tree
+  (bare post, folder post, marker variants, copies, alias, collisions, all
+  PostError cases).
+
+*Step 2 — routes + templates* (`src/routes.rs`, `src/templates.rs`)
+- Serve folder posts: `/label` = rendered primary, `/label.ext` = raw
+  primary, `/label/<asset>` = assets (path-traversal-safe: resolve inside
+  the post dir only). Alias names 301 to canonical. Archived revisions
+  resolve ONLY at date paths (+ `?time=`), never bare.
+- Entry page: revision nav (list of archived revisions w/ dates) when
+  present; alias list (small); name-share notice when claims collide.
+- Timeline: rows show only current revisions; rows with revisions get a
+  subtle "N revisions" `<details>` expanding to dated links. Errored posts
+  render as errored rows (visible, not hidden).
+- Error pages: exact conflicting relative paths + one-line fix, HTTP 500.
+
+*Step 3 — `?grade=` rename + scale collapse* (`src/stats.rs`, routes,
+templates)
+- `?level=` -> `?grade=`; ViewFilter field rename; segmented control
+  collapses to everything | notable (drop the "best" segment; keep the
+  `NOTABLE` threshold const, delete/park `BEST`). Grade buckets remain empty
+  (no ledger parsing this phase — `.esko.bar-grade-judgements.jsonl` is a
+  later feature; absent ledger = empty bucket by design). Grep stragglers:
+  `level=`, `data-level`.
+
+*Step 4 — caches out of the content tree* (`src/embed.rs`, `src/main.rs`)
+- `--cache-dir` flag, default via `directories` crate (macOS
+  `~/Library/Caches/...`, Linux `$XDG_CACHE_HOME/...`). Embed cache moves
+  there (keyed by content-relative path + mtime); content dir is NEVER
+  written by the server after this step — audit for any remaining write
+  (fs::rename/write/create under content root must be gone).
+
+*Step 5 — one-shot migration* (script or `cargo run -- migrate`, run ONCE
+by Tilde; never overwrite; DRY-run first and show the plan)
+- Each `YYYY-MM-DDTHHMMSS[_label].ext` -> folder `<label>/` (unlabeled ->
+  `untitled/`) containing `<label>.ext` + date marker `YYYY-MM-DDTHHMMSS/`
+  seeded from the filename timestamp; sibling `<file>.embed-cache/` -> into
+  the folder (or drop it — cache regenerates in the new cache dir anyway).
+- Same-name duplicates: newest = unsuffixed current; older -> `<label>
+  copy/`, `<label> copy 2/` with primary mtimes set (`touch -t`) from old
+  filename timestamps (copies date by mtime).
+- Anything ambiguous: leave in place, report. Old SetFile scratchpad script
+  is dead — do not reuse.
+
+*Step 6 — docs*: DESIGN.md/PLAN.md/.claude-memory updated to "shipped";
+grep docs for the old convention.
