@@ -36,9 +36,11 @@ Tagline: **"Tag it `public` — it's published."**
 ### Entries
 
 An entry is a file **or a folder** in the single content directory.
-**DECIDED 2026-07-06 — full spec in `entry-model.md` (canonical; supersedes
-the timestamp-prefix convention, birthtime dates, and the `.id`/UUID identity
-plan):**
+**SHIPPED 2026-07-06 — full spec in `entry-model.md` (canonical).** The scanner
+rewrite, folder-post serving, and the one-shot flat→folder migration are all
+live; the live `content/` is now folder posts served at clean URLs
+(`/hello-world`). This supersedes the timestamp-prefix filename convention,
+birthtime dates, and the `.id`/UUID identity plan:
 
 - **Files stay first-class**: a bare `sunset.md` is a complete post. Its
   **publish date is its mtime** (the one timestamp every sync tool preserves,
@@ -102,49 +104,52 @@ state in which something private goes live without a deliberate tagging act.
   may see unpublished entries, clearly bannered as "unpublished preview".
   Zero auth machinery; useful for preflighting a post before tagging it.
 
-### Action tags (`Do` prefix)
+### Action tags (`Do` prefix) — REMOVED 2026-07-06
 
-xattr tags the server executes and removes: `DoRename` (stamp timestamp name),
-`DoDate`, `DoPublish` (apply `public`), `DoGenerate` (run `.prompt`).
+Superseded by the read-only content model (`entry-model.md`). The server no
+longer writes into the content tree, so the action tags that mutated content
+are gone: `DoRename` (which stamped a timestamp filename — that whole
+timestamp-name convention is retired), `DoDate`, `DoPublish`, `DoGenerate`.
+Date-stamping and folding are now native Finder gestures (an empty date-named
+marker folder; Ctrl-Cmd-N "New Folder with Selection"); `.prompt` generation,
+when built, will render into the outside-the-tree cache, never back into
+content.
 
 ### Identity, index, renames
 
-SHA-256 content hashing gives every entry a durable identity independent of
-its name. The server index (SQLite or JSON) records per identity: content
-hash(es), **first-seen date**, and **every label the entry has ever been
-public under**. The index is a cache/ledger, never the source of truth for
-content.
+**SHIPPED 2026-07-06 — full spec in `entry-model.md` (canonical).** Identity is
+the post's **name**, not a content hash or a server-assigned id. There is no
+UUID, no `.id`, and no symlink ledger — the earlier hash-as-identity plan and
+the DECIDED-2026-07-04 "old labels become symlinks" ledger are both superseded
+by user-authored `alias` marker folders, which travel through iCloud/rsync
+where symlinks and xattrs do not.
 
-**How renames keep URLs alive:** rename a file or folder freely in Finder —
-the server sees the same content hash under a new name (and FSEvents reports
-the rename directly), so it updates the current label and keeps the old one
-in the ledger. Every former label answers **301 Moved Permanently** to the
-current URL, forever. Edge cases: if a rename and a content edit happen in
-the same sync batch, the FSEvents rename event still ties old to new; if a
-new entry later claims an old label, the explicit current entry wins and the
-redirect is dropped in its favor (logged loudly).
+- **Renames survive via `alias <name>/` marker folders.** An empty folder
+  named `alias old-label` inside a post makes `/old-label` a **301** to the
+  post's canonical URL, forever. The same gesture adds alternative names and
+  shortlinks. A post's aliases are listed on its entry page (server-rendered),
+  so they are never fully invisible. A bare file carries no aliases — fold it
+  into a folder first.
+- **One flat namespace; the oldest claim wins the bare URL.** When a name is
+  claimed by more than one post/file/alias, the oldest claim keeps `/name` —
+  an established URL never changes meaning (cool URIs), so a newly-dropped
+  `IMG_4392` can never silently retarget an old link. The other claimants stay
+  reachable at their date paths, the winning page carries a visible "this name
+  is also used by …" notice, and the collision is logged loudly. Handing a name
+  over is deliberate: delete the old claim.
+- **Revisions** are Finder's own ` copy [n]` suffix. The unsuffixed post is
+  always current (keeps its URL, tags, and timeline slot); `label copy/`
+  folders (or ` copy` files inside the post) are archived snapshots, dated by
+  their own mtime, reachable from the entry's revision nav and their date-path
+  URLs. Deleting a copy never breaks the post.
+- The **only** fail-closed *errors* are intra-post ambiguity (multiple primary
+  candidates, multiple date markers) — genuinely no-right-answer cases, shown
+  as an errored row and an HTTP 500 page naming the conflict.
 
-**The ledger is real on the filesystem — DECIDED 2026-07-04: old labels
-become symlinks.** When an entry is renamed, the server creates a visible
-symlink `old-label -> current-name` in the content folder. The redirect map
-is thereby inspectable and editable in Finder: see every former address,
-delete a symlink to retire a redirect, or create one by hand to add an alias.
-The index still mirrors the ledger (for 410-vs-404 answers after deletion),
-but the folder is the truth.
-
-Rules, fail-closed:
-- A symlink is only ever a **301 source**, never served as content. The
-  target's own tags decide visibility — a symlink can never bypass the
-  `public` gate (target unpublished → the old label answers 410 like the
-  target does).
-- Symlinks must resolve, after canonicalization, to an entry **inside the
-  content root**; anything else (broken, escaping, chained too deep) is
-  ignored and logged loudly. No path traversal via crafted links.
-- Caveat to verify on the real setup: **iCloud Drive syncs symlinks poorly
-  or not at all.** If the content folder is the iCloud folder itself and
-  sync mangles them, the fallback is symlinks only in the server's deployed
-  copy (`rsync -avX` preserves them fine) with the index as the authority —
-  same behavior, less Finder visibility on the Mac.
+The server's **index and caches are disposable and live outside the content
+tree** (see cache location below); the content folder is the source of truth,
+opened read-only. The index still records which labels were once public so
+unpublishing can answer **410 Gone** vs **404** after deletion.
 
 ### Media privacy — metadata stripping
 
@@ -187,18 +192,20 @@ Old date+label URLs 301-redirect to label-only. `/best` and `/everything`
 are retired (DECIDED 2026-07-04): the timeline with its filter row
 (everything · notable · best · ★ favorites) covers both — see Presentation.
 
-**Untitled entries go away — DECIDED 2026-07-05.** A filename that is only a
-timestamp mints a bare-timestamp canonical URL that collides with the
-date-filter route (the entry renders as a timeline, so Continue can't
-inline-load it). Since the filename *is* the entry's name, every entry has a
-label: the Phase 2c filename migration stops `parse_filename` minting `None`
-labels, so untitled/bare-timestamp entries are dropped entirely.
+**No more untitled entries — SHIPPED 2026-07-06.** Under the old convention a
+filename that was only a timestamp minted a bare-timestamp canonical URL that
+collided with the date-filter route (the entry rendered as a timeline, so
+Continue couldn't inline-load it). In the folder model a post's name is its
+folder or file name, so there is no nameless entry: the one-shot migration
+folded any unlabeled file into an `untitled/` folder post (label `untitled`),
+and `parse_filename` — which used to mint `None` labels — is gone.
 
 **View filters — DECIDED 2026-07-05.** Topics stay path-based (`/+design`,
 `/+design+rust` AND, `/+design,rust` OR): permanent, linkable cool-URIs. The
 transient view state rides in composable query params — `?grade=notable`
-(renamed from `?level=`; the scale collapses to everything/notable, and with
-no grading ledger present the bucket is simply empty), `?fav`, and search on
+(**SHIPPED 2026-07-06**: renamed from `?level=`, with the scale collapsed to a
+two-state everything/notable — the `best` segment and its threshold are gone;
+with no grading ledger present the notable bucket is simply empty), `?fav`, and search on
 the universal `?q=…` — layering onto any path (`/+design?grade=notable&fav`). Every header control is a real `<a>` / GET-form
 (no JS required), so the address bar always reflects the current view and
 right-click → Copy Link shares the exact filtered timeline; no separate "link
@@ -461,8 +468,10 @@ Content-hash dividends and quiet touches (DECIDED 2026-07-04):
 - **iPhone**: share sheet → Save to Files → the iCloud Drive content folder →
   long-press → Tags → `public`. Published when iCloud syncs.
 - **macOS**: drop the file/folder into the content folder, tag `public` in
-  Finder. `DoRename` tag if a stamped filename is wanted. FSEvents watcher
-  picks it up (500 ms debounce).
+  Finder. To upgrade a bare file to a folder post (for assets, aliases, a
+  stable date, or revisions), select it and press Ctrl-Cmd-N ("New Folder with
+  Selection"); drop in an empty `2026-03-03T1430/` marker folder to pin the
+  publish date. The FSEvents watcher picks changes up (500 ms debounce).
 - **Later**: native macOS Share Extension (planned, not started) and an iOS
   Shortcut as accelerators — never requirements.
 
@@ -471,8 +480,11 @@ Content-hash dividends and quiet touches (DECIDED 2026-07-04):
 1. **Publish gate** — only `public`-tagged entries are served; everything
    else 404s (410 once the was-public ledger exists). Fail-closed tests.
    (The one blocker for going live.)
-2. **Folders as entries** — clean names, first-seen dates in index, bundle
-   `index.*` rendering, asset URLs.
+2. **Folders as entries** — **DONE 2026-07-06** (`entry-model.md`): folder
+   posts with clean names, publish dates from empty date markers (mtime
+   fallback), primary-file resolution, and asset URLs all serve. Remaining
+   polish: `.prompt` bundle generation and auto gallery/listing for a folder
+   with no primary.
 3. **AsciiDoc via Asciidoctor** — fix the broken `.adoc` path; unified
    highlight theming; `video::` works.
 4. **Port the plain design** — entry pages from `entry-page-mockup.html`
@@ -505,9 +517,23 @@ posts render identically. Client storage keys route through a provisional
 engine is generic, so the one constant is renamed once the site is named
 (pre-1.0, no migration).
 
-Later: grading flow in production, symlink ledger, visitor favorites +
-infinite-scroll continue, Share Extension, passkey auth for `private`,
-expiring share links, `.prompt` generation polish, 404 suggestions,
+Done 2026-07-06: the entry model shipped end to end (`entry-model.md` is
+canonical). The scanner was rewritten around bare-file and folder posts (mtime
+or empty date-marker publish dates, `alias <name>/` markers, ` copy [n]`
+revisions, fail-closed `PostError` pages); routes/templates serve folder posts,
+their assets, aliases (301), and dated revisions; `?level=` became `?grade=`
+with the scale collapsed to a two-state everything/notable; the embed cache and
+index moved out of the content tree into a `--cache-dir` (platform cache dir by
+default), so the server is now strictly read-only on content; and a one-shot
+`migrate` subcommand (DRY-run by default) converted the live flat
+timestamp-named files into folder posts. `content/` is now folder posts served
+at clean URLs. The `Do`-prefix action tags and the timestamp-filename
+convention are retired.
+
+Later: grading flow in production (author-written
+`.esko.bar-grade-judgements.jsonl` + Bradley-Terry derivation), visitor
+favorites + infinite-scroll continue, Share Extension, passkey auth for
+`private`, expiring share links, `.prompt` generation polish, 404 suggestions,
 dark-variant images, related entries, mini-TOC, print stylesheet.
 
 ## Design files

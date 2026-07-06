@@ -1,9 +1,12 @@
 # Entry model — bare files + folder posts, portable dates (Phase 2a design)
 
-Status: DECIDED 2026-07-06 (design conversation). Supersedes the flat
-timestamped-filename convention AND the 2026-07-05 folder-only/`.id`/auto-fold
-draft of this document. Referenced from `DESIGN.md`. Build order: this spec ->
-scanner rewrite -> one-shot migration.
+Status: **SHIPPED 2026-07-06** (designed and built the same day; scanner
+rewrite, folder-post serving, `?grade=` collapse, out-of-tree cache, and the
+one-shot flat→folder migration all landed — migration applied to live
+`content/`). Canonical spec; supersedes the flat timestamped-filename
+convention AND the 2026-07-05 folder-only/`.id`/auto-fold draft of this
+document. Referenced from `DESIGN.md`; per-step build notes in
+`.claude-memory/phase2a-build-progress.md`.
 
 ## Principles (settled)
 

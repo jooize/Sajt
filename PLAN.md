@@ -701,7 +701,17 @@ section + view-filters `?grade=`), PLAN.md (supersession banner on Phase 2).
 Commit per step. Restart the server after each step so Tilde can look
 (sandbox off for the bind). `nix develop --command cargo test` throughout.
 
-*Step 1 — entry model + scanner rewrite* (`src/entry.rs`, `src/content.rs`)
+> **SHIPPED 2026-07-06 — all six steps landed.** Commits: step 1 `8bde7a7`,
+> step 2 `1dcb96b`, step 3 `56968c9`, step 4 `579b575`, step 5 `5eec29c`,
+> step 6 (docs) this commit. The flat→folder migration was applied to the live
+> `content/`, which now holds folder posts served at clean URLs
+> (`/hello-world` → 200). `?level=` became `?grade=` (two-state
+> everything/notable), the embed cache and index moved out of the content tree
+> into `--cache-dir`, and the server is strictly read-only on content. The step
+> detail below is the record of what was built; see
+> `.claude-memory/phase2a-build-progress.md` for per-step notes and gotchas.
+
+*Step 1 — entry model + scanner rewrite* (`src/entry.rs`, `src/content.rs`) — **DONE `8bde7a7`**
 - `Entry` gains: `edited: Option<NaiveDateTime>` (primary mtime when
   meaningfully later than publish), `aliases: Vec<String>`,
   `revisions: Vec<Revision>` (`Revision { date, path }`, newest first),
@@ -729,7 +739,7 @@ Commit per step. Restart the server after each step so Tilde can look
   (bare post, folder post, marker variants, copies, alias, collisions, all
   PostError cases).
 
-*Step 2 — routes + templates* (`src/routes.rs`, `src/templates.rs`)
+*Step 2 — routes + templates* (`src/routes.rs`, `src/templates.rs`) — **DONE `1dcb96b`**
 - Serve folder posts: `/label` = rendered primary, `/label.ext` = raw
   primary, `/label/<asset>` = assets (path-traversal-safe: resolve inside
   the post dir only). Alias names 301 to canonical. Archived revisions
@@ -742,7 +752,7 @@ Commit per step. Restart the server after each step so Tilde can look
 - Error pages: exact conflicting relative paths + one-line fix, HTTP 500.
 
 *Step 3 — `?grade=` rename + scale collapse* (`src/stats.rs`, routes,
-templates)
+templates) — **DONE `56968c9`**
 - `?level=` -> `?grade=`; ViewFilter field rename; segmented control
   collapses to everything | notable (drop the "best" segment; keep the
   `NOTABLE` threshold const, delete/park `BEST`). Grade buckets remain empty
@@ -750,7 +760,7 @@ templates)
   later feature; absent ledger = empty bucket by design). Grep stragglers:
   `level=`, `data-level`.
 
-*Step 4 — caches out of the content tree* (`src/embed.rs`, `src/main.rs`)
+*Step 4 — caches out of the content tree* (`src/embed.rs`, `src/main.rs`) — **DONE `579b575`**
 - `--cache-dir` flag, default via `directories` crate (macOS
   `~/Library/Caches/...`, Linux `$XDG_CACHE_HOME/...`). Embed cache moves
   there (keyed by content-relative path + mtime); content dir is NEVER
@@ -758,7 +768,8 @@ templates)
   (fs::rename/write/create under content root must be gone).
 
 *Step 5 — one-shot migration* (script or `cargo run -- migrate`, run ONCE
-by Tilde; never overwrite; DRY-run first and show the plan)
+by Tilde; never overwrite; DRY-run first and show the plan) — **DONE `5eec29c`**
+(`src/migrate.rs`; applied to live `content/` 2026-07-06)
 - Each `YYYY-MM-DDTHHMMSS[_label].ext` -> folder `<label>/` (unlabeled ->
   `untitled/`) containing `<label>.ext` + date marker `YYYY-MM-DDTHHMMSS/`
   seeded from the filename timestamp; sibling `<file>.embed-cache/` -> into
@@ -770,4 +781,4 @@ by Tilde; never overwrite; DRY-run first and show the plan)
   is dead — do not reuse.
 
 *Step 6 — docs*: DESIGN.md/PLAN.md/.claude-memory updated to "shipped";
-grep docs for the old convention.
+grep docs for the old convention. — **DONE** (this commit)
