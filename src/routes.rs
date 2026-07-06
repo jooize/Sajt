@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::content::ContentStore;
-use crate::entry::Entry;
+use crate::entry::{Entry, Revision};
 use crate::render::{render_entry, RenderedContent};
 use crate::stats::{compute_cloud, ViewFilter};
 use crate::templates::{self, HeaderContext};
@@ -151,6 +151,21 @@ pub async fn catch_all(
     Path(path): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
+    // Dot segments never appear in a canonical address; reject them outright so
+    // no crafted `..`/`.` path can reach resolution.
+    if path.split('/').any(|s| s == "." || s == "..") {
+        return not_found();
+    }
+
+    let store = store.read().await;
+    let all_entries: Vec<&Entry> = store.entries.iter().collect();
+
+    // Folder-post asset (`/{folder}/{asset…}`): resolved before the query parser,
+    // which would otherwise misread the multi-segment path as a label.
+    if let Some(resp) = try_asset(&all_entries, &path) {
+        return resp;
+    }
+
     let mut query = parse_url_path(&format!("/{}", path));
     // The `?time=` disambiguator lives in the query string, not the path. Accept
     // only a left-anchored HHMMSS prefix of digits; anything else is ignored
@@ -161,11 +176,17 @@ pub async fn catch_all(
         .filter(|t| !t.is_empty() && t.len() <= 6 && t.bytes().all(|b| b.is_ascii_digit()))
         .map(|t| t.to_string());
     let view = view_from_query(&params);
-    let store = store.read().await;
+    let requested = format!("/{}", path);
 
-    let all_entries: Vec<&Entry> = store.entries.iter().collect();
+    // Bare `/name`: one flat namespace, the OLDEST claim (a label or an
+    // `alias <name>/` marker) owns it, so a URL's meaning never changes.
+    if is_bare_label(&query) {
+        if let Some(owner) = templates::name_owner(query.label.as_deref().unwrap(), &all_entries) {
+            return serve_resolved(owner, &all_entries, &store, &requested, &query.time, &view).await;
+        }
+    }
 
-    // Filter entries matching the path query
+    // Filter current entries matching the path query.
     let matching: Vec<&Entry> = store
         .entries
         .iter()
@@ -187,29 +208,25 @@ pub async fn catch_all(
         return render_listing(&matching, &all_entries, &query, &view, &path);
     }
 
-    // Resolve the request to one entry:
+    // Resolve the request to one current entry:
     // - exactly one match serves (or 301s to its canonical address);
-    // - a bare /label carried by several entries serves the NEWEST — older
-    //   versions stay reachable at their date-disambiguated addresses.
+    // - a bare /label carried by several entries serves the OLDEST — newer
+    //   claims stay reachable at their date-disambiguated addresses.
     let target: Option<&Entry> = if matching.len() == 1 {
         Some(matching[0])
     } else if query.label.is_some() && query.date_prefix.is_none() {
-        newest_of(&matching)
+        oldest_of(&matching)
     } else {
         None
     };
 
     if let Some(entry) = target {
-        // One canonical address per entry: everything else 301s onto it. The
-        // canonical address is (path, ?time=); the redirect re-attaches only the
-        // canonical view filters, so aliases collapse onto exactly one URL.
-        let canon = templates::canonical(entry, &all_entries);
-        let requested = format!("/{}", path);
-        if requested != canon.path || query.time != canon.time {
-            let location = templates::canonical_location(entry, &all_entries, &view);
-            return redirect(&location);
-        }
-        return serve_entry(entry, &store).await;
+        return serve_resolved(entry, &all_entries, &store, &requested, &query.time, &view).await;
+    }
+
+    // An archived revision addressed at its date path (+ `?time=`).
+    if let Some((parent, rev)) = find_revision(&all_entries, &query) {
+        return serve_revision(parent, rev, &store).await;
     }
 
     if matching.is_empty() {
@@ -220,16 +237,173 @@ pub async fn catch_all(
     render_listing(&matching, &all_entries, &query, &view, &path)
 }
 
-/// The single newest entry in a set, or None on a timestamp tie (ambiguous).
-fn newest_of<'a>(entries: &[&'a Entry]) -> Option<&'a Entry> {
-    let newest = entries.iter().map(|e| e.timestamp).max()?;
-    let mut at_newest = entries.iter().filter(|e| e.timestamp == newest);
-    let first = at_newest.next()?;
-    if at_newest.next().is_some() {
+/// Whether a request is a bare `/name` (no date, time, extension, tag, or
+/// trailing slash) — the form claim resolution applies to.
+fn is_bare_label(q: &ContentQuery) -> bool {
+    q.label.is_some()
+        && q.date_prefix.is_none()
+        && q.time.is_none()
+        && q.raw_extension.is_none()
+        && q.and_tags.is_empty()
+        && q.or_tags.is_empty()
+        && !q.is_listing
+}
+
+/// The single oldest entry in a set, or None on a timestamp tie (ambiguous).
+fn oldest_of<'a>(entries: &[&'a Entry]) -> Option<&'a Entry> {
+    let oldest = entries.iter().map(|e| e.timestamp).min()?;
+    let mut at_oldest = entries.iter().filter(|e| e.timestamp == oldest);
+    let first = at_oldest.next()?;
+    if at_oldest.next().is_some() {
         None
     } else {
         Some(first)
     }
+}
+
+/// Serve an entry once it is resolved: 301 to its canonical address if the
+/// request is not already there, otherwise render it (or its error page). Every
+/// non-canonical URL collapses onto the one canonical address, query preserved.
+async fn serve_resolved(
+    entry: &Entry,
+    all_entries: &[&Entry],
+    store: &ContentStore,
+    requested: &str,
+    req_time: &Option<String>,
+    view: &ViewFilter,
+) -> Response {
+    let canon = templates::canonical(entry, all_entries);
+    if requested != canon.path || *req_time != canon.time {
+        return redirect(&templates::canonical_location(entry, all_entries, view));
+    }
+    if entry.error.is_some() {
+        return error_response(entry, all_entries);
+    }
+    serve_entry(entry, store).await
+}
+
+/// Render a post's fail-closed error page with HTTP 500 (loud, never hidden).
+fn error_response(entry: &Entry, all_entries: &[&Entry]) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Html(templates::error_page(entry, all_entries)),
+    )
+        .into_response()
+}
+
+/// Resolve a folder-post asset request (`/{folder}/{asset…}`) to bytes on disk,
+/// strictly inside that post's directory. Returns None when the path is not an
+/// asset (wrong shape, unknown folder, a missing or escaping file), so the
+/// caller falls through to normal resolution.
+fn try_asset(all_entries: &[&Entry], path: &str) -> Option<Response> {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.len() < 2 {
+        return None;
+    }
+    let first = segments[0];
+    // Never shadow the date hierarchy (`/2026/03/12/…`) with a same-named post.
+    if first.len() == 4 && first.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+
+    let owner = templates::name_owner(first, all_entries)?;
+    let dir = owner.dir.as_ref()?; // only folder posts carry assets
+
+    // Resolve the requested file and confirm it stays inside the post directory.
+    let candidate = dir.join(segments[1..].join("/"));
+    let canon_dir = std::fs::canonicalize(dir).ok()?;
+    let canon_file = std::fs::canonicalize(&candidate).ok()?;
+    if !canon_file.starts_with(&canon_dir) {
+        return None; // path-traversal guard
+    }
+    if !std::fs::metadata(&canon_file).ok()?.is_file() {
+        return None; // marker folders / subdirs are not assets
+    }
+    if canon_file
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map_or(true, |n| n.starts_with('.'))
+    {
+        return None; // dotfiles are never served
+    }
+
+    // The primary content is canonical at `/label(.ext)` — send duplicates there.
+    if std::fs::canonicalize(&owner.path).ok().as_deref() == Some(canon_file.as_path()) {
+        let label = owner.label.as_deref().unwrap_or(first);
+        let decoded = if owner.extension.is_empty() {
+            format!("/{}", label)
+        } else {
+            format!("/{}.{}", label, owner.extension)
+        };
+        return Some(redirect(&templates::encode_path(&decoded)));
+    }
+
+    let bytes = std::fs::read(&canon_file).ok()?;
+    let ext = canon_file.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let mime = mime_guess::from_ext(ext).first_or_octet_stream().to_string();
+    Some(
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(
+                header::CONTENT_TYPE,
+                HeaderValue::from_str(&mime).unwrap_or(HeaderValue::from_static("application/octet-stream")),
+            )
+            .header(header::CACHE_CONTROL, "public, max-age=3600")
+            .body(Body::from(bytes))
+            .unwrap_or_else(|_| not_found()),
+    )
+}
+
+/// Find the one archived revision a date-path request addresses, or None when
+/// zero or several match (fail closed to normal resolution).
+fn find_revision<'a>(
+    all_entries: &[&'a Entry],
+    query: &ContentQuery,
+) -> Option<(&'a Entry, &'a Revision)> {
+    let label = query.label.as_ref()?;
+    let date_prefix = query.date_prefix.as_ref()?;
+    let lower = label.to_lowercase();
+
+    let mut found: Option<(&Entry, &Revision)> = None;
+    let mut count = 0usize;
+    for e in all_entries {
+        if e.error.is_some() || e.label.as_ref().map_or(true, |l| l.to_lowercase() != lower) {
+            continue;
+        }
+        for r in &e.revisions {
+            let full = r.date.format("%Y-%m-%dT%H%M%S").to_string();
+            if !full.starts_with(date_prefix.as_str()) {
+                continue;
+            }
+            if let Some(ref t) = query.time {
+                if !r.date.format("%H%M%S").to_string().starts_with(t.as_str()) {
+                    continue;
+                }
+            }
+            found = Some((*e, r));
+            count += 1;
+        }
+    }
+
+    (count == 1).then_some(()).and(found)
+}
+
+/// Serve an archived revision: render its own bytes, dated by its own mtime,
+/// under the current post's chrome. Revisions are reachable only at date paths.
+async fn serve_revision(parent: &Entry, rev: &Revision, store: &ContentStore) -> Response {
+    let mut e = parent.clone();
+    e.path = rev.path.clone();
+    e.timestamp = rev.date;
+    e.edited = None;
+    e.revisions = Vec::new();
+    e.aliases = Vec::new();
+    e.extension = rev
+        .path
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_string();
+    serve_entry(&e, store).await
 }
 
 /// Render a filtered timeline listing: apply the view filter, build the shared
@@ -434,13 +608,13 @@ async fn serve_entry(entry: &Entry, store: &ContentStore) -> Response {
 }
 
 /// Serve raw file bytes with correct MIME type and Content-Disposition.
-/// With duplicate labels, the newest entry carrying the extension wins,
-/// mirroring the page URL's newest-wins rule.
+/// With duplicate labels, the oldest entry carrying the extension wins,
+/// mirroring the page URL's oldest-claim-wins rule.
 async fn serve_raw_file(matching: &[&Entry], requested_ext: &str) -> Response {
     let entry = matching
         .iter()
         .filter(|e| e.extension.eq_ignore_ascii_case(requested_ext))
-        .max_by_key(|e| e.timestamp);
+        .min_by_key(|e| e.timestamp);
 
     match entry {
         Some(entry) => serve_raw_bytes(entry).await,

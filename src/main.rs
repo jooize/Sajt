@@ -78,11 +78,13 @@ async fn main() {
         })
         .expect("Failed to create filesystem watcher");
 
+        // Recursive: folder posts hold their content and markers in subfolders,
+        // so edits inside a post must trigger a rescan too.
         watcher
-            .watch(&content_dir_watch, notify::RecursiveMode::NonRecursive)
+            .watch(&content_dir_watch, notify::RecursiveMode::Recursive)
             .expect("Failed to watch content directory");
 
-        tracing::info!("Watching content directory for changes (FSEvents)");
+        tracing::info!("Watching content directory for changes (FSEvents, recursive)");
         watcher
     };
 

@@ -1,4 +1,4 @@
-use crate::entry::Entry;
+use crate::entry::{Entry, PostError, Revision};
 use crate::stats::{compute_cloud, finder_color_var, CloudStats, TagStat, ViewFilter};
 
 // ============================================================================
@@ -818,6 +818,48 @@ body > footer button { padding: 0; border: none; background: none; color: inheri
 body > footer button:hover { color: var(--violet); }
 body > footer #typeface span { text-transform: capitalize; }
 body > footer > i { font-style: normal; opacity: .4; }
+
+/* Post extras: revisions, aliases, and the name-share notice under a post. */
+#revisions, main section article > div > details {
+  margin-top: .3rem;
+  font: .8rem var(--sans);
+  color: var(--soft);
+}
+#revisions { margin-top: 1.6rem; }
+#revisions > summary, main section article details > summary {
+  cursor: pointer;
+  color: var(--soft);
+  list-style: none;
+}
+#revisions > summary::-webkit-details-marker,
+main section article details > summary::-webkit-details-marker { display: none; }
+#revisions > summary::before,
+main section article details > summary::before { content: "\203A\00a0"; color: var(--faint); }
+#revisions[open] > summary::before,
+main section article details[open] > summary::before { content: "\2304\00a0"; }
+#revisions ol, main section article details ol { margin: .4rem 0 0; padding-left: 1rem; }
+#revisions time, main section article details time { font-family: var(--mono); font-size: .92em; }
+
+#aliases, #nameshare {
+  margin-top: 1.6rem;
+  padding-top: .9rem;
+  border-top: 1px solid var(--hair);
+  font: .82rem var(--sans);
+  color: var(--soft);
+}
+#aliases h2, #nameshare p { font-size: .82rem; font-weight: 600; color: var(--soft); margin-bottom: .35rem; }
+#aliases ul, #nameshare ul { list-style: none; display: flex; flex-wrap: wrap; gap: .3rem .9rem; }
+#aliases a, #nameshare a { color: var(--soft); }
+#aliases a:hover, #nameshare a:hover { color: var(--violet); }
+#nameshare code, #aliases code { font-family: var(--mono); color: var(--ink); }
+
+/* Errored posts, surfaced loud and never hidden. */
+[data-error] { --violet: var(--tag-red); }
+article[data-error] > section h1,
+main article[data-error] h3 a { color: var(--tag-red); }
+li article[data-error] aside > b { color: var(--tag-red); font-size: 1rem; }
+article[data-error] ul { margin: .6rem 0; padding-left: 1.3rem; }
+article[data-error] code { font-family: var(--mono); background: light-dark(rgba(210,60,60,.08), rgba(255,120,120,.12)); padding: .05em .35em; border-radius: 4px; }
 "##;
 
 // ============================================================================
@@ -1668,13 +1710,64 @@ pub struct Canonical {
     pub time: Option<String>,
 }
 
+/// Every entry that claims a name in the flat namespace: those literally labeled
+/// it, plus those that carry it as an `alias <name>/` marker (all
+/// case-insensitive). Errored posts do not claim a name — they resolve to an
+/// error page, never to content under a stable URL.
+fn name_claimants<'a>(name: &str, all_entries: &[&'a Entry]) -> Vec<&'a Entry> {
+    let lower = name.to_lowercase();
+    all_entries
+        .iter()
+        .copied()
+        .filter(|e| e.error.is_none())
+        .filter(|e| {
+            e.label.as_ref().map_or(false, |l| l.to_lowercase() == lower)
+                || e.aliases.iter().any(|a| a.to_lowercase() == lower)
+        })
+        .collect()
+}
+
+/// The single oldest entry in a set, or `None` on a publish-date tie.
+fn oldest_unique<'a>(entries: &[&'a Entry]) -> Option<&'a Entry> {
+    let oldest = entries.iter().map(|e| e.timestamp).min()?;
+    let mut at_oldest = entries.iter().filter(|e| e.timestamp == oldest);
+    let first = *at_oldest.next()?;
+    if at_oldest.next().is_some() {
+        None
+    } else {
+        Some(first)
+    }
+}
+
+/// The entry that owns the bare `/name` — the OLDEST claim wins, so a URL's
+/// meaning never changes once established (a newer post named `IMG_4392` can
+/// never silently retarget an old `/IMG_4392` link). `None` when there is no
+/// claimant, or when the oldest publish date is itself tied (fail closed).
+pub fn name_owner<'a>(name: &str, all_entries: &[&'a Entry]) -> Option<&'a Entry> {
+    oldest_unique(&name_claimants(name, all_entries))
+}
+
+/// The other entries that claim the same bare name as `entry` (a folder vs a
+/// file, an old vs new version, an alias) — surfaced on the winning page so a
+/// shared name is never silent. Empty in the common unique-name case.
+fn name_shares<'a>(entry: &Entry, all_entries: &[&'a Entry]) -> Vec<&'a Entry> {
+    let label = match &entry.label {
+        Some(l) => l,
+        None => return Vec::new(),
+    };
+    name_claimants(label, all_entries)
+        .into_iter()
+        .filter(|e| !std::ptr::eq(*e, entry))
+        .collect()
+}
+
 /// The one canonical (decoded) address for an entry.
 ///
 /// - A unique label owns `/label`.
-/// - When several entries share a label (a folder and a file, or an old and a
-///   new version), the NEWEST owns the bare `/label`; the others carry the
-///   shortest date that tells them apart: `/2026/03/12/label` when the day
-///   suffices, else the day plus `?time=133513` for a same-day collision.
+/// - When several posts claim a name (a folder and a file, an old and a new
+///   version, an alias), the OLDEST claim owns the bare `/label`; the others
+///   carry the shortest date that tells them apart: `/2026/03/12/label` when the
+///   day suffices, else the day plus `?time=133513` for a same-day collision.
 /// - Unlabeled entries live at their day (`/2026/03/12`) plus `?time=`.
 ///
 /// The `path` is decoded (compare against decoded request paths); run it
@@ -1688,25 +1781,20 @@ pub fn canonical(entry: &Entry, all_entries: &[&Entry]) -> Canonical {
         None => return Canonical { path: ymd(), time: Some(hms()) },
     };
 
-    let lower = label.to_lowercase();
-    let twins: Vec<&&Entry> = all_entries
-        .iter()
-        .filter(|e| e.label.as_ref().map_or(false, |l| l.to_lowercase() == lower))
-        .collect();
-
-    if twins.len() <= 1 {
+    let claimants = name_claimants(label, all_entries);
+    if claimants.len() <= 1 {
         return Canonical { path: format!("/{}", label), time: None };
     }
 
-    // Newest wins the bare label — unless the newest timestamp itself is tied.
-    let newest = twins.iter().map(|e| e.timestamp).max().unwrap_or(entry.timestamp);
-    let newest_is_unique = twins.iter().filter(|e| e.timestamp == newest).count() == 1;
-    if entry.timestamp == newest && newest_is_unique {
+    // The oldest claim owns the bare label; this entry owns it only if it is
+    // that unique-oldest claimant (an alias or a tie sends it to a date path).
+    let owns_bare = name_owner(label, all_entries).map_or(false, |o| std::ptr::eq(o, entry));
+    if owns_bare {
         return Canonical { path: format!("/{}", label), time: None };
     }
 
     let day = entry.timestamp.format("%Y-%m-%d").to_string();
-    let same_day = twins
+    let same_day = claimants
         .iter()
         .filter(|e| e.timestamp.format("%Y-%m-%d").to_string() == day)
         .count();
@@ -1845,6 +1933,26 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
     let href = compose_href(&canon.path, None, canon.time.as_deref());
     let key = canonical_key(&canon);
 
+    // A post that scanned wrong still shows — loud, never hidden — as an errored
+    // row that links to its error page.
+    if entry.error.is_some() {
+        let label = entry.label.as_deref().unwrap_or("(unnamed)");
+        return format!(
+            r#"<li><article data-key="{key}" data-error>
+<aside>
+<time datetime="{datetime}">{date}</time>
+<b title="This post needs attention">&#9888;</b>
+</aside>
+<div><h3><a href="{href}">{label} <small>needs attention</small></a></h3></div>
+</article></li>"#,
+            key = html_escape(&key),
+            datetime = html_escape(&datetime),
+            date = html_escape(&date),
+            href = html_escape(&href),
+            label = html_escape(label),
+        );
+    }
+
     let star = if entry.is_favorite() {
         r#"<b title="A favorite of mine">&#9733;</b>"#.to_string()
     } else {
@@ -1863,6 +1971,19 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
         None => format!(r#"<i>(untitled)</i><small>{}</small>"#, html_escape(&ext_suffix(entry))),
     };
 
+    // A subtle, expandable note on rows that carry archived revisions.
+    let revisions = if entry.revisions.is_empty() {
+        String::new()
+    } else {
+        let n = entry.revisions.len();
+        format!(
+            r#"<details><summary>{n} earlier {word}</summary><ol>{items}</ol></details>"#,
+            n = n,
+            word = if n == 1 { "revision" } else { "revisions" },
+            items = revision_items(entry),
+        )
+    };
+
     format!(
         r#"<li><article data-key="{key}">
 <aside>
@@ -1870,7 +1991,7 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
 {star}<button type="button" aria-pressed="false" aria-label="Save for later (stays in this browser)" title="Save for later &mdash; stays in this browser">{bookmark}</button>
 {meter}{tags}
 </aside>
-<div><h3><a href="{href}">{title}</a></h3></div>
+<div><h3><a href="{href}">{title}</a></h3>{revisions}</div>
 </article></li>"#,
         key = html_escape(&key),
         datetime = html_escape(&datetime),
@@ -1881,6 +2002,7 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
         tags = rail_tags(entry),
         href = html_escape(&href),
         title = title,
+        revisions = revisions,
     )
 }
 
@@ -1999,6 +2121,178 @@ fn continue_nav(next: Option<&Entry>, all_entries: &[&Entry]) -> String {
     )
 }
 
+/// The date-path address of one archived revision: the current post's label at
+/// the revision's own date, always with `?time=` (revisions collide with the
+/// current post and each other on the day, so the time always disambiguates).
+fn revision_href(label: &str, rev: &Revision) -> String {
+    let decoded = format!("{}/{}", rev.date.format("/%Y/%m/%d"), label);
+    let hms = rev.date.format("%H%M%S").to_string();
+    compose_href(&decoded, None, Some(&hms))
+}
+
+/// The dated `<li>` links for a post's archived revisions, newest first.
+fn revision_items(entry: &Entry) -> String {
+    let label = entry.label.as_deref().unwrap_or("");
+    entry
+        .revisions
+        .iter()
+        .map(|r| {
+            format!(
+                r#"<li><a href="{href}"><time datetime="{dt}">{date}</time></a></li>"#,
+                href = html_escape(&revision_href(label, r)),
+                dt = html_escape(&format_datetime_attr(&r.date)),
+                date = html_escape(&r.date.format("%Y-%m-%d %H:%M").to_string()),
+            )
+        })
+        .collect()
+}
+
+/// The revision nav on an entry page: a small, in-place list of archived earlier
+/// states, each linking to its date-path URL. Empty when there are none.
+fn revision_nav(entry: &Entry) -> String {
+    if entry.revisions.is_empty() {
+        return String::new();
+    }
+    let n = entry.revisions.len();
+    format!(
+        r#"<details id="revisions"><summary>{n} earlier {word}</summary><ol>{items}</ol></details>"#,
+        n = n,
+        word = if n == 1 { "revision" } else { "revisions" },
+        items = revision_items(entry),
+    )
+}
+
+/// The alias list on an entry page: the extra addresses this post answers to.
+/// Never fully invisible (Finder cannot warn about `alias …/` markers), so the
+/// server surfaces them here. Empty when there are none.
+fn alias_list(entry: &Entry) -> String {
+    if entry.aliases.is_empty() {
+        return String::new();
+    }
+    let items: String = entry
+        .aliases
+        .iter()
+        .map(|a| {
+            format!(
+                r#"<li><a href="{href}">/{name}</a></li>"#,
+                href = html_escape(&encode_path(&format!("/{}", a))),
+                name = html_escape(a),
+            )
+        })
+        .collect();
+    format!(r#"<aside id="aliases"><h2>Also at</h2><ul>{}</ul></aside>"#, items)
+}
+
+/// The name-share notice: when several posts claim this name, link the others so
+/// the collision is visible, never silent. Empty in the common unique-name case.
+fn name_share_notice(entry: &Entry, all_entries: &[&Entry]) -> String {
+    let shares = name_shares(entry, all_entries);
+    if shares.is_empty() {
+        return String::new();
+    }
+    let label = entry.label.as_deref().unwrap_or("");
+    let links: String = shares
+        .iter()
+        .map(|e| {
+            let title = e.display_label.as_deref().or(e.label.as_deref()).unwrap_or("(untitled)");
+            format!(
+                r#"<li><a href="{href}"><time datetime="{dt}">{date}</time> {title}</a></li>"#,
+                href = html_escape(&canonical_href(e, all_entries)),
+                dt = html_escape(&format_datetime_attr(&e.timestamp)),
+                date = html_escape(&e.timestamp.format("%Y-%m-%d").to_string()),
+                title = html_escape(title),
+            )
+        })
+        .collect();
+    format!(
+        r#"<aside id="nameshare"><p>The name <code>{label}</code> is also used by:</p><ul>{links}</ul></aside>"#,
+        label = html_escape(label),
+        links = links,
+    )
+}
+
+/// The extra blocks under a post's content: revision nav, alias list, and the
+/// name-share notice (each empty unless it applies).
+fn post_extras(entry: &Entry, all_entries: &[&Entry]) -> String {
+    format!(
+        "{}{}{}",
+        revision_nav(entry),
+        alias_list(entry),
+        name_share_notice(entry, all_entries),
+    )
+}
+
+/// A fail-closed error page for a post that scanned wrong: it names the exact
+/// conflicting paths and the one-line fix. Served with HTTP 500 by the router.
+pub fn error_page(entry: &Entry, all_entries: &[&Entry]) -> String {
+    let cloud = compute_cloud(all_entries);
+    let view = ViewFilter::default();
+    let ctx = HeaderContext::plain(&cloud, &view);
+    let label = entry.label.as_deref().unwrap_or("(unnamed)");
+    let (headline, detail) = match &entry.error {
+        Some(e) => error_message(e),
+        None => ("This post could not be resolved.".to_string(), String::new()),
+    };
+
+    let body = format!(
+        r#"{header}
+{crumbs}
+<main>
+<article id="post" data-error>
+<header><time>error</time></header>
+<section>
+<h1>{label}</h1>
+<p><strong>{headline}</strong></p>
+{detail}
+</section>
+</article>
+</main>"#,
+        header = render_site_header(&ctx),
+        crumbs = crumbs(),
+        label = html_escape(label),
+        headline = html_escape(&headline),
+        detail = detail,
+    );
+    page_shell(&format!("esko.bar — error: {}", label), &body, "entry", false)
+}
+
+/// The headline and detail (already-escaped HTML) for each scan failure.
+fn error_message(e: &PostError) -> (String, String) {
+    match e {
+        PostError::MultipleDateMarkers(names) => (
+            "This post has more than one date-marker folder.".to_string(),
+            list_fix("Keep exactly one date folder and remove the rest:", names),
+        ),
+        PostError::AmbiguousPrimary(names) => (
+            "This post has no single primary content file.".to_string(),
+            list_fix(
+                "Keep exactly one file named the folder name or index (rename or remove the others):",
+                names,
+            ),
+        ),
+        PostError::NoPrimary => (
+            "This post folder has no content file.".to_string(),
+            "<p>Add a primary file named the folder name or <code>index</code>.</p>".to_string(),
+        ),
+        PostError::UnparseableName(name) => (
+            "This name is not a valid post name.".to_string(),
+            format!(
+                "<p>Post names are hyphenated, with no spaces: <code>{}</code>. Rename it, or use a <code>copy</code> / <code>alias</code> marker if that was the intent.</p>",
+                html_escape(name),
+            ),
+        ),
+    }
+}
+
+/// An intro line plus the offending names as a `<ul><li><code>…</code></li>`.
+fn list_fix(intro: &str, names: &[String]) -> String {
+    let items: String = names
+        .iter()
+        .map(|n| format!("<li><code>{}</code></li>", html_escape(n)))
+        .collect();
+    format!("<p>{}</p><ul>{}</ul>", html_escape(intro), items)
+}
+
 /// Render a single entry page: shared header (linking to the timeline), crumbs,
 /// then the post in plain typography, and a Continue teaser for the next entry.
 pub fn entry_page(
@@ -2026,6 +2320,7 @@ pub fn entry_page(
 <article id="post" data-canonical="{canonical}" data-title="{data_title}">
 {post_header}
 <section>{content}</section>
+{extras}
 <footer><a href="{raw_href}">source</a> <a href="/">timeline</a></footer>
 </article>
 {continue_nav}
@@ -2036,6 +2331,7 @@ pub fn entry_page(
         data_title = html_escape(label),
         post_header = post_header(entry),
         content = rendered_html,
+        extras = post_extras(entry, all_entries),
         raw_href = html_escape(&raw_href),
         continue_nav = continue_nav(next, all_entries),
     );
@@ -2069,6 +2365,7 @@ pub fn image_page(
 <article id="post" data-canonical="{canonical}" data-title="{data_title}">
 {post_header}
 <figure><img src="{src}" alt="{alt}"></figure>
+{extras}
 <footer><a href="{src}">original</a> <a href="/">timeline</a></footer>
 </article>
 {continue_nav}
@@ -2080,6 +2377,7 @@ pub fn image_page(
         post_header = post_header(entry),
         src = html_escape(&src),
         alt = html_escape(label),
+        extras = post_extras(entry, all_entries),
         continue_nav = continue_nav(next, all_entries),
     );
 
@@ -2128,7 +2426,7 @@ fn html_escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
+    use chrono::{NaiveDate, NaiveDateTime};
 
     fn tag(name: &str, count: usize) -> TagStat {
         TagStat {
@@ -2145,5 +2443,85 @@ mod tests {
         let tags = vec![tag("Zebra", 9), tag("apple", 1), tag("mango", 5)];
         let order: Vec<&str> = cloud_order(&tags).iter().map(|t| t.name.as_str()).collect();
         assert_eq!(order, ["apple", "mango", "Zebra"]);
+    }
+
+    fn ts(s: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H%M%S").unwrap()
+    }
+
+    fn mkentry(label: &str, at: &str) -> Entry {
+        Entry {
+            path: std::path::PathBuf::from(format!("/c/{}.md", label)),
+            dir: None,
+            timestamp: ts(at),
+            edited: None,
+            label: Some(label.to_string()),
+            display_label: None,
+            extension: "md".to_string(),
+            tags: Vec::new(),
+            grade: None,
+            aliases: Vec::new(),
+            revisions: Vec::new(),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn oldest_claim_owns_bare_label() {
+        let old = mkentry("foo", "2026-03-01T120000");
+        let mut newer = mkentry("foo", "2026-03-10T120000");
+        newer.path = "/c/foo-folder/foo.md".into();
+        let all = vec![&old, &newer];
+
+        // Oldest owns the bare label; the newer claim gets a dated URL.
+        assert_eq!(canonical(&old, &all).path, "/foo");
+        assert!(canonical(&old, &all).time.is_none());
+        assert_eq!(canonical(&newer, &all).path, "/2026/03/10/foo");
+        assert!(std::ptr::eq(name_owner("foo", &all).unwrap(), &old));
+    }
+
+    #[test]
+    fn alias_competes_for_the_name_and_can_win() {
+        // `cv` (old) aliases `resume`; a newer post is literally named `resume`.
+        let mut cv = mkentry("cv", "2026-01-01T090000");
+        cv.aliases = vec!["resume".to_string()];
+        let resume = mkentry("resume", "2026-05-01T090000");
+        let all = vec![&cv, &resume];
+
+        // The oldest claim on `resume` is cv's alias, so cv owns `/resume`.
+        assert!(std::ptr::eq(name_owner("resume", &all).unwrap(), &cv));
+        // The literally-named post therefore lives at its date path.
+        assert_eq!(canonical(&resume, &all).path, "/2026/05/01/resume");
+    }
+
+    #[test]
+    fn tied_oldest_has_no_owner() {
+        let a = mkentry("dup", "2026-03-01T120000");
+        let mut b = mkentry("dup", "2026-03-01T120000");
+        b.path = "/c/dup2.md".into();
+        let all = vec![&a, &b];
+        assert!(name_owner("dup", &all).is_none());
+    }
+
+    #[test]
+    fn errored_posts_do_not_claim_names() {
+        let good = mkentry("x", "2026-03-01T120000");
+        let mut bad = mkentry("x", "2026-01-01T120000");
+        bad.error = Some(PostError::NoPrimary);
+        let all = vec![&good, &bad];
+        // Even though `bad` is older, it does not claim the name — `good` owns it.
+        assert!(std::ptr::eq(name_owner("x", &all).unwrap(), &good));
+        assert_eq!(canonical(&good, &all).path, "/x");
+    }
+
+    #[test]
+    fn revision_href_is_dated_with_time() {
+        let mut e = mkentry("post", "2026-03-01T120000");
+        e.revisions = vec![Revision {
+            date: ts("2026-02-15T091500"),
+            path: "/c/post/post copy.md".into(),
+            rank: 1,
+        }];
+        assert!(revision_items(&e).contains("/2026/02/15/post?time=091500"));
     }
 }
