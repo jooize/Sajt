@@ -78,9 +78,10 @@ pub struct Entry {
     /// Auto-generated display label (e.g. "@handle · date" for social embeds).
     /// Templates use display_label.as_ref().or(label.as_ref()) for display.
     pub display_label: Option<String>,
-    /// One-line row description: the first prose paragraph of a text post,
-    /// stripped to plain text and capped. `None` for non-text posts (photos,
-    /// links, folders, pages) or when none is found. Also folded into search.
+    /// One-line row description. A user-authored macOS Finder comment when the
+    /// post has one (any post kind — photos, links, pages too); otherwise the
+    /// first prose paragraph of a text post, stripped to plain text and capped.
+    /// `None` when the post has neither. Also folded into search.
     pub excerpt: Option<String>,
     pub extension: String,
     pub tags: Vec<Tag>,

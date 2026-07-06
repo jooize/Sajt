@@ -1,6 +1,6 @@
 use crate::embed::EmbedData;
 use crate::entry::{Entry, PostError, Revision, COPY_KEYWORD};
-use crate::tags::{read_tags_colored, Tag};
+use crate::tags::{read_finder_comment, read_tags_colored, Tag};
 use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -130,7 +130,8 @@ fn build_bare_post(item: &TopItem) -> Entry {
     let (stem, ext) = split_name(&item.name);
     let tags = read_tags_colored(&item.path);
     let timestamp = mtime_local(&item.path).unwrap_or_else(epoch);
-    let excerpt = extract_excerpt(&item.path, ext);
+    // Bare file: the file itself is both the commented object and the text source.
+    let excerpt = row_description(&item.path, &item.path, ext);
 
     // Copies were already routed away, so a space in a bare label means the name
     // parsed as no known grammar (a typo or look-alike char) — fail closed.
@@ -185,7 +186,9 @@ fn build_folder_post(item: &TopItem) -> Entry {
 
     let primary = scan.primary.expect("a folder post with no error has a primary");
     let (_, ext) = split_name(&primary.name);
-    let excerpt = extract_excerpt(&primary.path, ext);
+    // Folder post: the comment is read at the post level (the folder, like tags),
+    // the auto-excerpt from the primary file inside it.
+    let excerpt = row_description(dir, &primary.path, ext);
 
     // Publish date: the date marker, else the primary's mtime. The edited line is
     // the primary's mtime, shown only when it is meaningfully later than publish.
@@ -235,8 +238,35 @@ fn errored_folder(item: &TopItem, tags: Vec<Tag>, error: PostError) -> Entry {
 }
 
 // ---------------------------------------------------------------------------
-// Row excerpt — the first prose paragraph of a text post
+// Row description — a Finder comment (any post) or an auto-excerpt (text posts)
 // ---------------------------------------------------------------------------
+
+/// Row descriptions cap at this many characters so a row stays one line; the
+/// same capped string also feeds the search haystack (`stats::haystack`).
+const DESCRIPTION_MAX_LEN: usize = 200;
+
+/// The one-line row description for a post.
+///
+/// A user-authored macOS Finder comment wins when present: it is deliberate
+/// metadata, so it applies to *any* post kind — a photo, link, or page can carry
+/// a description this way, which the text-only auto-excerpt structurally never
+/// can. Otherwise fall back to the auto-excerpt (first prose paragraph, text
+/// posts only). The comment is collapsed to a single line and capped the same as
+/// an excerpt; it is HTML-escaped at render like every other field.
+///
+/// `comment_path` is the post-level object the reader comments in Finder — the
+/// folder for a folder post, the bare file for a bare-file post, mirroring how
+/// tags are read at the post level. `text_path` is the primary content file the
+/// auto-excerpt reads.
+fn row_description(comment_path: &Path, text_path: &Path, ext: &str) -> Option<String> {
+    if let Some(comment) = read_finder_comment(comment_path) {
+        let one_line = collapse_ws(&comment);
+        if !one_line.is_empty() {
+            return Some(truncate_words(&one_line, DESCRIPTION_MAX_LEN));
+        }
+    }
+    extract_excerpt(text_path, ext)
+}
 
 /// A one-line row description: the first prose paragraph of a text post,
 /// stripped to plain text and length-capped. `None` for non-text posts
@@ -244,7 +274,6 @@ fn errored_folder(item: &TopItem, tags: Vec<Tag>, error: PostError) -> Entry {
 /// whose `<style>`/`<script>` text must never leak into a description.
 fn extract_excerpt(path: &Path, ext: &str) -> Option<String> {
     const MAX_READ: u64 = 16 * 1024;
-    const MAX_LEN: usize = 200;
     let text_like = matches!(
         ext.to_ascii_lowercase().as_str(),
         "md" | "markdown" | "txt" | "text" | "adoc" | "asciidoc" | "rst" | "org" | "tex"
@@ -264,7 +293,7 @@ fn extract_excerpt(path: &Path, ext: &str) -> Option<String> {
     if para.is_empty() {
         None
     } else {
-        Some(truncate_words(&para, MAX_LEN))
+        Some(truncate_words(&para, DESCRIPTION_MAX_LEN))
     }
 }
 
@@ -827,6 +856,89 @@ mod tests {
         assert_eq!(extract_excerpt(&d.path().join("pic.jpg"), "jpg"), None);
         // HTML is deliberately excluded so <style>/<script> text can never leak.
         assert_eq!(extract_excerpt(&d.path().join("page.html"), "html"), None);
+    }
+
+    /// Write a Finder comment the way Finder stores it — a binary-plist string in
+    /// the `kMDItemFinderComment` xattr — so `read_finder_comment` sees it. Returns
+    /// false when the filesystem rejects xattrs, so the test skips rather than
+    /// failing on an unsupported FS.
+    #[must_use]
+    fn set_finder_comment(path: &Path, comment: &str) -> bool {
+        let mut buf = Vec::new();
+        plist::to_writer_binary(&mut buf, &plist::Value::String(comment.to_string())).unwrap();
+        xattr::set(path, "com.apple.metadata:kMDItemFinderComment", &buf).is_ok()
+    }
+
+    #[test]
+    fn finder_comment_overrides_excerpt_on_any_kind() {
+        let d = TmpDir::new();
+        // A photo has no auto-excerpt, yet a Finder comment gives it a description.
+        touch(d.path(), "pic.jpg", "binary-ish bytes, never read as prose");
+        let jpg = d.path().join("pic.jpg");
+        if !set_finder_comment(&jpg, "A sunset over the harbour") {
+            return; // filesystem without xattr support — skip
+        }
+        assert_eq!(
+            row_description(&jpg, &jpg, "jpg"),
+            Some("A sunset over the harbour".to_string())
+        );
+
+        // On a text post the comment still wins over the first paragraph.
+        touch(d.path(), "note.md", "# Title\n\nAuto first paragraph.");
+        let md = d.path().join("note.md");
+        assert!(set_finder_comment(&md, "Hand-written override"));
+        assert_eq!(
+            row_description(&md, &md, "md"),
+            Some("Hand-written override".to_string())
+        );
+    }
+
+    #[test]
+    fn empty_finder_comment_falls_back_to_excerpt() {
+        let d = TmpDir::new();
+        touch(d.path(), "note.md", "# Title\n\nThe real first paragraph.");
+        let md = d.path().join("note.md");
+        if !set_finder_comment(&md, "   \n  \t") {
+            return; // xattr unsupported — skip
+        }
+        // A whitespace-only comment is ignored; the auto-excerpt shows instead.
+        assert_eq!(
+            row_description(&md, &md, "md"),
+            Some("The real first paragraph.".to_string())
+        );
+    }
+
+    #[test]
+    fn finder_comment_collapsed_to_one_line() {
+        let d = TmpDir::new();
+        touch(d.path(), "pic.jpg", "x");
+        let jpg = d.path().join("pic.jpg");
+        if !set_finder_comment(&jpg, "line one\n\nline two\tindented") {
+            return;
+        }
+        assert_eq!(
+            row_description(&jpg, &jpg, "jpg"),
+            Some("line one line two indented".to_string())
+        );
+    }
+
+    #[test]
+    fn folder_post_reads_comment_at_folder_level() {
+        let d = TmpDir::new();
+        mkdir(d.path(), "story");
+        let dir = d.path().join("story");
+        touch(&dir, "story.md", "# Story\n\nInner auto paragraph.");
+        let primary = dir.join("story.md");
+        // A comment on the inner file must be ignored — comments (like tags) are
+        // read at the post level (the folder), never on the primary inside it.
+        if !set_finder_comment(&primary, "inner-file comment, ignored") {
+            return;
+        }
+        assert!(set_finder_comment(&dir, "post-level description"));
+        assert_eq!(
+            row_description(&dir, &primary, "md"),
+            Some("post-level description".to_string())
+        );
     }
 
     /// A throwaway directory under the OS temp dir, removed on drop. Avoids a

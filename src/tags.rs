@@ -56,6 +56,32 @@ pub fn read_tags_colored(path: &Path) -> Vec<Tag> {
     read_raw_tags(path).iter().map(|s| parse_tag_entry(s)).collect()
 }
 
+/// Read the macOS Finder comment (`kMDItemFinderComment`) as plain text.
+///
+/// This is the Spotlight comment a user types in Finder's Get Info panel. Finder
+/// stores it as a binary-plist string in the
+/// `com.apple.metadata:kMDItemFinderComment` extended attribute — the same class
+/// of per-file metadata as the tag xattr above, and portable the same way
+/// (`rsync -X`). We read only this per-file xattr, never the parent folder's
+/// `.DS_Store` copy, so a comment on an unpublished neighbor can never surface.
+/// Read-only, like every content accessor; fails closed to `None` on any error
+/// so a malformed value yields no description rather than garbage.
+///
+/// Returns the trimmed comment, or `None` when absent, unreadable, or empty.
+pub fn read_finder_comment(path: &Path) -> Option<String> {
+    let attr = match xattr::get(path, "com.apple.metadata:kMDItemFinderComment") {
+        Ok(Some(data)) => data,
+        _ => return None,
+    };
+    let value: plist::Value = plist::from_bytes(&attr).ok()?;
+    let comment = value.as_string()?.trim();
+    if comment.is_empty() {
+        None
+    } else {
+        Some(comment.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

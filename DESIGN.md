@@ -328,6 +328,14 @@ Reference realizations: `static/timeline-glass-mockup.html` (rows) and
     label was rejected 2026-07-04), slightly larger and bold, quiet color.
   - Titles show the extension (or folder `/`) at the **same size, slightly
     greyed** — filesystem-native type indication for free.
+  - **One-line description** under the title. A native macOS **Finder
+    comment** (`kMDItemFinderComment` xattr, set in Get Info) wins when
+    present — deliberate metadata, so it works on *any* kind (a photo, link
+    or page can carry one). Otherwise an auto-excerpt: the first prose
+    paragraph of a text post, markup-stripped and capped (HTML pages
+    excluded so `<style>`/`<script>` can never leak). Read at the post level
+    (the folder, like tags — never `.DS_Store`), escaped at render, folded
+    into search. **SHIPPED 2026-07-06.**
   - The everything/notable/best control replaces `/best`; the v1
     kind-filter menu, range slider, and the always-open search box stay
     rejected as chrome.
