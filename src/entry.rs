@@ -3,17 +3,77 @@ use chrono::NaiveDateTime;
 use std::path::PathBuf;
 
 /// Tags the site treats as machinery, not topics — never shown in the cloud or
-/// the row rail. `favorite` drives the ★, `public`/`private` drive visibility,
-/// and `Do…` are one-shot action tags the scanner consumes.
+/// the row rail. `favorite` drives the ★; `public`/`private` drive visibility.
 pub fn is_reserved_tag(name: &str) -> bool {
     matches!(name.to_ascii_lowercase().as_str(), "public" | "private" | "favorite")
-        || name.starts_with("Do")
 }
 
+/// The Finder duplicate keyword. Finder writes it only in English ("copy"); the
+/// revision grammar (`<name> copy`, `<name> copy N`) is built from this one
+/// constant so a localized Finder can be supported later by changing it here.
+pub const COPY_KEYWORD: &str = "copy";
+
+/// An archived revision of a post: a frozen earlier state, made by Cmd-D before
+/// editing. Either a sibling ` copy [n]` folder (a full-post snapshot) or a
+/// `<stem> copy [n]` file inside a folder post (a file-level snapshot). A
+/// revision is dated by its own primary/file mtime — Finder's Cmd-D preserves
+/// that — and never by an inherited date marker.
+#[derive(Debug, Clone)]
+pub struct Revision {
+    /// Revision date = the copy's primary-file mtime (read as local wall-clock).
+    pub date: NaiveDateTime,
+    /// The revision's primary content file, for serving at its date-path URL.
+    // Consumed when routes serve revisions at their date paths (step 2).
+    #[allow(dead_code)]
+    pub path: PathBuf,
+    /// The copy's rank within the family (1 = ` copy`, 2 = ` copy 2`, …). Newer
+    /// dates sort first; rank breaks exact date ties (a later copy ranks higher).
+    pub rank: u32,
+}
+
+/// Why a post failed to scan. A malformed post still becomes an `Entry` (with
+/// this set) so it renders as a loud, fail-closed error row rather than silently
+/// vanishing or serving the wrong bytes. Each variant carries the conflicting
+/// names (relative to the post) so the error page can name the exact fix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PostError {
+    /// A folder post carried more than one date-marker subfolder.
+    MultipleDateMarkers(Vec<String>),
+    /// More than one file could be the primary content, or none could be chosen
+    /// from several (stem `index` or matching the folder name resolves it).
+    AmbiguousPrimary(Vec<String>),
+    /// The folder post has no file that can serve as primary content (it is empty
+    /// of regular files).
+    NoPrimary,
+    /// A top-level post name contains a space but matches no known grammar
+    /// (date marker, `alias …`, ` copy [n]`) — most likely a typo or a
+    /// look-alike character. Fail closed instead of publishing a stray sibling.
+    UnparseableName(String),
+}
+
+/// A post: a bare file or a folder in the content tree, resolved to the bytes it
+/// serves plus the durable, user-authored metadata around it (publish date,
+/// aliases, revisions). See `entry-model.md` for the model this represents.
 #[derive(Debug, Clone)]
 pub struct Entry {
+    /// The primary content file to render and serve. For a bare-file post this is
+    /// the file itself; for a folder post it is the resolved primary inside the
+    /// folder. For an errored folder post it is the folder itself (unreadable as
+    /// bytes — the error page renders instead).
     pub path: PathBuf,
+    /// The post's directory when it is a folder post; `None` for a bare-file post.
+    /// Assets (and the alias/date markers) resolve relative to this.
+    pub dir: Option<PathBuf>,
+    /// Publish date: the empty date-marker subfolder for folder posts, otherwise
+    /// the primary file's mtime (bare files, or folder posts with no marker).
+    /// Read as local wall-clock — that is how Finder/`touch` write times.
     pub timestamp: NaiveDateTime,
+    /// Edited date = the primary file's mtime, recorded only when it is
+    /// meaningfully later than `timestamp` (folder posts with a date marker). A
+    /// bare file's mtime *is* its publish date, so this stays `None` for them.
+    // Rendered as the entry's "edited" line in step 2.
+    #[allow(dead_code)]
+    pub edited: Option<NaiveDateTime>,
     pub label: Option<String>,
     /// Auto-generated display label (e.g. "@handle · date" for social embeds).
     /// Templates use display_label.as_ref().or(label.as_ref()) for display.
@@ -21,9 +81,20 @@ pub struct Entry {
     pub extension: String,
     pub tags: Vec<Tag>,
     /// Pairwise-grade percentile in `0.0..=1.0`, or `None` until the entry has
-    /// been graded. The grading flow is not built yet, so this is always `None`
-    /// today; the quality meter and level filter read it when it exists.
+    /// been graded. No grading flow exists yet, so this is always `None` today;
+    /// the quality meter and level filter read it when it exists.
     pub grade: Option<f32>,
+    /// Extra addresses declared by `alias <name>/` marker folders. Each is an
+    /// additional address for this post (served by a 301 to the canonical one).
+    // Consumed when routes resolve alias URLs and the entry page lists them (step 2).
+    #[allow(dead_code)]
+    pub aliases: Vec<String>,
+    /// Archived revisions, newest first. Kept off the timeline proper (only the
+    /// current post shows); reachable through the revision nav and date-path URLs.
+    pub revisions: Vec<Revision>,
+    /// Set when the post scanned wrong. It still renders — as a fail-closed error
+    /// page/row — so the conflict is surfaced, never hidden.
+    pub error: Option<PostError>,
 }
 
 impl Entry {
@@ -53,99 +124,5 @@ impl Entry {
             "md" | "markdown" | "txt" | "text" | "adoc" | "asciidoc" | "rst" | "org" | "tex" => "note",
             _ => "file",
         }
-    }
-}
-
-/// Parse a filename like `2026-03-03T143052_sunset.md` into components.
-///
-/// Timestamp is always 17 chars: `YYYY-MM-DDTHHMMSS`
-/// Label after first `_`, optional.
-/// Extension from last `.`
-/// Returns None if the filename doesn't match the convention.
-pub fn parse_filename(filename: &str) -> Option<(NaiveDateTime, Option<String>, String)> {
-    // Must be at least 17 chars for the timestamp
-    if filename.len() < 17 {
-        return None;
-    }
-
-    let ts_str = &filename[..17];
-    let timestamp = NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H%M%S").ok()?;
-
-    let rest = &filename[17..];
-
-    // Find the extension (last `.` in the rest portion)
-    let ext_pos = rest.rfind('.')?;
-    let extension = rest[ext_pos + 1..].to_string();
-    if extension.is_empty() {
-        return None;
-    }
-
-    // Everything between timestamp and extension is the label area
-    let label_area = &rest[..ext_pos];
-
-    let label = if label_area.starts_with('_') && label_area.len() > 1 {
-        Some(label_area[1..].to_string())
-    } else if label_area.is_empty() {
-        None
-    } else {
-        // Unexpected characters between timestamp and extension
-        return None;
-    };
-
-    Some((timestamp, label, extension))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_full_filename() {
-        let (ts, label, ext) = parse_filename("2026-03-03T143052_sunset.md").unwrap();
-        assert_eq!(ts, NaiveDateTime::parse_from_str("2026-03-03T143052", "%Y-%m-%dT%H%M%S").unwrap());
-        assert_eq!(label.as_deref(), Some("sunset"));
-        assert_eq!(ext, "md");
-    }
-
-    #[test]
-    fn parse_no_label() {
-        let (ts, label, ext) = parse_filename("2026-03-04T091500.txt").unwrap();
-        assert_eq!(ts, NaiveDateTime::parse_from_str("2026-03-04T091500", "%Y-%m-%dT%H%M%S").unwrap());
-        assert_eq!(label, None);
-        assert_eq!(ext, "txt");
-    }
-
-    #[test]
-    fn parse_image_with_original_name() {
-        let (_, label, ext) = parse_filename("2026-03-03T150000_IMG_4392.jpg").unwrap();
-        assert_eq!(label.as_deref(), Some("IMG_4392"));
-        assert_eq!(ext, "jpg");
-    }
-
-    #[test]
-    fn parse_compound_label() {
-        let (_, label, ext) = parse_filename("2026-03-03T143052_hello-world.md").unwrap();
-        assert_eq!(label.as_deref(), Some("hello-world"));
-        assert_eq!(ext, "md");
-    }
-
-    #[test]
-    fn reject_too_short() {
-        assert!(parse_filename("short.md").is_none());
-    }
-
-    #[test]
-    fn reject_bad_timestamp() {
-        assert!(parse_filename("2026-13-03T143052_sunset.md").is_none());
-    }
-
-    #[test]
-    fn reject_no_extension() {
-        assert!(parse_filename("2026-03-03T143052_sunset").is_none());
-    }
-
-    #[test]
-    fn reject_garbage_between_timestamp_and_ext() {
-        assert!(parse_filename("2026-03-03T143052xyz.md").is_none());
     }
 }

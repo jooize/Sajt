@@ -49,61 +49,11 @@ fn read_raw_tags(path: &Path) -> Vec<String> {
 }
 
 /// Read macOS xattr tags with their Finder colors.
+///
+/// This is the only tag accessor: the server is read-only on the content tree,
+/// so there is deliberately no tag-writing counterpart.
 pub fn read_tags_colored(path: &Path) -> Vec<Tag> {
     read_raw_tags(path).iter().map(|s| parse_tag_entry(s)).collect()
-}
-
-/// Read just the tag names (color suffix stripped). Used by the action-tag
-/// machinery (`DoRename` etc.), which only cares about names.
-pub fn read_tags(path: &Path) -> Vec<String> {
-    read_raw_tags(path)
-        .iter()
-        .map(|s| parse_tag_entry(s).name)
-        .collect()
-}
-
-/// Write macOS xattr tags to a file, replacing all existing tags.
-pub fn write_tags(path: &Path, tags: &[String]) -> Result<(), String> {
-    if tags.is_empty() {
-        // Remove the attribute entirely
-        match xattr::remove(path, "com.apple.metadata:_kMDItemUserTags") {
-            Ok(()) => return Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(e) => return Err(format!("Failed to remove tags xattr: {}", e)),
-        }
-    }
-
-    // Build plist array of strings (re-add color suffix \n0 for compatibility)
-    let array: Vec<plist::Value> = tags
-        .iter()
-        .map(|t| plist::Value::String(format!("{}\n0", t)))
-        .collect();
-    let value = plist::Value::Array(array);
-
-    let mut buf = Vec::new();
-    plist::to_writer_binary(&mut buf, &value)
-        .map_err(|e| format!("Failed to serialize tags plist: {}", e))?;
-
-    xattr::set(path, "com.apple.metadata:_kMDItemUserTags", &buf)
-        .map_err(|e| format!("Failed to write tags xattr: {}", e))?;
-
-    Ok(())
-}
-
-/// Remove a specific tag from a file's macOS xattr tags.
-/// Returns the remaining tags.
-pub fn remove_tag(path: &Path, tag_to_remove: &str) -> Vec<String> {
-    let tags = read_tags(path);
-    let remaining: Vec<String> = tags
-        .into_iter()
-        .filter(|t| t != tag_to_remove)
-        .collect();
-
-    if let Err(e) = write_tags(path, &remaining) {
-        tracing::warn!("Failed to update tags on {}: {}", path.display(), e);
-    }
-
-    remaining
 }
 
 #[cfg(test)]
@@ -113,7 +63,7 @@ mod tests {
 
     #[test]
     fn read_tags_nonexistent_file() {
-        let tags = read_tags(&PathBuf::from("/nonexistent/file.txt"));
+        let tags = read_tags_colored(&PathBuf::from("/nonexistent/file.txt"));
         assert!(tags.is_empty());
     }
 
