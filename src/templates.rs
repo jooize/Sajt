@@ -8,7 +8,7 @@ use crate::stats::{compute_cloud, finder_color_var, CloudStats, TagStat, ViewFil
 // state classes .selected/.near/.empty aside), light-dark() theming.
 // ============================================================================
 
-const CSS: &str = r##"
+pub(crate) const CSS: &str = r##"
 :root {
   color-scheme: light dark;
 
@@ -2462,6 +2462,24 @@ pub fn entry_page(
     );
 
     page_shell(&format!("esko.bar — {}", label), &body, "entry", false)
+}
+
+/// Wrap an already-rendered body fragment in the exact entry-page article
+/// structure the live site uses (`main > article > header + section`), so an
+/// authoring tool (the grading comparison view) can show a post's body with
+/// full styling parity. This is *only the post itself* — no site chrome (tag
+/// cloud, crumbs, continue nav, footer). `inner_html` is trusted rendered
+/// content from the same pipeline `render::render_entry` feeds the live site,
+/// and is inserted as-is (exactly like `entry_page`'s content).
+pub(crate) fn post_body_fragment(entry: &Entry, inner_html: &str) -> String {
+    format!(
+        r#"<main><article>
+{post_header}
+<section>{content}</section>
+</article></main>"#,
+        post_header = post_header(entry),
+        content = inner_html,
+    )
 }
 
 /// Render an image viewer page.

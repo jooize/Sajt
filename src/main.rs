@@ -2,6 +2,7 @@ mod content;
 mod embed;
 mod entry;
 mod grade;
+mod grader;
 mod migrate;
 mod render;
 mod routes;
@@ -53,6 +54,16 @@ enum Command {
         #[arg(long)]
         apply: bool,
     },
+    /// Local-only pairwise grading tool. Starts its own web UI to compare two
+    /// posts side-by-side (each rendered as on the live site), binary-searches
+    /// the new post into the ranking, and appends the resulting judgements to
+    /// `<content_dir>/.esko.bar-grade-judgements.jsonl`. Localhost bind only;
+    /// never proxy it. Runs until Ctrl-C. See `entry-model.md` (Grade section).
+    Grade {
+        /// Port to listen on (127.0.0.1 only).
+        #[arg(long, default_value_t = 1236)]
+        port: u16,
+    },
 }
 
 /// Platform cache directory used when `--cache-dir` isn't given. Falls back to a
@@ -81,6 +92,14 @@ async fn main() {
             eprintln!("Migration failed: {}", e);
             std::process::exit(1);
         }
+        return;
+    }
+
+    // The grading tool runs its own local-only web server (separate from the
+    // public one) until Ctrl-C, then exits. It is the ONLY sanctioned writer of
+    // the content tree, and writes exactly one file: the grade ledger.
+    if let Some(Command::Grade { port }) = args.command {
+        grader::run(content_dir, port).await;
         return;
     }
 
