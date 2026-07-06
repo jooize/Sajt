@@ -111,7 +111,49 @@ fn scan_entries(content_dir: &Path) -> std::io::Result<Vec<Entry>> {
 
     // Newest first; the sort is stable so equal publish dates keep scan order.
     entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    assign_grades(&mut entries, content_dir);
     Ok(entries)
+}
+
+/// Derive each post's `grade` from the pairwise-judgement ledger and assign it.
+///
+/// Read-only: the ledger lives in the content root but is only read here; the
+/// grades are held in memory, recomputed on every scan. Names in the ledger
+/// (post labels or their `alias <name>/` addresses) resolve to canonical labels
+/// so a rename never orphans past judgements. An absent or empty ledger leaves
+/// every `grade` as `None` — the site is then simply "everything" + favorites.
+fn assign_grades(entries: &mut [Entry], content_dir: &Path) {
+    let judgements = crate::grade::load_judgements(content_dir);
+    if judgements.is_empty() {
+        return; // no ledger -> nothing to assign, every post stays ungraded
+    }
+
+    // Map every canonical label to itself first, so a real post always wins over
+    // an alias of the same name; then fold in aliases that don't collide.
+    let mut resolver: HashMap<String, String> = HashMap::new();
+    for e in entries.iter() {
+        if let Some(label) = &e.label {
+            resolver.insert(label.clone(), label.clone());
+        }
+    }
+    for e in entries.iter() {
+        if let Some(label) = &e.label {
+            for alias in &e.aliases {
+                resolver.entry(alias.clone()).or_insert_with(|| label.clone());
+            }
+        }
+    }
+
+    let grades = crate::grade::derive_grades(&judgements, |name| resolver.get(name).cloned());
+    let graded = grades.len();
+    for e in entries.iter_mut() {
+        if let Some(label) = &e.label {
+            e.grade = grades.get(label).copied();
+        }
+    }
+    if graded > 0 {
+        tracing::info!("Derived grades for {} post(s) from the judgement ledger", graded);
+    }
 }
 
 /// Build a post from a top-level item: a bare file or a folder.

@@ -1,6 +1,7 @@
 mod content;
 mod embed;
 mod entry;
+mod grade;
 mod migrate;
 mod render;
 mod routes;
