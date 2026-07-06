@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 pub struct ContentStore {
     pub entries: Vec<Entry>,
     pub content_dir: PathBuf,
+    /// Root for disposable derived caches (embeds, etc.), always OUTSIDE the
+    /// content tree so the server never writes into content. See `entry-model.md`.
+    pub cache_dir: PathBuf,
     pub embed_cache: HashMap<PathBuf, EmbedData>,
 }
 
@@ -19,19 +22,20 @@ impl ContentStore {
     /// its empty date-marker subfolder, else the primary file's mtime). The scan
     /// never writes; a malformed post becomes an errored `Entry` rather than
     /// aborting the whole scan or serving the wrong bytes. See `entry-model.md`.
-    pub fn scan(content_dir: &Path) -> std::io::Result<Self> {
+    pub fn scan(content_dir: &Path, cache_dir: &Path) -> std::io::Result<Self> {
         let entries = scan_entries(content_dir)?;
         tracing::info!("Scanned {} entries from {}", entries.len(), content_dir.display());
         Ok(ContentStore {
             entries,
             content_dir: content_dir.to_path_buf(),
+            cache_dir: cache_dir.to_path_buf(),
             embed_cache: HashMap::new(),
         })
     }
 
     /// Re-scan the content directory, replacing all entries.
     pub fn rescan(&mut self) -> std::io::Result<()> {
-        let new = Self::scan(&self.content_dir)?;
+        let new = Self::scan(&self.content_dir, &self.cache_dir)?;
         self.entries = new.entries;
         self.embed_cache.clear();
         Ok(())
@@ -39,7 +43,9 @@ impl ContentStore {
 
     /// Resolve embeds for entries containing recognized URLs.
     pub async fn resolve_embeds(&mut self) {
-        let cache = crate::embed::resolve_embeds(&mut self.entries, &self.content_dir).await;
+        let cache =
+            crate::embed::resolve_embeds(&mut self.entries, &self.content_dir, &self.cache_dir)
+                .await;
         self.embed_cache = cache;
         let count = self.embed_cache.len();
         if count > 0 {
@@ -86,7 +92,7 @@ fn scan_entries(content_dir: &Path) -> std::io::Result<Vec<Entry>> {
             continue; // dotfiles: .DS_Store, .claude, the grade ledger
         }
         if is_cache_name(&name) {
-            continue; // derived embed caches (still in-tree until the cache-relocation step)
+            continue; // legacy in-tree embed caches (the server now caches outside content)
         }
         let is_dir = dir_entry.file_type()?.is_dir();
 
@@ -470,7 +476,9 @@ fn split_name(name: &str) -> (&str, &str) {
     }
 }
 
-/// Whether a name is a derived embed-cache directory (ignored by the scanner).
+/// Whether a name is a legacy in-tree embed-cache directory. The server now
+/// writes all caches outside the content tree, so these only linger from before
+/// the relocation; the scanner keeps ignoring them (never a post or an asset).
 fn is_cache_name(name: &str) -> bool {
     name.ends_with(".embed-cache")
 }

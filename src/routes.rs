@@ -472,34 +472,36 @@ fn month_name(m: &str) -> &str {
         .map_or(m, |n| NAMES[n - 1])
 }
 
-/// GET /_embed/{entry_name}/{asset_name} — serve a cached sidecar asset (OG images, etc.).
+/// GET /_embed/{key}/{asset_name} — serve a cached embed asset (OG images, etc.).
 ///
-/// `entry_name` must match the filename of a content entry that the store actually knows
-/// about (so this can't be used to traverse arbitrary `.embed-cache` directories on disk);
-/// `asset_name` must be a simple filename (no path separators). Anything else 404s.
+/// `key` is the content-relative-path hash the cache is keyed by; it must match
+/// an entry the store actually knows about, so a removed or unpublished entry
+/// can never have its cached media served (privacy fails closed). `asset_name`
+/// must be a simple filename (no path separators). Anything else 404s.
 pub async fn serve_embed_asset(
     State(store): State<AppState>,
-    Path((entry_name, asset_name)): Path<(String, String)>,
+    Path((key, asset_name)): Path<(String, String)>,
 ) -> Response {
     // Reject anything that even looks path-y. Sanitized to the same shape used when
     // writing the file (`download_media`'s safe_name filter), with no dots-only.
-    if !is_safe_asset_segment(&entry_name) || !is_safe_asset_segment(&asset_name) {
+    if !is_safe_asset_segment(&key) || !is_safe_asset_segment(&asset_name) {
         return not_found();
     }
 
     let store = store.read().await;
-    // Find an entry whose filename matches the requested name. Lookup, not derivation:
-    // we don't want to serve files for entries that have been removed from the store.
+    // Find the entry whose cache key matches. Lookup, not derivation: we serve
+    // assets only for entries currently in the store (i.e. public).
     let entry = store
         .entries
         .iter()
-        .find(|e| e.path.file_name().and_then(|n| n.to_str()) == Some(entry_name.as_str()));
+        .find(|e| crate::embed::cache_key(&store.content_dir, &e.path) == key);
     let entry = match entry {
         Some(e) => e,
         None => return not_found(),
     };
 
-    let cache_dir = crate::embed::cache_dir_for(&entry.path);
+    let cache_dir =
+        crate::embed::cache_dir_for(&store.cache_dir, &store.content_dir, &entry.path);
     let asset_path = cache_dir.join(&asset_name);
 
     // Defense in depth: ensure the resolved path still sits inside cache_dir.
@@ -566,7 +568,8 @@ async fn serve_entry(entry: &Entry, store: &ContentStore) -> Response {
     // Check if this entry has a cached embed
     if let Some(embed_data) = store.embed_cache.get(&entry.path) {
         if !embed_data.is_upstream_deleted() {
-            let cache_dir = crate::embed::cache_dir_for(&entry.path);
+            let cache_dir =
+                crate::embed::cache_dir_for(&store.cache_dir, &store.content_dir, &entry.path);
             let card_html = crate::embed::render_embed_card(embed_data, &cache_dir);
             return Html(templates::entry_page(entry, &card_html, &all, next)).into_response();
         }

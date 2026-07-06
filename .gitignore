@@ -2,3 +2,5 @@
 /content
 /.agents-cargo
 .DS_Store
+/server.log
+/.cache

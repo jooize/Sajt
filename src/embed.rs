@@ -13,6 +13,7 @@
 //! a generic User-Agent so we never leak request-shape detail about the operator.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -686,44 +687,112 @@ pub struct AppleEmbed {
     pub last_checked: Option<String>,
 }
 
-// ─── Sidecar cache I/O ──────────────────────────────────────────
+// ─── Cache I/O (outside the content tree) ───────────────────────
+//
+// The server is strictly read-only on the content directory (see
+// entry-model.md), so every derived embed cache lives under a separate cache
+// root passed in from main -- by default the platform cache dir (e.g. macOS
+// ~/Library/Caches/...). Each entry's cache is a directory named by a hash of
+// its content-relative path; `meta.json5` records the source path and mtime so
+// an edit (new mtime) forces a refetch, and any downloaded media (OG images,
+// artwork) sits beside it.
 
-/// Get the sidecar cache directory path for an entry file.
-/// e.g. `content/2026-03-10T120000.txt` -> `content/2026-03-10T120000.txt.embed-cache/`
-pub fn cache_dir_for(entry_path: &Path) -> PathBuf {
-    let mut dir = entry_path.as_os_str().to_owned();
-    dir.push(".embed-cache");
-    PathBuf::from(dir)
+/// Per-entry cache directory: `<cache_dir>/embeds/<key>`, where `key` is a hash
+/// of the entry's path relative to the content root. Deterministic, so the
+/// writer (resolve), the card renderer, and the `/_embed` route all agree.
+pub fn cache_dir_for(cache_dir: &Path, content_dir: &Path, entry_path: &Path) -> PathBuf {
+    embed_root(cache_dir).join(cache_key(content_dir, entry_path))
+}
+
+/// The embed-cache root under the general cache dir.
+fn embed_root(cache_dir: &Path) -> PathBuf {
+    cache_dir.join("embeds")
+}
+
+/// Stable cache key for an entry: hex SHA-256 of its content-relative path.
+/// Hashing keeps the key filesystem- and URL-safe whatever the path's
+/// characters, and collision-free across the whole tree.
+pub fn cache_key(content_dir: &Path, entry_path: &Path) -> String {
+    let rel = entry_path.strip_prefix(content_dir).unwrap_or(entry_path);
+    let mut hasher = Sha256::new();
+    hasher.update(rel.to_string_lossy().as_bytes());
+    hex_of(hasher.finalize().as_slice())
+}
+
+/// Lower/upper-hex encode a byte slice (reuses the percent-encoding table).
+fn hex_of(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0xf) as usize] as char);
+    }
+    out
+}
+
+/// Source-file mtime in whole seconds since the Unix epoch, or `None` if the
+/// file is gone or its time is unreadable. Pre-epoch times go negative.
+pub fn file_mtime_secs(path: &Path) -> Option<i64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    Some(match modified.duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => d.as_secs() as i64,
+        Err(e) => -(e.duration().as_secs() as i64),
+    })
+}
+
+/// On-disk cache envelope: the embed data plus the provenance that invalidates
+/// it. `source` is advisory (for debugging); `mtime` is authoritative -- a
+/// mismatch against the live file means the entry was edited, so refetch.
+#[derive(Debug, Serialize, Deserialize)]
+struct CacheEnvelope {
+    source: String,
+    mtime: i64,
+    data: EmbedData,
 }
 
 fn meta_path(cache_dir: &Path) -> PathBuf {
     cache_dir.join("meta.json5")
 }
 
-/// Read cached embed data from sidecar directory, if it exists.
-pub fn read_cached(entry_path: &Path) -> Option<EmbedData> {
-    let dir = cache_dir_for(entry_path);
-    let meta = meta_path(&dir);
+/// Read cached embed data, but only if it was written for the current file
+/// mtime. Any staleness (missing, unparsable, or mtime drift) reads as a miss.
+pub fn read_cached(cache_dir: &Path, expected_mtime: Option<i64>) -> Option<EmbedData> {
+    let meta = meta_path(cache_dir);
     let content = std::fs::read_to_string(&meta).ok()?;
-    match json5::from_str::<EmbedData>(&content) {
-        Ok(data) => Some(data),
+    let envelope: CacheEnvelope = match json5::from_str(&content) {
+        Ok(e) => e,
         Err(e) => {
-            tracing::warn!(
-                "Failed to parse embed cache {}: {}",
-                meta.display(),
-                e
-            );
-            None
+            tracing::warn!("Failed to parse embed cache {}: {}", meta.display(), e);
+            return None;
         }
+    };
+    if expected_mtime.is_some() && Some(envelope.mtime) != expected_mtime {
+        tracing::info!(
+            "Embed cache stale (mtime {} != {:?}): {}",
+            envelope.mtime,
+            expected_mtime,
+            meta.display()
+        );
+        return None;
     }
+    Some(envelope.data)
 }
 
-/// Write embed data to sidecar cache directory.
-fn write_cache(entry_path: &Path, data: &EmbedData) -> std::io::Result<()> {
-    let dir = cache_dir_for(entry_path);
-    std::fs::create_dir_all(&dir)?;
-    let meta = meta_path(&dir);
-    let json = serde_json::to_string_pretty(data)
+/// Write embed data to the entry's cache directory, stamping the source path
+/// and mtime so a later edit invalidates it.
+fn write_cache(
+    cache_dir: &Path,
+    source: &str,
+    mtime: i64,
+    data: &EmbedData,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(cache_dir)?;
+    let envelope = CacheEnvelope {
+        source: source.to_string(),
+        mtime,
+        data: data.clone(),
+    };
+    let meta = meta_path(cache_dir);
+    let json = serde_json::to_string_pretty(&envelope)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     std::fs::write(&meta, json)?;
     tracing::info!("Wrote embed cache: {}", meta.display());
@@ -924,7 +993,7 @@ async fn fetch_og_tags(client: &reqwest::Client, social: &ParsedUrl) -> Result<E
 async fn fetch_generic_og(
     client: &reqwest::Client,
     parsed: &ParsedUrl,
-    entry_path: &Path,
+    cache_dir: &Path,
 ) -> Result<EmbedData, String> {
     tracing::info!("Fetching generic OG tags: {}", parsed.url);
 
@@ -993,8 +1062,7 @@ async fn fetch_generic_og(
     };
 
     if let Some(ref img_url) = resolved_image {
-        let cache_dir = cache_dir_for(entry_path);
-        match download_media(client, img_url, &cache_dir).await {
+        match download_media(client, img_url, cache_dir).await {
             Ok(filename) => embed.image_file = Some(filename),
             Err(e) => tracing::warn!("Failed to download generic OG image {}: {}", img_url, e),
         }
@@ -1161,7 +1229,7 @@ struct ITunesResult {
 async fn fetch_apple_content(
     client: &reqwest::Client,
     parsed: &ParsedUrl,
-    entry_path: &Path,
+    cache_dir: &Path,
 ) -> Result<EmbedData, String> {
     let country = parsed.country.as_deref().unwrap_or("us");
     let is_numeric = parsed.item_id.chars().all(|c| c.is_ascii_digit());
@@ -1173,14 +1241,12 @@ async fn fetch_apple_content(
         fetch_apple_og_tags(client, parsed).await?
     };
 
-    // Download artwork into the entry's sidecar cache directory. This MUST be derived
-    // from the entry file path, not the URL: a URL-derived path (e.g.
-    // `https://music.apple.com/...`) is relative and would create a stray `./https:/...`
-    // tree under the server cwd, and the file could never be served back via /_embed.
-    let cache_dir = cache_dir_for(entry_path);
+    // Download artwork into the entry's cache directory (outside the content
+    // tree). The caller passes the resolved cache dir; artwork is keyed by the
+    // entry, never by the remote URL, so it can be served back via /_embed.
     let mut apple_embed = apple_embed;
     if let Some(ref artwork_url) = apple_embed.artwork_url {
-        match download_media(client, artwork_url, &cache_dir).await {
+        match download_media(client, artwork_url, cache_dir).await {
             Ok(filename) => apple_embed.artwork_file = Some(filename),
             Err(e) => tracing::warn!("Failed to download Apple artwork: {}", e),
         }
@@ -1617,6 +1683,7 @@ fn extract_instagram_username(url: &str) -> Option<String> {
 pub async fn resolve_embeds(
     entries: &mut [crate::entry::Entry],
     content_dir: &Path,
+    cache_dir: &Path,
 ) -> HashMap<PathBuf, EmbedData> {
     let client = http_client();
     let mut cache = HashMap::new();
@@ -1645,8 +1712,18 @@ pub async fn resolve_embeds(
             }
         };
 
-        // Check sidecar cache first
-        if let Some(data) = read_cached(&entry.path) {
+        let entry_cache_dir = cache_dir_for(cache_dir, content_dir, &entry.path);
+        let mtime = file_mtime_secs(&entry.path);
+        let source = entry
+            .path
+            .strip_prefix(content_dir)
+            .unwrap_or(&entry.path)
+            .to_string_lossy()
+            .into_owned();
+
+        // Reuse the cache only when it was written for the current mtime; an
+        // edited .link (new mtime) reads as a miss and refetches below.
+        if let Some(data) = read_cached(&entry_cache_dir, mtime) {
             if !data.is_upstream_deleted() {
                 // Only set display_label if entry has no custom label
                 if entry.label.is_none() {
@@ -1657,22 +1734,39 @@ pub async fn resolve_embeds(
             }
         }
 
-        // Fetch fresh data
+        // Miss or stale -> refetch. Clear any stale directory first so old media
+        // never lingers beside the new metadata.
+        let _ = std::fs::remove_dir_all(&entry_cache_dir);
+
         let result = if parsed.platform.has_oembed() {
             fetch_oembed(&client, &parsed).await
         } else if parsed.platform.is_apple() {
-            fetch_apple_content(&client, &parsed, &entry.path).await
+            fetch_apple_content(&client, &parsed, &entry_cache_dir).await
         } else if parsed.platform == Platform::Generic {
-            fetch_generic_og(&client, &parsed, &entry.path).await
+            fetch_generic_og(&client, &parsed, &entry_cache_dir).await
         } else {
             fetch_og_tags(&client, &parsed).await
         };
 
         match result {
             Ok(data) => {
-                // Write cache
-                if let Err(e) = write_cache(&entry.path, &data) {
-                    tracing::error!("Failed to write embed cache for {}: {}", entry.path.display(), e);
+                // Cache the result, stamped with the mtime it was fetched for.
+                // Without a readable mtime we can't invalidate safely, so skip
+                // the write and let the next scan refetch.
+                match mtime {
+                    Some(mt) => {
+                        if let Err(e) = write_cache(&entry_cache_dir, &source, mt, &data) {
+                            tracing::error!(
+                                "Failed to write embed cache for {}: {}",
+                                entry.path.display(),
+                                e
+                            );
+                        }
+                    }
+                    None => tracing::warn!(
+                        "Not caching embed for {} (source mtime unreadable)",
+                        entry.path.display()
+                    ),
                 }
 
                 // Set display_label if no custom label
@@ -1693,13 +1787,14 @@ pub async fn resolve_embeds(
         }
     }
 
-    let _ = content_dir; // used for relative path calculations if needed later
     cache
 }
 
 /// Check liveness of cached embeds. Mark deleted posts.
 pub async fn check_liveness(
     embed_cache: &mut HashMap<PathBuf, EmbedData>,
+    content_dir: &Path,
+    cache_dir: &Path,
     check_interval: Duration,
 ) {
     let client = http_client();
@@ -1796,9 +1891,24 @@ pub async fn check_liveness(
             tracing::warn!("Upstream content removed: {}", url);
         }
 
-        // Update the cache file on disk
-        if let Err(e) = write_cache(path, data) {
-            tracing::error!("Failed to update embed cache after liveness check: {}", e);
+        // Persist the updated liveness state to the entry's cache directory,
+        // re-stamping the current source mtime so the write stays valid.
+        let entry_cache_dir = cache_dir_for(cache_dir, content_dir, path);
+        let source = path
+            .strip_prefix(content_dir)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned();
+        match file_mtime_secs(path) {
+            Some(mt) => {
+                if let Err(e) = write_cache(&entry_cache_dir, &source, mt, data) {
+                    tracing::error!("Failed to update embed cache after liveness check: {}", e);
+                }
+            }
+            None => tracing::warn!(
+                "Skipping embed cache update for {} (source mtime unreadable)",
+                path.display()
+            ),
         }
     }
 }
@@ -1807,9 +1917,9 @@ pub async fn check_liveness(
 
 /// Render an embed as an HTML card.
 ///
-/// `cache_dir` is the entry's sidecar directory (e.g. `…/foo.link.embed-cache`).
-/// It's used to construct local `/_embed/...` URLs for cached assets so visitors
-/// don't load images from third-party CDNs (preserves privacy).
+/// `cache_dir` is the entry's cache directory (`<cache>/embeds/<key>`, outside
+/// the content tree). It's used to construct local `/_embed/...` URLs for cached
+/// assets so visitors don't load images from third-party CDNs (preserves privacy).
 pub fn render_embed_card(data: &EmbedData, cache_dir: &Path) -> String {
     if data.is_upstream_deleted() {
         return render_deleted_card(data);
@@ -1862,18 +1972,18 @@ pub fn render_embed_card(data: &EmbedData, cache_dir: &Path) -> String {
     }
 }
 
-/// Build a local URL for an asset cached in a sidecar directory.
+/// Build a local URL for an asset cached in an entry's cache directory.
 ///
-/// Returns `None` if we don't have an entry name to use (e.g., when called from
-/// inline-embed expansion where the cache_dir isn't known). Callers should fall
-/// back to omitting the asset in that case.
+/// The cache dir's own name is the entry's cache key, so the URL is
+/// `/_embed/<key>/<asset>` (the `/_embed` route recomputes the key to find the
+/// owning entry). Returns `None` when there's no cache dir to key on (e.g.
+/// inline-embed expansion passes an empty path); callers omit the asset then.
 fn local_asset_url(cache_dir: &Path, asset_filename: &str) -> Option<String> {
-    let dir_name = cache_dir.file_name().and_then(|n| n.to_str())?;
-    let entry_name = dir_name.strip_suffix(".embed-cache")?;
-    if entry_name.is_empty() || asset_filename.is_empty() {
+    let key = cache_dir.file_name().and_then(|n| n.to_str())?;
+    if key.is_empty() || asset_filename.is_empty() {
         return None;
     }
-    Some(format!("/_embed/{}/{}", entry_name, asset_filename))
+    Some(format!("/_embed/{}/{}", key, asset_filename))
 }
 
 fn render_generic_card(e: &GenericEmbed, cache_dir: &Path) -> String {
@@ -2685,16 +2795,16 @@ mod tests {
     }
 
     #[test]
-    fn local_asset_url_derives_from_cache_dir() {
-        let dir = PathBuf::from("/content/2026-05-26T125952_roundtables.link.embed-cache");
+    fn local_asset_url_uses_cache_dir_name_as_key() {
+        let dir = PathBuf::from("/cache/embeds/deadbeef");
         assert_eq!(
             local_asset_url(&dir, "og.png"),
-            Some("/_embed/2026-05-26T125952_roundtables.link/og.png".to_string())
+            Some("/_embed/deadbeef/og.png".to_string())
         );
-
-        // Cache dirs without the suffix don't produce URLs.
-        let bad = PathBuf::from("/content/notacache");
-        assert!(local_asset_url(&bad, "x.png").is_none());
+        // No cache dir name to key on (inline-embed path) -> no URL.
+        assert!(local_asset_url(Path::new(""), "x.png").is_none());
+        // Empty asset -> no URL.
+        assert!(local_asset_url(&dir, "").is_none());
     }
 
     #[test]
@@ -2706,10 +2816,61 @@ mod tests {
     }
 
     #[test]
-    fn cache_dir_naming() {
-        let path = PathBuf::from("/content/2026-03-10T120000.txt");
-        let dir = cache_dir_for(&path);
-        assert_eq!(dir, PathBuf::from("/content/2026-03-10T120000.txt.embed-cache"));
+    fn cache_dir_is_outside_content_and_keyed_by_rel_path() {
+        let content = Path::new("/content");
+        let cache = Path::new("/cache");
+        let dir = cache_dir_for(cache, content, Path::new("/content/a/b.link"));
+        // Lives under <cache>/embeds/, never inside the content tree.
+        assert!(dir.starts_with("/cache/embeds"));
+        assert!(!dir.starts_with("/content"));
+        // The leaf is the hex key of the content-relative path.
+        assert_eq!(
+            dir.file_name().unwrap().to_str().unwrap(),
+            cache_key(content, Path::new("/content/a/b.link"))
+        );
+    }
+
+    #[test]
+    fn cache_key_is_deterministic_and_path_sensitive() {
+        let content = Path::new("/content");
+        let k1 = cache_key(content, Path::new("/content/x.link"));
+        let k2 = cache_key(content, Path::new("/content/x.link"));
+        let k3 = cache_key(content, Path::new("/content/y.link"));
+        assert_eq!(k1, k2);
+        assert_ne!(k1, k3);
+        // 32-byte SHA-256 -> 64 hex chars.
+        assert_eq!(k1.len(), 64);
+        assert!(k1.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn cache_roundtrip_honors_mtime() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("esko-embed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let data = EmbedData::Generic(GenericEmbed {
+            url: "https://example.com/x".to_string(),
+            hostname: "example.com".to_string(),
+            site_name: None,
+            title: Some("Hi".to_string()),
+            description: None,
+            image_url: None,
+            image_file: None,
+            upstream_deleted: false,
+            last_checked: None,
+        });
+
+        write_cache(&dir, "x.link", 100, &data).unwrap();
+
+        // Matching mtime -> hit.
+        assert!(read_cached(&dir, Some(100)).is_some());
+        // Drifted mtime (entry edited) -> miss.
+        assert!(read_cached(&dir, Some(101)).is_none());
+        // No expectation -> returns whatever is stored.
+        assert!(read_cached(&dir, None).is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
