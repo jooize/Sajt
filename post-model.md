@@ -1,0 +1,350 @@
+# Post model — links, listings, slugs, kinds
+
+Design session 2026-07-07. This document captures a body of decisions that
+**extend and, where noted, supersede** [entry-model.md](entry-model.md). The
+bare-file / folder-post foundation, the ` copy [n]` revision grammar, the empty
+date-marker and `alias <name>/` markers, oldest-claim-wins, and the strictly
+read-only server all stand — this refines identity, timestamps, kinds, links,
+listings, and image privacy on top of them.
+
+Nothing here is shipped yet; it is the spec to build from. No backward
+compatibility is owed (pre-1.0).
+
+---
+
+## 1. Identity, names, and slugs
+
+A post's identity is still its filename (bare file) or folder name. Two
+projections come off that one name:
+
+- **Title text** — the display headline. The filename stem, *natural*: spaces
+  and letter case preserved. `fog over the bay`.
+- **URL label (slug)** — the address. Derived from the stem: lower-cased,
+  spaces to hyphens, punctuation stripped. `/fog-over-the-bay`.
+
+### Spaces are allowed (change)
+
+Today `build_bare_post` (`content.rs:180`) and `build_folder_post`
+(`content.rs:213`) reject any name containing a space as `UnparseableName` —
+a conservative typo guard. **Lift it.** A "drop a file" site should accept the
+natural macOS filename `fog over the bay.jpg`.
+
+This is safe:
+
+- **Grammar-safe.** ` copy [n]` revisions are already routed away before a post
+  is built (`content.rs:102`); `alias`/date/`index` markers live *inside* posts.
+  So a top-level spaced name conflicts with nothing except a trailing
+  ` copy N`, which Finder itself treats as a duplicate. The only limit: you
+  can't title something `… copy` — see §5 for the softening of even that.
+- **Privacy-safe.** Visibility is gated by the `public`/`private` tag, never by
+  the name. A mistyped name cannot leak anything a correct one wouldn't.
+
+Identity stays "the post's name is its filename"; the slug is a derived
+projection. Mirror the existing client `slugify` (`templates.rs:919`)
+server-side so both agree on the same address.
+
+### Collisions fold on the slug
+
+Slug derivation widens the collision space: `fog over the bay` and
+`fog-over-the-bay` (and `Fog Over The Bay`) all reduce to `/fog-over-the-bay`.
+**Key claim comparison on the slug**, not the exact label (today `name_claimants`
+compares labels case-insensitively). Then the existing rule applies unchanged:
+
+- The **oldest** claim owns the bare `/fog-over-the-bay`.
+- Younger claimants carry the shortest date that distinguishes them
+  (`/2026/07/04/fog-over-the-bay`, plus `?time=HHMMSS` for a same-day tie).
+- **Both always appear on the timeline** — the timeline never hides a post; a
+  collision only decides the canonical URL. The two rows are distinguishable by
+  their *natural* display titles and their dates.
+
+### Collisions are made discoverable (extend)
+
+The name-share machinery already exists on post pages: `name_shares` +
+`name_share_notice` render an "Also at" block (`templates.rs:2313`). Extend it:
+
+- Surface it on the **timeline row** as a `<details>` disclosure, mirroring the
+  revision dropdown — "N others share this address", each linking to its
+  date-disambiguated URL.
+- Each colliding post is reachable and mutually discoverable; the collision is
+  obvious, never silent.
+
+---
+
+## 2. Timestamps
+
+**mtime is the timestamp signal everywhere. Creation time (birthtime) is never
+used** — it is not portable (`rsync -t` carries mtime, not birthtime; copy and
+restore reset it) and is not user-settable, whereas mtime is (`touch`, Finder).
+This is the same reasoning that rejected birthtime as a revision tie-break.
+
+- **Bare file** — publish date = its mtime. Editing moves the mtime, which
+  *republishes* (bumps it up the timeline). Intentional (`entry.rs:71`).
+- **Folder post** — publish date = the empty date-marker subfolder if present,
+  else the primary's mtime. With a marker, the primary's mtime becomes the
+  *edited* date, shown only when meaningfully later.
+
+To pin a stable publish date, add the date-marker folder. That is its whole job.
+
+### Date-named posts = unlabeled (new)
+
+A top-level folder (or bare file) whose name is a valid date is an **unlabeled**
+post — no label, dated by its own name, addressed at its date path + `?time=`.
+This is the clean "publish now, name later" gesture; a Share Extension / Shortcut
+can stamp the name automatically.
+
+Grammar — extend `parse_date_marker` (`content.rs:761`), which today *requires*
+a `T`. Accept, minimum a **complete date**, then optional precision:
+
+```
+2026-07-07                 → that day (midnight)
+2026-07-07T1914            → + time
+2026-07-07T191430          → + seconds
+…optional Z or ±HHMM zone
+```
+
+- **Require all three date components.** A full `2026-07-07` is not a plausible
+  title (and if you *do* title by date, unlabeled-dated is what you meant). Bare
+  `2026` or `2026-07` **stay labels**, so "1984" and a year-in-review "2026"
+  survive.
+- **Keep the hyphens** (not strictly necessary — 8 digits parse — but they read
+  as a date, resist being mistaken for a plain number, and mirror the URL
+  `/2026/07/07/`). Pick one canonical form; don't accept both.
+- **Progressive precision by hand is fine**: bare date first, add `T1914` for
+  the next, add seconds if many in one minute. The filesystem enforces this —
+  two same-named folders can't coexist, so the second is *forced* to carry a
+  time.
+
+The same grammar serves both positions: an *empty* date-named folder *inside* a
+post is the publish marker; the *post itself* named a date is an unlabeled dated
+post. "A date-named thing is a date."
+
+---
+
+## 3. Kinds — medium, not format, not genre
+
+`kind` is a **medium** classifier — what sort of thing a post *is* and how it is
+served. It is not the format (that's the extension, which drives exact
+rendering) and not the genre (that's an author-set tag, e.g. "essay" vs "note").
+
+| kind | what | why its own bucket |
+|------|------|--------------------|
+| `photo` | images | distinct rendering (viewer) |
+| `html` | raw HTML | can be a self-contained document served ~as-is (`is_complete_html` → standalone, escapes the site chrome) |
+| `text` | md, markdown, txt, text, rst, org, adoc, asciidoc, tex | poured into the site shell |
+| `link` | resolves to a single URL (see §4) | primary affordance points *out* |
+| `folder` | a listing (see §6) | a browsable directory index |
+| `file` | anything else | opaque → download |
+
+Decisions folded in:
+
+- **Rename `note` → `text`** (`entry.rs:129`). "note" wrongly implied
+  length/genre; a 5000-word `.md` is not a note.
+- **`.text` is first-class**, and while wiring it, close two gaps in
+  `render.rs`: `pandoc_format` maps only `md` (add `markdown`); `render_entry`
+  preformats only `txt` (add `text`). Today a `.markdown`/`.text` file silently
+  falls through to *download*. Assume `.text` = plain text (pairs with `.txt`).
+- **`.html` stays distinct from `text`** — the one format that can be a
+  complete, self-contained document (own CSS/JS, bypasses site chrome). Named
+  `html`, not `page` — "page" over-claims, since rendered text is also a page.
+- **`.md` and `.txt` share `text`** — they differ in *rendering* (formatted vs
+  preformatted), not in medium. That difference is the extension's job.
+- **Dotless bare files** (`README`, `LICENSE`) are not folders. Disambiguate on
+  `Entry.dir` (`None` = bare file). A dotless bare file: UTF-8 decodable →
+  `text` (render preformatted; we already read it for the excerpt), else
+  `file`. Only a *folder* is ever `kind = folder`.
+
+---
+
+## 4. Link posts — the `link_url` axis
+
+A post may carry an optional **`link_url`**, computed by the scanner (no
+frontmatter). It is orthogonal to `kind`: a post *has a destination* or not.
+
+### Where a destination comes from
+
+- **A file that resolves to a single URL** — `.webloc` (parse the plist, read
+  the `URL` key), `.url` (INI, `URL=`), or any text file whose *entire trimmed
+  content is exactly one http(s) URL*. A title line plus a URL is a
+  note-with-a-link, not a link post — the predicate is crisp, not fuzzy.
+- **A `link.*` sidecar** in a folder post — `link.webloc`, `link.url`,
+  `link.md`, `link.txt`, `link.text`. This is how a *commentary* post gets a
+  destination: the primary is your writing, the sidecar is the target.
+
+Resolution: a file that resolves to a URL **drops out of primary candidacy** and
+becomes the destination (the way date/`alias` markers are set aside). In the
+common case (`commentary.md` + `link.md`) that's unambiguous by content. The
+stem `link` (like `index` for primary) is the explicit marker and the
+tie-break; **more than one destination with no tie-break → fail closed**
+(ambiguous-outbound error row). Never guess where a headline sends people.
+
+This retires the `.link` extension: a bare-URL `.txt`/`.md` does the same job
+and is viewable in Finder (the original complaint), so **drop `.link`**.
+
+### Behavior — direct-out vs permalink
+
+- **`kind = link`** is the degenerate case: the post *is* only a destination.
+  Body = the embed card.
+- **A content post with `link_url`** (folder post: commentary + sidecar) renders
+  its own body; the destination is cited. `kind` stays the primary's medium
+  (`text`, `photo`, …).
+
+### Row layout (settled via mockup — `static/link-rows-mockup.html`)
+
+Two visually distinct targets, so nothing is ambiguous:
+
+- **Our label → our page** (internal). It's *our* title; it goes to *our* page.
+- **The cited source → the destination** (external, marked ↗, `rel="noreferrer"`).
+  Rendered as a semantic `<cite>` (favicon · target title · domain) — no class,
+  fits the element-selector rule.
+- **No label** (bare link) is the one case the target's headline *is* the
+  headline → destination, with a quiet `¶ esko.bar/2026/07/04` permalink → the
+  card page.
+- Degrade cleanly: label == target title → show once; embed/title fetch failed →
+  bare domain.
+
+`link_url` is orthogonal to kind, so a `photo` can credit a source the same way.
+
+---
+
+## 5. Revisions and families
+
+A **family** is the set of items sharing a base name: `X`, `X copy`,
+`X copy 2`, … (`parse_revision_suffix` strips the trailing ` copy [n]`). A family
+always collapses to **one current post + a revision stack**, keyed by the base
+name — *not* by whether the base file exists.
+
+- **Base present** → it is the current post; the copies are revisions.
+- **Base absent** → the **newest-by-mtime** member becomes current; the rest are
+  its revisions. So a lone orphan is a standalone post (family of one); many
+  orphans stay bound as one row + a revision dropdown.
+
+This fixes two things at once: it lets you *title* something `… copy` when no
+base exists (it's a real post, not a phantom revision), and it stops the current
+**silent drop** of orphan copies (`attach_revisions` discards them today). It
+also gives a recovery property: delete the base and its archive promotes rather
+than vanishing.
+
+Ordering is unchanged: **mtime first, `rank` (the copy number) only as an
+exact-tie break** (`sort_revisions`, `content.rs:824`). The number is never an
+identity or a URL — deleting a revision and letting Finder refill the gap
+reorders nothing. Birthtime was considered and rejected (§2).
+
+---
+
+## 6. Listings — folders you browse
+
+A folder with **no single document primary** renders as a **listing**: a
+browsable index of its files. This is what gives `kind = folder` / the `/`
+suffix a real, non-error meaning.
+
+### Choosing it
+
+- **Automatic** — a folder holding only media with no document: all images → a
+  gallery; mixed downloads/PDFs → a file list. Drop a folder of photos, get an
+  album. Zero config.
+- **Explicit** — an empty **`index/`** marker folder forces listing mode. It
+  both lists a folder that *could* have chosen a primary and turns what is now an
+  `AmbiguousPrimary` **error** (two documents) into an intentional listing. Joins
+  the empty-folder-directive vocabulary (date, `alias`, `index`). URL/filesystem
+  parity: `/label/file.ext` matches the folder on disk.
+
+*(Open choice: automatic + explicit both, or explicit-only. Lean both.)*
+
+Note the `index` overload, resolved by shape: a *file* `index.md` is the primary
+page; an empty *folder* `index/` is the listing directive — the same split web
+servers use.
+
+### Membership is an allowlist, never a blocklist
+
+**A file appears in a listing only if it is tagged `public`.** Consequences:
+
+- `.DS_Store`, markers, and any junk are excluded *because they are untagged* —
+  no fragile filename filter to maintain, nothing leaks by default. This is the
+  fail-closed principle applied directly.
+- The `+dotfiles` marker idea is unnecessary — tag a dotfile `public` if you
+  genuinely want it listed.
+- Finder multi-select makes tagging a whole album one gesture.
+
+### Serving and security
+
+- Each item is reachable at `/label/file.ext` via folder-relative asset serving
+  (already present); the listing page is links to them.
+- Visibility is gated at **both** levels, fail-closed AND: the folder (post) must
+  be `public` for the listing to exist, and each file must be `public` to be
+  listed *and* served.
+- Asset serving stays path-traversal-safe; a listing never reaches outside its
+  own folder.
+
+---
+
+## 7. Outbound-scheme guard
+
+Every destination — from any link format — funnels through one resolution point,
+which is where the guard lives. It is written once.
+
+- **Allow silently:** `https:`, `mailto:`, `tel:`. (A blanket non-https block
+  would wrongly kill mailto/tel.)
+- **Flag prominently (safe but notable):** `http:` (unencrypted) and inert custom
+  schemes. Pure CSS, no server class, via attribute selectors —
+  `main a[href^="http://"]`, or a `:not(...)` chain for "unusual". Fits the
+  no-classes rule.
+- **Refuse entirely (never emit a link), server-side:** `javascript:`, `data:`,
+  `vbscript:`, `file:`. These *execute in our origin* or read the reader's disk —
+  the danger is what they *run*, not where they *go*, so a prompt is the wrong
+  tool. Render as flagged plain text ("unsafe link removed"), never a clickable
+  anchor. CSS can't stop navigation; this must be render-time.
+
+No `/out?` interstitial is needed: safe links just render (scheme visible),
+referrer is dropped by `rel="noreferrer"`, and unsafe links are refused at the
+source. (A CSS-only `:target` confirm is *possible* if ever wanted, but isn't.)
+
+---
+
+## 8. Images and EXIF
+
+Not built yet — the `image` crate is absent from `Cargo.toml`; images serve
+**raw/exact today**. The model to build:
+
+- **Strip metadata by default, on every served path** (rendered *and* raw). GPS,
+  camera, and timestamps are a real privacy leak; fail closed. Stripping only the
+  rendered view while raw serves the original would defeat the point.
+- **Opt in to the exact original** per file via an **`original`** tag — EXIF
+  intact, exact bytes and hash. This is the "host an exact image file" case, and
+  it composes with listings meant as file drops.
+- **Transparent, never silent** — a stripped image shows a small, non-dismissing
+  "metadata removed for privacy" note with the hint to tag `original`
+  (per the "display notices prominently" rule).
+- **Prefer a metadata-only strip over full re-encode.** Re-encoding via `image`
+  is lossy for JPEG (generational loss) and drops ICC color profiles. Dropping
+  the APP/EXIF segments while keeping the pixel data preserves quality *and*
+  privacy. *(Revisits the memo'd "image crate re-encode" decision.)*
+
+---
+
+## 9. Open choices for the author to confirm
+
+1. **Listings:** automatic-for-media + explicit `index/`, or explicit-only?
+   (Lean both.)
+2. **Family "current" when the base is deleted:** newest-by-mtime (proposed) vs
+   lowest-rank. (Lean newest — matches revision sort; recoverable by rename.)
+3. **`.text`** = plain text (assumed) or a markdown alias?
+4. **EXIF:** confirm metadata-only strip over re-encode.
+
+## 10. Implementation map (files touched)
+
+- `content.rs` — lift the space rejection (`build_bare_post`/`build_folder_post`);
+  slug derivation + claim-on-slug; extend `parse_date_marker` (bare date,
+  drop the mandatory `T`); date-named → unlabeled; family-by-base-name with
+  orphan promotion; `link_url` resolution + `link.*` sidecar; listing detection +
+  `index/` marker; per-file `public` gating for listings.
+- `entry.rs` — `note`→`text`; `kind` on `dir`-ness + UTF-8 sniff; `link_url`
+  field; listing/`folder` kind.
+- `render.rs` — `markdown`/`text` gaps; drop `.link`; `.webloc`/`.url` → URL;
+  single-URL text → link card; scheme guard; listing page; image metadata strip
+  + `original` opt-in + notice.
+- `url.rs` — slug in `ContentQuery` matching.
+- `templates.rs` — row: label-internal + `<cite>` external ↗; name-share row
+  dropdown; slug in `name_claimants`; scheme CSS.
+- `routes.rs` — outbound refusal; image serving (strip vs `original`); listing
+  routes over folder-relative serving.
+- `Cargo.toml` — `plist` (webloc); a JPEG/PNG metadata editor (strip).

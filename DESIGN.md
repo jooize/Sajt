@@ -39,6 +39,15 @@ An entry is a file **or a folder** in the single content directory.
 **SHIPPED 2026-07-06 — full spec in `entry-model.md` (canonical).** The scanner
 rewrite, folder-post serving, and the one-shot flat→folder migration are all
 live; the live `content/` is now folder posts served at clean URLs
+
+**IN DESIGN 2026-07-07 — `post-model.md` (spec, not yet built).** Extends the
+above: natural-spaces titles with derived URL slugs, mtime-only timestamps +
+date-named unlabeled posts, `kind` as *medium* (`note`→`text`, dotless files,
+`.html` distinct), the `link_url` axis (`.webloc`/`.url`/single-URL text +
+`link.*` sidecars, direct-out rows, retires `.link`), families keyed by base
+name (orphan promotion), slug-collision dropdowns, folder **listings** via an
+`index/` marker with allowlist-by-`public`-tag membership, a tiered outbound
+scheme guard, and default EXIF stripping with an `original` opt-in.
 (`/hello-world`). This supersedes the timestamp-prefix filename convention,
 birthtime dates, and the `.id`/UUID identity plan:
 
@@ -546,6 +555,11 @@ dark-variant images, related entries, mini-TOC, print stylesheet.
 
 ## Design files
 
+- `post-model.md` — **post-model refinement spec (2026-07-07, not yet built)**:
+  slugs, timestamps, kinds, link posts, revisions/families, listings, scheme
+  guard, EXIF. Extends `entry-model.md`.
+- `static/link-rows-mockup.html` — link-row layout reference (label→our page,
+  cited source→destination ↗; bare-link, commentary, photo-credit, unsafe cases)
 - `.claude-memory/design.md` — original full design (URL grammar, prompt
   files, hashing, action tags, sky variants history)
 - `.claude-memory/entry-list-design.md` — timeline layout exploration,

@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Link rows — mockup</title>
+<style>
+:root {
+  color-scheme: light dark;
+
+  --violet: #a123f6;
+  --violet-soft: light-dark(rgba(161, 35, 246, .08), rgba(161, 35, 246, .13));
+
+  --bg:     light-dark(#f5f4f0, #121514);
+  --ink:    light-dark(#20231f, #d9ded9);
+  --soft:   light-dark(#43473f, #b4bab2);
+  --faint:  light-dark(#71766c, #8b918a);
+  --hair:   light-dark(rgba(46, 62, 50, .18), rgba(178, 205, 184, .16));
+
+  --tag-red:    light-dark(#e0383e, #ff6961);
+  --tag-blue:   light-dark(#1673de, #409cff);
+  --tag-green:  light-dark(#2f9e50, #30db5b);
+  --tag-gray:   light-dark(#8e8e93, #98989d);
+
+  --sans:  system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --content-w: 46rem;
+  --rail: 5.6rem;
+
+  --glass:      light-dark(rgba(255, 255, 255, .5),  rgba(44, 50, 46, .44));
+  --glass-edge: light-dark(rgba(255, 255, 255, .62), rgba(255, 255, 255, .1));
+  --glass-shadow:
+    0 6px 20px light-dark(rgba(30, 34, 28, .09), rgba(0, 0, 0, .38)),
+    0 1px 2px  light-dark(rgba(30, 34, 28, .06), rgba(0, 0, 0, .3)),
+    inset 0 1px 0 light-dark(rgba(255, 255, 255, .7), rgba(255, 255, 255, .12));
+}
+
+* { margin: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  line-height: 1.5;
+  padding: 2rem 1.25rem 5rem;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--violet); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+main { max-width: var(--content-w); margin-inline: auto; }
+
+/* ---- mockup chrome (not part of the real design) ---- */
+main > h1 { font-size: 1.35rem; font-weight: 680; letter-spacing: -.02em; margin-bottom: .3rem; }
+main > p.lede { color: var(--soft); font-size: .95rem; margin-bottom: 1.4rem; }
+main > p.lede b { color: var(--ink); font-weight: 620; }
+[data-note] {
+  margin: 1.9rem 0 .55rem;
+  font: 600 .72rem var(--mono);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+[data-note] + [data-sub] { margin: -.35rem 0 .7rem; font-size: .8rem; color: var(--soft); }
+[data-sub] em { font-style: normal; color: var(--ink); font-weight: 560; }
+[data-sub] .in  { color: var(--violet); font-weight: 600; }
+[data-sub] .out { color: var(--tag-blue); font-weight: 600; }
+
+/* ---- timeline rows (ported from templates.rs) ---- */
+section > ul { list-style: none; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
+
+section article {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--rail) 1fr;
+  column-gap: 1.25rem;
+  padding: .75rem .6rem;
+  margin-inline: -.6rem;
+  border-radius: 14px;
+  background: var(--glass);
+  border: .5px solid var(--glass-edge);
+  -webkit-backdrop-filter: blur(18px) saturate(170%);
+  backdrop-filter: blur(18px) saturate(170%);
+  box-shadow: var(--glass-shadow);
+}
+
+section article > aside { display: flex; flex-direction: column; align-items: flex-start; }
+section article > aside > time {
+  font: 500 .74rem var(--mono);
+  line-height: 1.5rem;
+  font-feature-settings: "tnum";
+  letter-spacing: .02em;
+  color: var(--faint);
+  white-space: nowrap;
+}
+section article > aside > nav { display: flex; flex-direction: column; gap: .18rem; margin-top: .55rem; }
+section article > aside > nav a { display: inline-flex; align-items: center; gap: .35rem; font: 550 .74rem var(--sans); color: var(--soft); }
+section article > aside > nav a::before { content: ""; width: .42rem; height: .42rem; border-radius: 50%; background: var(--tag, var(--tag-gray)); }
+
+/* content column */
+section article h3 { font-size: 1rem; font-weight: 650; letter-spacing: -.011em; line-height: 1.5; margin: 0; }
+section article h3 > a { color: var(--ink); }          /* OUR label -> OUR page (internal) */
+section article h3 > a:hover { color: var(--violet); text-decoration: none; }
+section article h3 small { font-weight: inherit; color: var(--soft); }
+section article h3 i { font-weight: 450; color: var(--faint); }
+section article > div > p { margin: .12rem 0 0; font-size: .875rem; line-height: 1.5; color: var(--soft); }
+
+/* the cited source line -> the DESTINATION (external). A semantic <cite>, no class. */
+section article cite {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  font-style: normal;
+  font-size: .8rem;
+  margin-top: .4rem;
+  max-width: 100%;
+}
+section article cite > a {
+  display: inline-flex; align-items: center; gap: .45rem;
+  color: var(--soft); min-width: 0;
+}
+section article cite > a:hover { color: var(--violet); text-decoration: none; }
+section article cite b { font-weight: 550; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+section article cite > a:hover b { color: var(--violet); }
+section article cite span { color: var(--faint); white-space: nowrap; }         /* domain */
+section article cite span::before { content: "· "; }
+/* the "leaves the site" arrow — appended to any external source link */
+section article cite > a::after {
+  content: "\2197";              /* ↗ */
+  font-size: .82em;
+  color: var(--faint);
+  translate: 0 -.05em;
+}
+
+/* favicon tile (real favicons get fetched+cached; this is a stand-in) */
+section article cite i {
+  flex: none;
+  width: 1.05rem; height: 1.05rem;
+  border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font: 700 .62rem/1 var(--sans);
+  font-style: normal;
+  color: #fff;
+}
+
+/* a quiet internal permalink for a bare link that has no label of its own */
+section article > div > a[data-perma] {
+  display: inline-block;
+  margin-top: .35rem;
+  font: 500 .72rem var(--mono);
+  color: var(--faint);
+}
+section article > div > a[data-perma]:hover { color: var(--violet); text-decoration: none; }
+section article > div > a[data-perma]::before { content: "\00B6\00A0"; }   /* ¶ */
+
+/* http:// gets a caution tint on the domain (scheme guard, CSS-only) */
+section article cite a[href^="http://"] span { color: var(--tag-red); }
+section article cite a[href^="http://"] span::after { content: " (not secure)"; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Link rows — how a label and its target combine</h1>
+  <p class="lede">The rule: <b>our label &rarr; our page</b> (internal), <b>the cited source &rarr; the destination</b> (external, marked&nbsp;&#8599;). Two visually distinct targets, so nothing is ambiguous. Toggle your OS light/dark to check both.</p>
+
+  <section>
+    <p data-note>1 &middot; Ordinary note (for contrast)</p>
+    <p data-sub>No destination. <span class="in">Title &rarr; our page.</span> Nothing external.</p>
+    <ul>
+      <li><article>
+        <aside>
+          <time datetime="2026-07-07">2026-07-07</time>
+          <nav><a href="#" style="--tag:var(--tag-green)">garden</a></nav>
+        </aside>
+        <div>
+          <h3><a href="#">On watering less<small>.md</small></a></h3>
+          <p>Three summers of overwatering taught me the tomatoes prefer neglect.</p>
+        </div>
+      </article></li>
+    </ul>
+  </section>
+
+  <section>
+    <p data-note>2 &middot; Link + commentary (a folder post)</p>
+    <p data-sub><span class="in">Our label &rarr; our page</span> (read the take), <span class="out">cited source &rarr; nytimes.com</span>. Body is <em>your</em> words.</p>
+    <ul>
+      <li><article>
+        <aside>
+          <time datetime="2026-07-06">2026-07-06</time>
+          <nav><a href="#" style="--tag:var(--tag-blue)">reading</a><a href="#" style="--tag:var(--tag-gray)">cities</a></nav>
+        </aside>
+        <div>
+          <h3><a href="#">The quiet case for narrow streets<small>.md</small></a></h3>
+          <p>The framing I keep coming back to &mdash; it&rsquo;s not about cars, it&rsquo;s about the width of a conversation across a street.</p>
+          <cite><a href="https://nytimes.com/2026/07/road-diets"><i style="background:#111">N</i><b>Road Diets Are Quietly Reshaping American Suburbs</b><span>nytimes.com</span></a></cite>
+        </div>
+      </article></li>
+    </ul>
+  </section>
+
+  <section>
+    <p data-note>3 &middot; Bare link, but you gave it a label</p>
+    <p data-sub><span class="in">Label &rarr; our page</span> (card), <span class="out">source &rarr; destination</span>. No commentary body.</p>
+    <ul>
+      <li><article>
+        <aside>
+          <time datetime="2026-07-05">2026-07-05</time>
+          <nav><a href="#" style="--tag:var(--tag-gray)">tools</a></nav>
+        </aside>
+        <div>
+          <h3><a href="#">worth saving<small>.webloc</small></a></h3>
+          <cite><a href="https://github.com/rust-lang/rust"><i style="background:#f74c00">G</i><b>rust-lang/rust</b><span>github.com</span></a></cite>
+        </div>
+      </article></li>
+    </ul>
+  </section>
+
+  <section>
+    <p data-note>4 &middot; Bare link, no label</p>
+    <p data-sub>Nothing of ours to title, so <span class="out">the target&rsquo;s headline is the headline &rarr; destination</span>. A quiet <span class="in">&para; permalink &rarr; our card page</span> stays reachable.</p>
+    <ul>
+      <li><article>
+        <aside>
+          <time datetime="2026-07-04">2026-07-04</time>
+        </aside>
+        <div>
+          <h3><cite><a href="https://bsky.app/profile/example"><i style="background:#1185fe">B</i><b>&ldquo;the whole point of a link blog is the link&rdquo;</b><span>bsky.app</span></a></cite></h3>
+          <a data-perma href="#">esko.bar/2026/07/04</a>
+        </div>
+      </article></li>
+    </ul>
+  </section>
+
+  <section>
+    <p data-note>5 &middot; Photo that credits a source</p>
+    <p data-sub>Destination is orthogonal to kind. <span class="in">Label &rarr; our page</span> (the photo), <span class="out">credit &rarr; source</span>.</p>
+    <ul>
+      <li><article>
+        <aside>
+          <time datetime="2026-07-03">2026-07-03</time>
+          <nav><a href="#" style="--tag:var(--tag-gray)">photo</a></nav>
+        </aside>
+        <div>
+          <h3><a href="#">fog over the bay<small>.jpg</small></a></h3>
+          <cite><a href="http://oldsite.example/gallery"><i style="background:#6b7280">O</i><b>original gallery</b><span>oldsite.example</span></a></cite>
+        </div>
+      </article></li>
+    </ul>
+  </section>
+
+  <section>
+    <p data-note>6 &middot; Unsafe destination (fail closed)</p>
+    <p data-sub>A <em>javascript:</em> / <em>data:</em> target is <b>never</b> emitted as a link &mdash; refused at render time, shown as a flagged notice. No prompt.</p>
+    <ul>
+      <li><article>
+        <aside>
+          <time datetime="2026-07-02">2026-07-02</time>
+        </aside>
+        <div>
+          <h3><a href="#">suspicious.webloc<small>.webloc</small></a></h3>
+          <p style="color:var(--tag-red)">&#9888; Unsafe link removed (javascript:) &mdash; this destination can run code and was not published as a link.</p>
+        </div>
+      </article></li>
+    </ul>
+  </section>
+
+</main>
+</body>
+</html>
