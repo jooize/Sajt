@@ -120,6 +120,27 @@ The same grammar serves both positions: an *empty* date-named folder *inside* a
 post is the publish marker; the *post itself* named a date is an unlabeled dated
 post. "A date-named thing is a date."
 
+### Date-time deeplinks (new)
+
+Every post page shows a quiet permalink of its publish moment —
+`¶ esko.bar/2026/07/04?time=191430` — mono, ¶-prefixed, the generalization
+of the bare-link row's permalink (`static/link-rows-mockup.html`, case 4).
+
+This is a **name-independent citation**: it resolves by timestamp and 301s
+to whatever the canonical URL is *now*, so it survives renames that would
+orphan a label link (the accepted rename cost in entry-model.md no longer
+applies to anyone who cited the deeplink).
+
+- **Resolution:** exact date+time match → 301 to canonical. No match (or
+  two posts in the same second) → the **day view**, never a 404 — the
+  reader lands somewhere useful; an edited-that-day post is right there.
+- **Stability = publish-date stability.** A date-marker post's deeplink is
+  permanent. A bare file's moves when the file is edited (mtime →
+  republish) — the same documented trade as its timeline position, one
+  more reason folding is the upgrade path. Folding itself is lossless:
+  Ctrl-Cmd-N preserves the primary's mtime, so the deeplink resolves
+  identically before and after; add the date marker to pin it forever.
+
 ---
 
 ## 3. Kinds — medium, not format, not genre
@@ -176,8 +197,14 @@ Resolution: a file that resolves to a URL **drops out of primary candidacy** and
 becomes the destination (the way date/`alias` markers are set aside). In the
 common case (`commentary.md` + `link.md`) that's unambiguous by content. The
 stem `link` (like `index` for primary) is the explicit marker and the
-tie-break; **more than one destination with no tie-break → fail closed**
-(ambiguous-outbound error row). Never guess where a headline sends people.
+tie-break. **More than one destination with no tie-break** never guesses —
+but it demotes rather than erroring, matching the primary-collision rule
+(§6): the post renders normally with **no outbound cite at all**, plus a
+prominent notice ("two destinations claimed — keep one, or name one
+`link.*`") and a loud log. No wrong link can ever be emitted; the body
+still publishes; the fix is one rename. The one hard error left:
+`kind = link` with nothing *but* ambiguous destinations — no body to fall
+back to, nothing safe to render except the notice itself.
 
 This retires the `.link` extension: a bare-URL `.txt`/`.md` does the same job
 and is viewable in Finder (the original complaint), so **drop `.link`**.
@@ -305,12 +332,22 @@ Decisions folded in:
   Intra-post *date-marker* ambiguity (two date markers) stays a hard error —
   no degraded rendering respects an unknown date.
 - **Nested listings recurse to any depth** — `/label/sub/sub2/file.ext`
-  just works, each level `public` (fail-closed AND). Nested rows may render
-  in the timeline-row visual language (date, tags, description) — a
-  sub-timeline in look — but **nested items are never posts**: no slug
-  claim, no revisions, no aliases, no grades, never on the main timeline.
-  Identity stays "a post's name is its top-level name"; promoting a nested
-  thing to a real post is the move-to-top-level gesture.
+  just works, each level `public` (fail-closed AND). **A nested item's
+  path IS its clean canonical URL** (`/my-resume/talks/`); "no slug claim"
+  means only that it never competes for the bare `/talks` in the flat
+  namespace.
+- **Nested items get the full row treatment**: the timeline-row visual
+  language (date, tags, description), **expand-in-place** — a listing's
+  timeline row (and each folder row inside a listing) is a server-rendered
+  `<details>` disclosure opening to its public children, recursing, same
+  idiom as the revision dropdown, no JS — and **revision collapsing**:
+  ` copy [n]` is lexical, so `talk copy.pdf` folds under `talk.pdf` as one
+  row with the same revision disclosure (`parse_revision_suffix` reused at
+  display level, ordered by mtime).
+- What nested items never have is **identity**: no flat-namespace claim,
+  no aliases, no grades, no own main-timeline row. Identity stays "a
+  post's name is its top-level name"; promoting a nested thing to a real
+  post is the move-to-top-level gesture.
 
 ### Membership is an allowlist, never a blocklist
 
@@ -407,11 +444,13 @@ Not built yet — the `image` crate is absent from `Cargo.toml`; images serve
 - `render.rs` — `markdown`/`text` gaps; drop `.link`; `.webloc`/`.url` → URL;
   single-URL text → link card; scheme guard; listing page; image metadata strip
   + `original` opt-in + notice.
-- `url.rs` — slug in `ContentQuery` matching.
+- `url.rs` — slug in `ContentQuery` matching; label-free date+time deeplink
+  resolution (exact match → 301 canonical, else day view).
 - `templates.rs` — row: label-internal + `<cite>` external ↗; name-share row
   dropdown; slug in `name_claimants`; scheme CSS; attachment file-list
   component (shared by listings and post pages; folder rows for nested
-  listings) — visual: `static/listing-mockup.html`.
+  listings; `<details>` expand-in-place; nested ` copy [n]` collapse) —
+  visual: `static/listing-mockup.html`; the ¶ deeplink on post pages.
 - `routes.rs` — outbound refusal; image serving (strip vs `original`); listing
   routes over folder-relative serving, extended through public-tagged
   subfolders (`/label/sub/file.ext`).
