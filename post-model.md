@@ -235,7 +235,8 @@ reorders nothing. Birthtime was considered and rejected (§2).
 
 A folder with **no single document primary** renders as a **listing**: a
 browsable index of its files. This is what gives `kind = folder` / the `/`
-suffix a real, non-error meaning.
+suffix a real, non-error meaning. Visual:
+`static/listing-mockup.html` (gallery, file list, timeline row).
 
 ### Choosing it
 
