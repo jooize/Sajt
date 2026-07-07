@@ -255,6 +255,45 @@ Note the `index` overload, resolved by shape: a *file* `index.md` is the primary
 page; an empty *folder* `index/` is the listing directive — the same split web
 servers use.
 
+### Attachments — a listing alongside a primary (new, 2026-07-07)
+
+Listing and post are not two folder species; they are one rule with the
+primary as the only variable. **A file tagged `public` inside a post is
+listed.** A document post's public-tagged sibling files render as an
+**attachment list below the body** — the same file-list component a pure
+listing uses. `My Resumé/` = `My Resumé.md` (the intro, primary) +
+`cv.pdf`, `references.pdf` tagged `public` (the attachments). Adding a doc
+is drop + tag; removing it is untag. No markdown list to write or parse.
+
+The whole space is one gradient:
+
+- primary, no public-tagged files → plain post (today's behavior)
+- primary + public-tagged files → post with attachments
+- no primary, public-tagged files → pure listing (the base §6 case)
+- `index/` marker → forces the no-primary case
+
+Decisions folded in:
+
+- **Ordering: filename** (Finder's order), not mtime — attachments are a
+  curated set, not a feed; fixing a typo in a PDF must not reshuffle it.
+- **Placement: always below the body**, one attachment idiom everywhere.
+- **Public-tagged subfolders are listed too**: a non-marker subfolder tagged
+  `public` appears in the list as a folder row and is itself a **nested
+  listing** at `/label/sub/`, gated by the same rule at every level
+  (fail-closed AND up the chain: every ancestor and the file itself must be
+  `public`). Untagged subfolders stay invisible, exactly like untagged
+  files. Marker folders (date, `alias`, `index`) are never listed,
+  tagged or not. This gives named groups of attachments for free —
+  `My Resumé/talks/` — without new grammar.
+- **Primary resolution is unchanged from entry-model.md** (candidates =
+  stem `index` or folder name; one → primary; several → fail-closed error —
+  no precedence between `index.ext` and the folder-name file, ambiguity
+  never guesses; none but a single lone file → that file), with one
+  refinement: **candidate stems compare on the slug** (§1), so
+  `My Resumé/my-resume.md` matches. And where entry-model made
+  "no candidate, several files" an error, that case is now the automatic
+  listing above.
+
 ### Membership is an allowlist, never a blocklist
 
 **A file appears in a listing only if it is tagged `public`.** Consequences:
@@ -269,12 +308,17 @@ servers use.
 ### Serving and security
 
 - Each item is reachable at `/label/file.ext` via folder-relative asset serving
-  (already present); the listing page is links to them.
-- Visibility is gated at **both** levels, fail-closed AND: the folder (post) must
-  be `public` for the listing to exist, and each file must be `public` to be
-  listed *and* served.
+  (already present); nested listings extend it one path level per public
+  subfolder (`/label/sub/file.ext`). The listing page is links to them.
+- Visibility is gated at **every** level, fail-closed AND: the post must be
+  `public` for anything to exist, each subfolder on the path must be `public`,
+  and the file must be `public` to be **listed**.
+- `public` on a file means *listed*; it does not change asset serving.
+  Untagged assets keep serving at `/label/file.ext` as part of a public post
+  (inline images need no tagging) — they just never appear in any generated
+  list. Nothing is ever listed by default.
 - Asset serving stays path-traversal-safe; a listing never reaches outside its
-  own folder.
+  own folder, and never through a non-public subfolder.
 
 ---
 
@@ -337,7 +381,9 @@ Not built yet — the `image` crate is absent from `Cargo.toml`; images serve
   slug derivation + claim-on-slug; extend `parse_date_marker` (bare date,
   drop the mandatory `T`); date-named → unlabeled; family-by-base-name with
   orphan promotion; `link_url` resolution + `link.*` sidecar; listing detection +
-  `index/` marker; per-file `public` gating for listings.
+  `index/` marker; per-file `public` gating for listings; attachment
+  collection (public-tagged siblings + subfolders, one nesting rule);
+  slug-compared primary candidates.
 - `entry.rs` — `note`→`text`; `kind` on `dir`-ness + UTF-8 sniff; `link_url`
   field; listing/`folder` kind.
 - `render.rs` — `markdown`/`text` gaps; drop `.link`; `.webloc`/`.url` → URL;
@@ -345,7 +391,10 @@ Not built yet — the `image` crate is absent from `Cargo.toml`; images serve
   + `original` opt-in + notice.
 - `url.rs` — slug in `ContentQuery` matching.
 - `templates.rs` — row: label-internal + `<cite>` external ↗; name-share row
-  dropdown; slug in `name_claimants`; scheme CSS.
+  dropdown; slug in `name_claimants`; scheme CSS; attachment file-list
+  component (shared by listings and post pages; folder rows for nested
+  listings) — visual: `static/listing-mockup.html`.
 - `routes.rs` — outbound refusal; image serving (strip vs `original`); listing
-  routes over folder-relative serving.
+  routes over folder-relative serving, extended through public-tagged
+  subfolders (`/label/sub/file.ext`).
 - `Cargo.toml` — `plist` (webloc); a JPEG/PNG metadata editor (strip).
