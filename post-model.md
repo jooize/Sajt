@@ -41,7 +41,9 @@ This is safe:
 
 Identity stays "the post's name is its filename"; the slug is a derived
 projection. Mirror the existing client `slugify` (`templates.rs:919`)
-server-side so both agree on the same address.
+server-side so both agree on the same address. **Addresses are always
+lowercase**; a mixed-case URL is non-canonical and 301s to the canonical
+slug, like every other non-canonical URL.
 
 ### Collisions fold on the slug
 
@@ -285,14 +287,30 @@ Decisions folded in:
   files. Marker folders (date, `alias`, `index`) are never listed,
   tagged or not. This gives named groups of attachments for free —
   `My Resumé/talks/` — without new grammar.
-- **Primary resolution is unchanged from entry-model.md** (candidates =
-  stem `index` or folder name; one → primary; several → fail-closed error —
-  no precedence between `index.ext` and the folder-name file, ambiguity
-  never guesses; none but a single lone file → that file), with one
-  refinement: **candidate stems compare on the slug** (§1), so
-  `My Resumé/my-resume.md` matches. And where entry-model made
-  "no candidate, several files" an error, that case is now the automatic
-  listing above.
+- **Primary resolution refines entry-model.md.** Candidates = files whose
+  stem is `index` or the folder name, **compared on the slug** (§1) — so
+  `My Resumé/my-resume.md` matches; no need to reproduce capitalization or
+  accents. One candidate → primary; none but a single lone file → that
+  file. Both remaining cases **demote to a listing instead of erroring**
+  (supersedes `AmbiguousPrimary`):
+  - **Several candidates** (`index.md` + `my-resume.md`): the server never
+    guesses which file gets the headline — it declines to pick and lists.
+    The page carries a **prominent collision notice** ("two files claim the
+    primary slot; remove one, or add `index/` to make the listing
+    intentional"), and the server logs it loudly. An intentional `index/`
+    marker is exactly what silences the notice. The notice shows regardless
+    of tags, but the listing still shows only public-tagged files — two
+    untagged documents yield an empty listing with a loud notice.
+  - **No candidate, several files** → the automatic listing above.
+  Intra-post *date-marker* ambiguity (two date markers) stays a hard error —
+  no degraded rendering respects an unknown date.
+- **Nested listings recurse to any depth** — `/label/sub/sub2/file.ext`
+  just works, each level `public` (fail-closed AND). Nested rows may render
+  in the timeline-row visual language (date, tags, description) — a
+  sub-timeline in look — but **nested items are never posts**: no slug
+  claim, no revisions, no aliases, no grades, never on the main timeline.
+  Identity stays "a post's name is its top-level name"; promoting a nested
+  thing to a real post is the move-to-top-level gesture.
 
 ### Membership is an allowlist, never a blocklist
 
