@@ -45,6 +45,28 @@ server-side so both agree on the same address. **Addresses are always
 lowercase**; a mixed-case URL is non-canonical and 301s to the canonical
 slug, like every other non-canonical URL.
 
+### Slug algorithm (exact — collisions key on this)
+
+1. Unicode-normalize **NFKD**; strip combining marks from Latin base
+   letters (`é` → `e`). Non-Latin letters and digits are **kept**
+   (Unicode-lowercased) — a Japanese or Cyrillic title keeps its script.
+2. Every character that is not a letter or digit → hyphen.
+3. Collapse hyphen runs; trim leading/trailing hyphens.
+4. **Empty result** (a title of `!!!`) → the post is treated as
+   **unlabeled** (like a date-named post, §2): addressed at its date path,
+   no name claim, notice on the page.
+
+### Reserved segments — the router always wins
+
+Some top-level segments belong to the URL grammar, not the namespace:
+`saved`, and any **purely numeric** slug (year/date filtering — `/2026`
+must stay the year view; the §2 "1984 stays a label" promise holds for
+*titles*, but the bare URL yields to the router). A post whose slug is
+reserved never claims the bare URL: it lives at its date path, carries the
+standard "also at" notice, and the server logs the reservation loudly.
+Tag grammar needs no reservation — `+`/`!` are punctuation and never
+survive slugification.
+
 ### Collisions fold on the slug
 
 Slug derivation widens the collision space: `fog over the bay` and
@@ -202,9 +224,27 @@ but it demotes rather than erroring, matching the primary-collision rule
 (§6): the post renders normally with **no outbound cite at all**, plus a
 prominent notice ("two destinations claimed — keep one, or name one
 `link.*`") and a loud log. No wrong link can ever be emitted; the body
-still publishes; the fix is one rename. The one hard error left:
-`kind = link` with nothing *but* ambiguous destinations — no body to fall
-back to, nothing safe to render except the notice itself.
+still publishes; the fix is one rename. **The duplicate destinations are
+shown under the post body** as a plain list beneath the notice — clearly
+marked as unresolved, never as the headline cite (and the timeline row
+carries no cite at all) — so the author sees exactly what collided. The
+one hard error left: `kind = link` with nothing *but* ambiguous
+destinations — no body to fall back to, nothing safe to render except the
+notice itself.
+
+### Destination metadata fetch (title + favicon)
+
+The `<cite>` line needs the target's title and favicon; that fetch is a
+server-side request, so it gets the full treatment:
+
+- **Scan-time only**, never per-request; cached out-of-tree with the
+  embeds. Failure degrades to bare domain (above), retried on the embed
+  liveness schedule.
+- **SSRF-guarded**: resolve DNS first, refuse loopback/private/link-local
+  ranges — re-checked on **every redirect hop**. Hard timeout (5 s), size
+  caps (favicon ~512 KB; title read from the first ~1 MB of HTML).
+- **Favicons re-serve locally, never hotlinked** — hotlinking would leak
+  reader IPs to the destination, defeating `rel="noreferrer"`.
 
 This retires the `.link` extension: a bare-URL `.txt`/`.md` does the same job
 and is viewable in Finder (the original complaint), so **drop `.link`**.
@@ -257,6 +297,16 @@ Ordering is unchanged: **mtime first, `rank` (the copy number) only as an
 exact-tie break** (`sort_revisions`, `content.rs:824`). The number is never an
 identity or a URL — deleting a revision and letting Finder refill the gap
 reorders nothing. Birthtime was considered and rejected (§2).
+
+**Known hazard, accepted**: a standalone post *titled* `foo copy` is only
+standalone while no `foo` exists — create `foo` later and the family rule
+absorbs it as a revision (and conversely, a promoted orphan demotes if its
+base reappears). Age can't disambiguate (Cmd-D archives are legitimately
+*older* than their edited base), so instead of a clever rule: the server
+**logs the absorption loudly** and the new base's page shows a one-time
+notice ("absorbed existing 'foo copy' as a revision"); the absorbed post
+stays reachable via the revision dropdown, and the recovery is one rename.
+Same class of accepted cost as rename-without-alias in entry-model.md.
 
 ---
 
@@ -382,17 +432,25 @@ Decisions folded in:
 Every destination — from any link format — funnels through one resolution point,
 which is where the guard lives. It is written once.
 
-- **Allow silently:** `https:`, `mailto:`, `tel:`. (A blanket non-https block
-  would wrongly kill mailto/tel.)
-- **Flag prominently (safe but notable):** `http:` (unencrypted) and inert custom
-  schemes. Pure CSS, no server class, via attribute selectors —
-  `main a[href^="http://"]`, or a `:not(...)` chain for "unusual". Fits the
-  no-classes rule.
-- **Refuse entirely (never emit a link), server-side:** `javascript:`, `data:`,
-  `vbscript:`, `file:`. These *execute in our origin* or read the reader's disk —
-  the danger is what they *run*, not where they *go*, so a prompt is the wrong
-  tool. Render as flagged plain text ("unsafe link removed"), never a clickable
-  anchor. CSS can't stop navigation; this must be render-time.
+**It is an allowlist, not a blocklist** (fail closed — blocklists miss
+obfuscations and future dangerous schemes). Normalize first: trim, strip
+control characters, lowercase the scheme; a destination must be an
+absolute URL with an explicit scheme (protocol-relative `//host` never
+occurs — the §4 predicate requires http(s) — but the guard rejects it
+anyway). Then:
+
+- **Allow silently:** `https:`, `mailto:`, `tel:`.
+- **Allow but flag prominently:** `http:` (unencrypted). Pure CSS, no
+  server class — `main a[href^="http://"]`. Fits the no-classes rule.
+- **Everything else is refused, server-side** — `javascript:`, `data:`,
+  `vbscript:`, `file:`, and any scheme not on the allowlist (custom URL
+  handlers are a recurring exploit class; "inert" cannot be verified).
+  Refused schemes execute in our origin, read the reader's disk, or
+  invoke arbitrary local handlers — the danger is what they *run*, so a
+  prompt is the wrong tool. Render as flagged plain text ("unsafe link
+  removed"), never a clickable anchor. CSS can't stop navigation; this
+  must be render-time. Widening the allowlist is a one-line, deliberate
+  edit.
 
 No `/out?` interstitial is needed: safe links just render (scheme visible),
 referrer is dropped by `rel="noreferrer"`, and unsafe links are refused at the
@@ -418,22 +476,42 @@ Not built yet — the `image` crate is absent from `Cargo.toml`; images serve
   is lossy for JPEG (generational loss) and drops ICC color profiles. Dropping
   the APP/EXIF segments while keeping the pixel data preserves quality *and*
   privacy. *(Revisits the memo'd "image crate re-encode" decision.)*
+- **What the strip keeps and drops — exactly:**
+  - **Keep orientation** (preserve the EXIF orientation tag, or transpose
+    the pixels and drop it) — stripping it naively renders every portrait
+    phone photo sideways, the classic bug.
+  - **Keep the ICC profile** (JPEG APP2) — color fidelity, no meaningful
+    leak.
+  - **Drop everything else**: EXIF (including the **embedded thumbnail**,
+    which can contain the un-cropped original — a real leak), XMP, IPTC,
+    JPEG comment segments; PNG `tEXt`/`zTXt`/`iTXt`/`eXIf` chunks; the
+    equivalent chunks in WebP/TIFF/HEIC.
+  - **A format we cannot strip is not served** (except under `original`) —
+    fail closed, rendered as the standard notice, never silently raw.
+- **Caching:** the strip must be **deterministic** (same input → identical
+  bytes) so the immutable-cache story holds; the served variant's
+  ETag/hash derives from the **stripped** output, cached out-of-tree.
+  `original` serves exact bytes and the original hash.
 
 ---
 
 ## 9. Open choices for the author to confirm
 
-1. **Listings:** automatic-for-media + explicit `index/`, or explicit-only?
-   (Lean both.)
-2. **Family "current" when the base is deleted:** newest-by-mtime (proposed) vs
-   lowest-rank. (Lean newest — matches revision sort; recoverable by rename.)
-3. **`.text`** = plain text (assumed) or a markdown alias?
-4. **EXIF:** confirm metadata-only strip over re-encode.
+All four settled in the 2026-07-07 review session:
+
+1. **Listings:** both — automatic-for-media *and* explicit `index/` (which
+   also silences the primary-collision notice).
+2. **Family "current" when the base is deleted:** newest-by-mtime, with
+   the absorption hazard documented in §5.
+3. **`.text`** = plain text.
+4. **EXIF:** metadata-only strip confirmed, amended with the exact
+   keep/drop list and deterministic-caching rule in §8.
 
 ## 10. Implementation map (files touched)
 
 - `content.rs` — lift the space rejection (`build_bare_post`/`build_folder_post`);
-  slug derivation + claim-on-slug; extend `parse_date_marker` (bare date,
+  slug derivation (exact §1 algorithm) + claim-on-slug + reserved-segment
+  yield; extend `parse_date_marker` (bare date,
   drop the mandatory `T`); date-named → unlabeled; family-by-base-name with
   orphan promotion; `link_url` resolution + `link.*` sidecar; listing detection +
   `index/` marker; per-file `public` gating for listings; attachment
@@ -442,8 +520,13 @@ Not built yet — the `image` crate is absent from `Cargo.toml`; images serve
 - `entry.rs` — `note`→`text`; `kind` on `dir`-ness + UTF-8 sniff; `link_url`
   field; listing/`folder` kind.
 - `render.rs` — `markdown`/`text` gaps; drop `.link`; `.webloc`/`.url` → URL;
-  single-URL text → link card; scheme guard; listing page; image metadata strip
-  + `original` opt-in + notice.
+  single-URL text → link card; scheme allowlist guard (normalize +
+  refuse-unknown); listing page; image metadata strip (orientation + ICC
+  kept, deterministic) + `original` opt-in + notice; unresolved-destination
+  list under the body.
+- **fetcher (scan-time)** — title/favicon fetch with SSRF guard
+  (DNS-resolve → refuse private ranges, per redirect hop), timeouts, size
+  caps; favicons cached out-of-tree and re-served locally.
 - `url.rs` — slug in `ContentQuery` matching; label-free date+time deeplink
   resolution (exact match → 301 canonical, else day view).
 - `templates.rs` — row: label-internal + `<cite>` external ↗; name-share row
