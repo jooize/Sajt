@@ -224,13 +224,22 @@ but it demotes rather than erroring, matching the primary-collision rule
 (§6): the post renders normally with **no outbound cite at all**, plus a
 prominent notice ("two destinations claimed — keep one, or name one
 `link.*`") and a loud log. No wrong link can ever be emitted; the body
-still publishes; the fix is one rename. **The duplicate destinations are
-shown under the post body** as a plain list beneath the notice — clearly
-marked as unresolved, never as the headline cite (and the timeline row
-carries no cite at all) — so the author sees exactly what collided. The
-one hard error left: `kind = link` with nothing *but* ambiguous
-destinations — no body to fall back to, nothing safe to render except the
-notice itself.
+still publishes; the fix is one rename. **The unpromoted destinations fall
+back to ordinary listed files** (§6): each renders under the post body as a
+link row in the attachment listing — the same timeline-row treatment any
+listed file gets, carrying its cite (favicon · target title · domain ↗)
+instead of a bare filename — beneath the notice that says why none became
+the headline. The post's own timeline row carries no cite.
+
+This is the one unifying idea, one level down: resolving a file to *the*
+headline destination is an **optional promotion**. When it can't happen
+cleanly, the file is not an error and not a special "dupe list" — it just
+stays what it already was, **ordinary listed content**, the same fallback
+as "drops out of primary candidacy" above. (Listing membership still obeys
+the `public` allowlist, §6 — the notice always shows; the rows show the
+public-tagged candidates.) The one hard error left: `kind = link` with
+nothing *but* ambiguous destinations — no body to fall back to, nothing
+safe to render except the notice itself.
 
 ### Destination metadata fetch (title + favicon)
 
@@ -526,7 +535,9 @@ All four settled in the 2026-07-07 review session:
   list under the body.
 - **fetcher (scan-time)** — title/favicon fetch with SSRF guard
   (DNS-resolve → refuse private ranges, per redirect hop), timeouts, size
-  caps; favicons cached out-of-tree and re-served locally.
+  caps; favicons cached out-of-tree and re-served locally. Unpromoted
+  ambiguous destinations fall through to the listing as link rows (reuse
+  the §6 component), not a bespoke list.
 - `url.rs` — slug in `ContentQuery` matching; label-free date+time deeplink
   resolution (exact match → 301 canonical, else day view).
 - `templates.rs` — row: label-internal + `<cite>` external ↗; name-share row
