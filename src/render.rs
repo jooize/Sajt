@@ -48,34 +48,48 @@ fn is_image(ext: &str) -> bool {
 
 /// Render content based on file extension.
 pub async fn render_entry(extension: &str, file_content: &[u8]) -> Result<RenderedContent, String> {
-    if let Some(format) = pandoc_format(extension) {
+    // Normalize aliases up front (`markdown`→`md`, `text`→`txt`, `asciidoc`→`adoc`),
+    // so both the medium classifier and this render path agree — no format silently
+    // falls through to a download.
+    let ext = crate::entry::normalize_ext(extension);
+    let ext = ext.as_str();
+    if let Some(format) = pandoc_format(ext) {
         let html = render_pandoc(format, file_content).await?;
         Ok(RenderedContent::Html(html))
-    } else if extension == "html" || extension == "htm" {
+    } else if ext == "html" || ext == "htm" {
         let html = String::from_utf8_lossy(file_content).to_string();
         if is_complete_html(&html) {
             Ok(RenderedContent::Standalone(html))
         } else {
             Ok(RenderedContent::Html(html))
         }
-    } else if extension == "link" {
-        // .link files are rendered via embed system; fallback to plain link
+    } else if ext == "link" {
+        // .link files are rendered via embed system; fallback to plain link.
+        // (Retired in Commit 7 in favor of the `link_url` axis.)
         let url = String::from_utf8_lossy(file_content).trim().to_string();
         let html = format!(
             r#"<p><a href="{url}" rel="noopener noreferrer" target="_blank">{url}</a></p>"#,
             url = url.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;"),
         );
         Ok(RenderedContent::Html(html))
-    } else if extension == "txt" {
+    } else if ext == "txt" {
         let text = String::from_utf8_lossy(file_content).to_string();
         Ok(RenderedContent::PreformattedText(text))
-    } else if is_image(extension) {
-        let mime = mime_guess::from_ext(extension)
+    } else if is_image(ext) {
+        let mime = mime_guess::from_ext(ext)
             .first_or_octet_stream()
             .to_string();
         Ok(RenderedContent::Image { mime })
+    } else if ext.is_empty() {
+        // Dotless bare file: UTF-8 → preformatted text, else an opaque download.
+        match std::str::from_utf8(file_content) {
+            Ok(text) => Ok(RenderedContent::PreformattedText(text.to_string())),
+            Err(_) => Ok(RenderedContent::Download {
+                mime: "application/octet-stream".to_string(),
+            }),
+        }
     } else {
-        let mime = mime_guess::from_ext(extension)
+        let mime = mime_guess::from_ext(ext)
             .first_or_octet_stream()
             .to_string();
         Ok(RenderedContent::Download { mime })

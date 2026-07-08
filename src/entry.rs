@@ -141,16 +141,75 @@ impl Entry {
         self.tags.iter().map(|t| t.name.clone()).collect()
     }
 
-    /// The entry's *type*, derived from the file itself — never a tag. Search
-    /// matches it, so typing "photo" finds photos with zero extra UI.
+    /// The entry's *medium* — what sort of thing it is and how it is served —
+    /// derived from the file itself, never a tag. Search matches it, so typing
+    /// "photo" finds photos with zero extra UI. Not the format (that's the
+    /// extension) and not the genre (that's an author tag). See `post-model.md` §3.
     pub fn kind(&self) -> &'static str {
-        match self.extension.to_ascii_lowercase().as_str() {
+        match normalize_ext(&self.extension).as_str() {
             "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "heic" | "heif" | "tiff" | "bmp" => "photo",
-            "html" | "htm" => "page",
-            "link" => "link",
-            "" | "/" => "folder",
-            "md" | "markdown" | "txt" | "text" | "adoc" | "asciidoc" | "rst" | "org" | "tex" => "note",
+            // `html` is the one format that can be a complete self-contained
+            // document served ~as-is (bypassing site chrome).
+            "html" | "htm" => "html",
+            // md/txt and friends differ in *rendering* (formatted vs preformatted),
+            // not medium — all poured into the site shell.
+            "md" | "txt" | "rst" | "org" | "adoc" | "tex" => "text",
+            // Dotless bare files (README, LICENSE): UTF-8-decodable → text
+            // (rendered preformatted), else an opaque download. Only a folder is
+            // ever `folder` (a listing — see §6).
+            "" => {
+                if self.is_utf8_text() {
+                    "text"
+                } else {
+                    "file"
+                }
+            }
             _ => "file",
         }
+    }
+
+    /// Whether the primary file decodes as UTF-8 text (a cheap prefix sniff), used
+    /// to classify dotless bare files. A trailing multi-byte character split at the
+    /// prefix boundary is treated as text (fail toward readable).
+    fn is_utf8_text(&self) -> bool {
+        use std::io::Read;
+        let mut buf = [0u8; 512];
+        match std::fs::File::open(&self.path).and_then(|mut f| f.read(&mut buf)) {
+            Ok(n) => match std::str::from_utf8(&buf[..n]) {
+                Ok(_) => true,
+                Err(e) => e.error_len().is_none() && e.valid_up_to() > 0,
+            },
+            Err(_) => false,
+        }
+    }
+}
+
+/// Normalize extension aliases to their canonical form (case-insensitive):
+/// `markdown`→`md`, `text`→`txt`, `asciidoc`→`adoc`; everything else lowercases
+/// through unchanged. Both `kind()` and the render path key on this, so the two
+/// never disagree about a `.markdown`, `.text`, or `.asciidoc` file (which used
+/// to silently fall through to a download).
+pub fn normalize_ext(ext: &str) -> String {
+    match ext.to_ascii_lowercase().as_str() {
+        "markdown" => "md".to_string(),
+        "text" => "txt".to_string(),
+        "asciidoc" => "adoc".to_string(),
+        other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_ext_folds_aliases_case_insensitively() {
+        assert_eq!(normalize_ext("markdown"), "md");
+        assert_eq!(normalize_ext("Markdown"), "md");
+        assert_eq!(normalize_ext("text"), "txt");
+        assert_eq!(normalize_ext("ASCIIDOC"), "adoc");
+        assert_eq!(normalize_ext("JPG"), "jpg");
+        assert_eq!(normalize_ext("md"), "md");
+        assert_eq!(normalize_ext(""), "");
     }
 }

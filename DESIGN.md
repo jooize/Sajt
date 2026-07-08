@@ -274,6 +274,17 @@ later SEO nicety).
 
 ## Authoring formats
 
+**Kinds are a medium, not a format (SHIPPED 2026-07-08, `post-model.md` §3).**
+`kind()` classifies what a post *is* and how it is served — `photo`, `html`
+(self-contained document), `text` (poured into the shell), `link`, `folder`
+(a listing), or `file` (opaque download) — never the format (the extension) or
+genre (an author tag). `note`→`text` and `page`→`html` were renamed. Extension
+**aliases** normalize once (`.markdown`→`md`, `.text`→`txt`, `.asciidoc`→`adoc`)
+feeding both `kind()` and the render path, closing the old gap where a
+`.markdown`/`.text` file silently *downloaded*. A **dotless** bare file
+(`README`) is `text` when UTF-8-decodable (rendered preformatted), else an
+opaque `file`.
+
 - **CommonMark** (`.md`) — Pandoc `commonmark_x`, as today. Bare URLs on their
   own line expand to rich embed cards via the existing embed system (YouTube,
   Bluesky, Mastodon, App Store, generic OpenGraph…). That *is* the Markdown
