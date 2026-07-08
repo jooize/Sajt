@@ -1,5 +1,5 @@
 use crate::embed::EmbedData;
-use crate::entry::{Entry, PostError, Revision, COPY_KEYWORD};
+use crate::entry::{is_image_ext, Entry, ListItem, Listing, PostError, Revision, COPY_KEYWORD};
 use crate::postdate::PostDate;
 use crate::slug::{is_reserved_slug, slug};
 use crate::tags::{read_finder_comment, read_tags_colored, Tag};
@@ -282,6 +282,7 @@ fn build_bare_post(item: &TopItem, claim: Option<&str>) -> Entry {
         aliases: Vec::new(),
         revisions: Vec::new(),
         error: None,
+        listing: None,
     }
 }
 
@@ -325,7 +326,11 @@ fn build_folder_post(item: &TopItem, claim: Option<&str>) -> Entry {
         return errored_folder(item, &label, tags, err);
     }
 
-    let primary = scan.primary.expect("a folder post with no error has a primary");
+    if let Some(listing) = scan.listing {
+        return build_listing_post(item, &label, tags, scan.date_marker, scan.aliases, listing);
+    }
+
+    let primary = scan.primary.expect("a folder post with neither error nor listing has a primary");
     let (_, ext) = split_name(&primary.name);
     // Folder post: the comment is read at the post level (the folder, like tags),
     // the auto-excerpt from the primary file inside it.
@@ -372,6 +377,58 @@ fn build_folder_post(item: &TopItem, claim: Option<&str>) -> Entry {
         aliases: scan.aliases,
         revisions: scan.revisions,
         error: None,
+        listing: None,
+    }
+}
+
+/// A folder post that renders as a browsable listing (no single primary, or an
+/// `index/` marker). Dated by an intro/date-marker, else the folder's own mtime;
+/// an `index`/folder-name intro document supplies the title and description.
+/// `extension` is empty so the row shows the folder `/` marker.
+fn build_listing_post(
+    item: &TopItem,
+    label: &str,
+    tags: Vec<Tag>,
+    date_marker: Option<PostDate>,
+    aliases: Vec<String>,
+    listing: Listing,
+) -> Entry {
+    let dir = &item.path;
+    let folder_mtime = mtime_local(dir).unwrap_or_else(epoch);
+    // An intro document (the `index/`-marker "gallery with a story") gives the
+    // listing a title (H1) and one-line description; otherwise the folder-level
+    // Finder comment is the only description source.
+    let (excerpt, h1) = match &listing.intro {
+        Some(p) => (row_description(dir, p, &listing.intro_ext), extract_h1(p, &listing.intro_ext)),
+        None => (row_description(dir, dir, ""), None),
+    };
+
+    // Same dating rule as a document folder post: a date-named folder is unlabeled
+    // at its own precision; else the date marker pins it, else the folder's mtime.
+    let (timestamp, post_label, post_slug, display_label) = match parse_date_name(label) {
+        Some((date, title)) => (date, title.clone(), None, h1.or(title)),
+        None => {
+            let ts = date_marker.unwrap_or_else(|| PostDate::from_mtime(folder_mtime));
+            (ts, Some(label.to_string()), derive_slug(label), h1)
+        }
+    };
+
+    Entry {
+        path: dir.clone(),
+        dir: Some(dir.clone()),
+        timestamp,
+        edited: None,
+        label: post_label,
+        slug: post_slug,
+        display_label,
+        excerpt,
+        extension: String::new(),
+        tags,
+        grade: None,
+        aliases,
+        revisions: Vec::new(),
+        error: None,
+        listing: Some(listing),
     }
 }
 
@@ -394,6 +451,7 @@ fn errored_folder(item: &TopItem, label: &str, tags: Vec<Tag>, error: PostError)
         aliases: Vec::new(),
         revisions: Vec::new(),
         error: Some(error),
+        listing: None,
     }
 }
 
@@ -651,9 +709,12 @@ struct FileChild {
     mtime: NaiveDateTime,
 }
 
-/// The result of scanning a folder post's contents.
+/// The result of scanning a folder post's contents. Exactly one of `primary`,
+/// `listing`, or `error` is set (a document post, a browsable listing, or a
+/// fail-closed error); markers (`date_marker`, `aliases`) apply to all three.
 struct FolderScan {
     primary: Option<PrimaryFile>,
+    listing: Option<Listing>,
     date_marker: Option<PostDate>,
     aliases: Vec<String>,
     revisions: Vec<Revision>,
@@ -664,6 +725,10 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
     let mut date_markers: Vec<(String, PostDate)> = Vec::new();
     let mut aliases: Vec<String> = Vec::new();
     let mut files: Vec<FileChild> = Vec::new();
+    // An empty `index/` marker forces listing mode (post-model.md §6) — the same
+    // file/folder split web servers use (`index.md` file = primary; `index/`
+    // folder = listing directive). Joins the empty-folder marker vocabulary.
+    let mut force_listing = false;
 
     for child in std::fs::read_dir(dir)? {
         let child = child?;
@@ -676,8 +741,11 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
             continue;
         }
         if child.file_type()?.is_dir() {
-            // Subfolders are markers or ignored — never assets, never served.
-            if let Some(dt) = parse_date_marker(&cname) {
+            // Subfolders are markers or (for now) ignored — never assets. The
+            // `index/`, date, and `alias <name>/` markers must be empty.
+            if cname.eq_ignore_ascii_case("index") && is_effectively_empty(&cpath) {
+                force_listing = true;
+            } else if let Some(dt) = parse_date_marker(&cname) {
                 if is_effectively_empty(&cpath) {
                     date_markers.push((cname, dt));
                 } else {
@@ -695,12 +763,14 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         }
     }
 
-    // Exactly one date marker, or none.
+    // Exactly one date marker, or none. Two is a hard error at every mode — no
+    // degraded rendering can respect an unknown publish date.
     if date_markers.len() > 1 {
         let mut names: Vec<String> = date_markers.into_iter().map(|(n, _)| n).collect();
         names.sort();
         return Ok(FolderScan {
             primary: None,
+            listing: None,
             date_marker: None,
             aliases,
             revisions: Vec::new(),
@@ -719,12 +789,34 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         }
     }
 
-    // Primary = the file whose stem is `index` or equals the folder name; failing
-    // that, the sole plain file. Anything else is a fail-closed ambiguity.
-    let candidates: Vec<&FileChild> = plain
-        .iter()
-        .filter(|f| f.stem == label || f.stem.eq_ignore_ascii_case("index"))
-        .collect();
+    // Primary candidates = files whose stem is `index` or the folder name,
+    // compared on the slug so `My Resumé/my-resume.md` matches (post-model.md §1).
+    let is_candidate = |f: &FileChild| {
+        f.stem.eq_ignore_ascii_case("index")
+            || slug(&f.stem) == slug(label) && slug(label).is_some()
+            || f.stem == label
+    };
+    let candidates: Vec<&FileChild> = plain.iter().filter(|f| is_candidate(f)).collect();
+
+    // An `index/` marker forces a listing even when a primary could resolve; an
+    // `index`/folder-name document then becomes the listing's intro prose.
+    if force_listing {
+        let intro = plain.iter().find(|f| is_candidate(f));
+        let listing = build_listing(&plain, intro, Vec::new());
+        return Ok(FolderScan {
+            primary: None,
+            listing: Some(listing),
+            date_marker,
+            aliases,
+            revisions: Vec::new(),
+            error: None,
+        });
+    }
+
+    // One candidate → primary; none but a single lone file → that file. Both
+    // remaining cases demote to a listing instead of erroring (post-model.md §6):
+    // several candidates → decline to guess + collision notice; no candidate with
+    // several files → an automatic listing. A truly empty folder is NoPrimary.
     let primary_child: Option<&FileChild> = match candidates.len() {
         1 => Some(candidates[0]),
         0 if plain.len() == 1 => Some(&plain[0]),
@@ -734,18 +826,42 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
     let primary_child = match primary_child {
         Some(p) => p,
         None => {
-            let error = if plain.is_empty() {
-                PostError::NoPrimary
-            } else {
-                let mut names: Vec<String> = if candidates.len() > 1 {
-                    candidates.iter().map(|f| f.name.clone()).collect()
-                } else {
-                    plain.iter().map(|f| f.name.clone()).collect()
-                };
+            if plain.is_empty() {
+                return Ok(FolderScan {
+                    primary: None,
+                    listing: None,
+                    date_marker,
+                    aliases,
+                    revisions: Vec::new(),
+                    error: Some(PostError::NoPrimary),
+                });
+            }
+            // Several primary candidates: never guess which gets the headline —
+            // decline and list, with a prominent collision notice (silenced only
+            // by an intentional `index/` marker) logged loudly.
+            let collision: Vec<String> = if candidates.len() > 1 {
+                let mut names: Vec<String> = candidates.iter().map(|f| f.name.clone()).collect();
                 names.sort();
-                PostError::AmbiguousPrimary(names)
+                tracing::warn!(
+                    "Folder post {} has several primary candidates ({}); declining to pick and \
+                     listing instead. Remove one, or add an empty `index/` marker to make the \
+                     listing intentional.",
+                    dir.display(),
+                    names.join(", ")
+                );
+                names
+            } else {
+                Vec::new()
             };
-            return Ok(FolderScan { primary: None, date_marker, aliases, revisions: Vec::new(), error: Some(error) });
+            let listing = build_listing(&plain, None, collision);
+            return Ok(FolderScan {
+                primary: None,
+                listing: Some(listing),
+                date_marker,
+                aliases,
+                revisions: Vec::new(),
+                error: None,
+            });
         }
     };
 
@@ -764,7 +880,50 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         mtime: primary_child.mtime,
     };
 
-    Ok(FolderScan { primary: Some(primary), date_marker, aliases, revisions, error: None })
+    Ok(FolderScan { primary: Some(primary), listing: None, date_marker, aliases, revisions, error: None })
+}
+
+/// Whether a file is `public` (and not `private`) at its own level — the listing
+/// membership rule (an allowlist). The folder above it is already known public
+/// (the post is visible), so this direct-child check is equivalent to the full
+/// `path_visible` chain; nested listings re-walk the chain per level in Commit 6c.
+fn file_is_public(path: &Path) -> bool {
+    let tags = read_tags_colored(path);
+    tags.iter().any(Tag::is_public) && !tags.iter().any(Tag::is_private)
+}
+
+/// Turn a folder child into a listing row (size + image classification read here).
+fn to_list_item(f: &FileChild) -> ListItem {
+    let ext = split_name(&f.name).1.to_ascii_lowercase();
+    let size = std::fs::metadata(&f.path).map(|m| m.len()).unwrap_or(0);
+    ListItem {
+        name: f.name.clone(),
+        stem: f.stem.clone(),
+        is_image: is_image_ext(&ext),
+        ext,
+        path: f.path.clone(),
+        mtime: f.mtime,
+        size,
+    }
+}
+
+/// Build a `Listing` from a folder's plain files: the public ones become rows (in
+/// filename order), an `intro` document is excluded from the grid, and `total`
+/// counts every candidate file so the reader can see something is withheld.
+fn build_listing(plain: &[FileChild], intro: Option<&FileChild>, collision: Vec<String>) -> Listing {
+    let intro_path = intro.map(|f| f.path.as_path());
+    let listable: Vec<&FileChild> =
+        plain.iter().filter(|f| Some(f.path.as_path()) != intro_path).collect();
+    let mut items: Vec<ListItem> =
+        listable.iter().filter(|f| file_is_public(&f.path)).map(|f| to_list_item(f)).collect();
+    items.sort_by(|a, b| a.name.cmp(&b.name)); // Finder's filename order, not mtime.
+    Listing {
+        items,
+        total: listable.len(),
+        intro: intro.map(|f| f.path.clone()),
+        intro_ext: intro.map(|f| split_name(&f.name).1.to_string()).unwrap_or_default(),
+        collision,
+    }
 }
 
 /// Collapse each top-level `<base> copy [n]` sibling into its family. A family is
@@ -1343,23 +1502,93 @@ mod tests {
     }
 
     #[test]
-    fn folder_post_multiple_primaries_error() {
+    fn several_primary_candidates_demote_to_a_listing_with_collision() {
+        // `p.md` + `index.md` both claim the primary slot: never guess — list, and
+        // record the collision for a prominent notice (post-model.md §6).
         let t = TmpDir::new();
         touch(t.path(), "p/p.md", "a");
         touch(t.path(), "p/index.md", "b");
         let entries = scan_entries(t.path()).unwrap();
         let e = find(&entries, "p");
-        assert!(matches!(e.error, Some(PostError::AmbiguousPrimary(_))));
+        assert!(e.error.is_none(), "a collision demotes to a listing, not an error");
+        let listing = e.listing.as_ref().expect("should be a listing");
+        assert_eq!(listing.collision.len(), 2, "both candidates named in the notice");
+        assert_eq!(e.kind(), "folder");
     }
 
     #[test]
-    fn folder_post_ambiguous_no_candidate_error() {
+    fn no_candidate_several_files_is_an_automatic_listing() {
+        // Two documents, neither named the folder/`index`: an automatic listing,
+        // no collision notice (nothing claimed the headline).
         let t = TmpDir::new();
         touch(t.path(), "p/a.txt", "a");
         touch(t.path(), "p/b.txt", "b");
         let entries = scan_entries(t.path()).unwrap();
         let e = find(&entries, "p");
-        assert!(matches!(e.error, Some(PostError::AmbiguousPrimary(_))));
+        assert!(e.error.is_none());
+        let listing = e.listing.as_ref().expect("should be a listing");
+        assert!(listing.collision.is_empty(), "no candidate claimed the primary");
+        assert_eq!(listing.total, 2);
+    }
+
+    #[test]
+    fn index_marker_forces_listing_with_intro_and_no_collision() {
+        // An empty `index/` marker forces a listing even though `index.md` could
+        // be the primary; the doc becomes the intro and the collision is silenced.
+        let t = TmpDir::new();
+        touch(t.path(), "album/index.md", "# My Album\n\nA story.");
+        touch(t.path(), "album/photo.jpg", "img-bytes");
+        mkdir(t.path(), "album/index"); // the listing directive
+        if !set_tags(&t.path().join("album/photo.jpg"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "album");
+        let listing = e.listing.as_ref().expect("index/ forces a listing");
+        assert!(listing.collision.is_empty(), "index/ silences the collision notice");
+        assert!(listing.intro.is_some(), "index.md is the intro prose");
+        assert_eq!(listing.items.len(), 1, "only the public non-intro file lists");
+        assert_eq!(listing.items[0].name, "photo.jpg");
+        assert!(listing.is_gallery(), "a lone image -> gallery");
+        assert_eq!(e.display_label.as_deref(), Some("My Album"), "title from the intro H1");
+    }
+
+    #[test]
+    fn listing_membership_is_a_public_allowlist() {
+        // Only `public` files list; an untagged sibling is excluded but counted in
+        // the total so the reader can tell something is withheld.
+        let t = TmpDir::new();
+        touch(t.path(), "gal/a.jpg", "1");
+        touch(t.path(), "gal/b.jpg", "2");
+        touch(t.path(), "gal/secret.jpg", "3");
+        if !set_tags(&t.path().join("gal/a.jpg"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        assert!(set_tags(&t.path().join("gal/b.jpg"), &["public"]));
+        // secret.jpg stays untagged → never listed.
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "gal");
+        let listing = e.listing.as_ref().expect("no primary -> listing");
+        assert_eq!(listing.total, 3, "all candidate files counted");
+        assert_eq!(listing.items.len(), 2, "only the two public files list");
+        assert!(listing.items.iter().all(|i| i.name != "secret.jpg"));
+        assert!(listing.is_gallery(), "all-image listing -> gallery");
+    }
+
+    #[test]
+    fn mixed_media_listing_is_a_file_list_not_a_gallery() {
+        let t = TmpDir::new();
+        touch(t.path(), "kit/logo.png", "img");
+        touch(t.path(), "kit/bio.pdf", "doc");
+        if !set_tags(&t.path().join("kit/logo.png"), &["public"]) {
+            return;
+        }
+        assert!(set_tags(&t.path().join("kit/bio.pdf"), &["public"]));
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "kit");
+        let listing = e.listing.as_ref().expect("no primary -> listing");
+        assert_eq!(listing.items.len(), 2);
+        assert!(!listing.is_gallery(), "a non-image present -> file list");
     }
 
     #[test]

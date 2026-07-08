@@ -424,6 +424,7 @@ async fn serve_revision(parent: &Entry, rev: &Revision, store: &ContentStore) ->
     e.edited = None;
     e.revisions = Vec::new();
     e.aliases = Vec::new();
+    e.listing = None; // a revision serves specific bytes, never a listing
     e.extension = rev
         .path
         .extension()
@@ -584,6 +585,28 @@ pub async fn rescan(State(store): State<AppState>) -> impl IntoResponse {
 /// Serve a single entry as a rendered HTML page.
 async fn serve_entry(entry: &Entry, store: &ContentStore) -> Response {
     let all: Vec<&Entry> = store.entries.iter().collect();
+
+    // A listing folder renders as a browsable index, not a document. Its optional
+    // intro doc is rendered through the same pipeline the post body uses.
+    if let Some(listing) = &entry.listing {
+        let intro_html = match &listing.intro {
+            Some(p) => match std::fs::read(p) {
+                Ok(bytes) => match render_entry(&listing.intro_ext, &bytes).await {
+                    Ok(RenderedContent::Html(h)) => {
+                        Some(crate::embed::expand_inline_embeds(&h, &store.embed_cache))
+                    }
+                    Ok(RenderedContent::PreformattedText(t)) => {
+                        Some(format!("<pre>{}</pre>", html_escape_content(&t)))
+                    }
+                    _ => None,
+                },
+                Err(_) => None,
+            },
+            None => None,
+        };
+        return Html(templates::listing_page(entry, listing, &all, intro_html.as_deref()))
+            .into_response();
+    }
 
     // The next-older entry feeds the Continue block at the foot of the post.
     let next: Option<&Entry> = all

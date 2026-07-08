@@ -188,9 +188,21 @@ where symlinks and xattrs do not.
   shadows are indistinguishable to a stateless scan (age can't separate them),
   so each collapse is **logged** but carries no reader-facing notice; both just
   work, and recovery from an unwanted collapse is one rename.
-- The **only** fail-closed *errors* are intra-post ambiguity (multiple primary
-  candidates, multiple date markers) — genuinely no-right-answer cases, shown
-  as an errored row and an HTTP 500 page naming the conflict.
+- **Listings (SHIPPED 2026-07-08 — `post-model.md` §6).** A folder with **no
+  single document primary** renders as a **browsable index** rather than
+  erroring: all-images → a gallery, mixed → a file list. Primary candidates are
+  compared on the **slug** (`My Resumé/my-resume.md` matches). Two cases that
+  used to be an `AmbiguousPrimary` error now **demote to a listing**: several
+  candidates → the server declines to guess, lists, and shows a **prominent
+  collision notice** (+ loud log); no candidate with several files → an automatic
+  listing. An empty **`index/`** marker forces listing mode and silences the
+  notice; a coexisting `index`/folder-name document becomes the listing's **intro
+  prose**. **Membership is a `public` allowlist** — a file lists (and serves)
+  only if tagged `public`, so `.DS_Store`, drafts and markers never leak; the
+  header shows "N of M files public" so a reader can tell something is withheld.
+- The **only** remaining fail-closed *error* is **multiple date markers** — a
+  genuinely no-right-answer case (an unknown publish date), shown as an errored
+  row and an HTTP 500 page naming the conflict.
 
 The server's **index and caches are disposable and live outside the content
 tree** (see cache location below); the content folder is the source of truth,

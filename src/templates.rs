@@ -1,4 +1,4 @@
-use crate::entry::{Entry, PostError, Revision};
+use crate::entry::{Entry, Listing, PostError, Revision};
 use crate::slug::{is_reserved_slug, slug};
 use crate::stats::{compute_cloud, finder_color_var, CloudStats, TagStat, ViewFilter};
 
@@ -713,6 +713,55 @@ main > article + article { margin-top: 3.2rem; padding-top: 3.2rem; border-top: 
 #continue > label { display: inline-flex; align-items: center; gap: .45rem; margin-top: 1rem; font: 550 .78rem var(--sans); color: var(--faint); cursor: pointer; }
 #continue > label[hidden] { display: none; }
 #continue > label input { margin: 0; accent-color: var(--violet); }
+
+/* ---- folder listings (post-model.md §6): gallery / file list ---- */
+/* Scoped under #listing so its resets beat the prose `section ul/ol` rules. */
+#listing > h1 { font-size: 1.35rem; font-weight: 680; letter-spacing: -.02em; margin: .3rem 0 1rem; }
+#listing > h1 > small { font-weight: 450; font-size: .78rem; color: var(--faint); margin-left: .5rem; font-family: var(--mono); }
+#listing > aside {
+  display: flex; align-items: baseline; gap: .5rem;
+  font-size: .82rem; color: var(--soft);
+  border: .5px solid var(--hair); border-left: 3px solid var(--tag-yellow);
+  border-radius: 8px; padding: .5rem .75rem; margin: 0 0 1.2rem;
+  background: light-dark(rgba(245, 163, 0, .05), rgba(255, 212, 38, .06));
+}
+#listing > aside::before { content: "\24D8"; color: var(--tag-yellow); font-size: .9rem; }
+#listing > aside code, #listing .empty code { font: 500 .95em var(--mono); color: var(--ink); }
+#listing .empty { padding: 2.5rem 0; text-align: center; font-size: .875rem; color: var(--soft); }
+/* gallery */
+#listing section > ul {
+  list-style: none; padding: 0; margin: 1rem 0 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: .6rem;
+}
+#listing section > ul > li { margin: 0; }
+#listing section > ul > li > a {
+  display: flex; flex-direction: column; border-radius: 12px; overflow: hidden;
+  background: var(--glass); border: .5px solid var(--glass-edge); box-shadow: var(--glass-shadow); color: var(--ink);
+}
+#listing section > ul > li > a:hover { text-decoration: none; border-color: var(--violet); }
+#listing figure { margin: 0; }
+#listing figure > div { aspect-ratio: 4 / 3; overflow: hidden; background: var(--violet-soft); }
+#listing figure img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 0; }
+#listing figcaption { padding: .4rem .55rem .5rem; font-size: .74rem; line-height: 1.35; display: flex; flex-direction: column; gap: .1rem; }
+#listing figcaption b { font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#listing figcaption b small { font-weight: inherit; color: var(--soft); }
+#listing figcaption span { font: 500 .68rem var(--mono); color: var(--faint); font-feature-settings: "tnum"; }
+/* file list */
+#listing section > ol { list-style: none; padding: 0; margin: 1rem 0 0; display: flex; flex-direction: column; gap: .4rem; }
+#listing section > ol > li { margin: 0; }
+#listing section > ol > li > a {
+  display: grid; grid-template-columns: 2.4rem 1fr auto auto; align-items: center; column-gap: .8rem;
+  padding: .55rem .7rem; border-radius: 12px;
+  background: var(--glass); border: .5px solid var(--glass-edge); box-shadow: var(--glass-shadow); color: var(--ink);
+}
+#listing section > ol > li > a:hover { text-decoration: none; border-color: var(--violet); }
+#listing section > ol i {
+  font: 700 .58rem/1 var(--mono); font-style: normal; display: inline-flex; align-items: center; justify-content: center;
+  width: 2.4rem; height: 1.55rem; border-radius: 5px; color: #fff; letter-spacing: .03em; background: var(--kind, var(--tag-gray));
+}
+#listing section > ol b { font-weight: 560; font-size: .875rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#listing section > ol b small { font-weight: inherit; color: var(--soft); }
+#listing section > ol span, #listing section > ol time { font: 500 .72rem var(--mono); color: var(--faint); font-feature-settings: "tnum"; white-space: nowrap; }
 
 /* compact: anchors go inline, sidenotes never float (no room) */
 @media (max-width: 56rem) {
@@ -2462,13 +2511,6 @@ fn error_message(e: &PostError) -> (String, String) {
             "This post has more than one date-marker folder.".to_string(),
             list_fix("Keep exactly one date folder and remove the rest:", names),
         ),
-        PostError::AmbiguousPrimary(names) => (
-            "This post has no single primary content file.".to_string(),
-            list_fix(
-                "Keep exactly one file named the folder name or index (rename or remove the others):",
-                names,
-            ),
-        ),
         PostError::NoPrimary => (
             "This post folder has no content file.".to_string(),
             "<p>Add a primary file named the folder name or <code>index</code>.</p>".to_string(),
@@ -2547,6 +2589,178 @@ pub(crate) fn post_body_fragment(entry: &Entry, inner_html: &str) -> String {
         post_header = post_header(entry),
         content = inner_html,
     )
+}
+
+/// Render a browsable folder listing (`post-model.md` §6): a gallery of images,
+/// or a file list for mixed content, under the same site chrome as a post. The
+/// public allowlist was decided at scan time (`entry.listing`); this only renders
+/// it. `intro_html` is an optional already-rendered intro document (the `index/`
+/// "gallery with a story" case), inserted as-is like `entry_page`'s content.
+pub fn listing_page(
+    entry: &Entry,
+    listing: &Listing,
+    all_entries: &[&Entry],
+    intro_html: Option<&str>,
+) -> String {
+    let cloud = compute_cloud(all_entries);
+    let view = ViewFilter::default();
+    let ctx = HeaderContext::plain(&cloud, &view);
+
+    let label = entry.display_label.as_deref().or(entry.label.as_deref()).unwrap_or("Files");
+    let canon = canonical(entry, all_entries);
+    let canon_href = canonical_href(entry, all_entries);
+
+    // "N files" (or "N of M files public"), so a reader can tell that the
+    // allowlist is withholding something rather than the folder being empty.
+    let public = listing.items.len();
+    let count = if listing.total > public {
+        format!("{} of {} files public", public, listing.total)
+    } else if public == 1 {
+        "1 file".to_string()
+    } else {
+        format!("{} files", public)
+    };
+
+    let collision = listing_collision_notice(listing);
+    let intro = match intro_html {
+        Some(h) if !h.is_empty() => format!("<section>{}</section>", h),
+        _ => String::new(),
+    };
+    let grid = listing_grid(&canon.path, listing);
+
+    let body = format!(
+        r#"{header}
+{crumbs}
+<main>
+<article id="listing" data-canonical="{canonical}">
+{post_header}
+<h1>{title} <small>{count}</small></h1>
+{collision}{intro}{grid}
+<footer><a href="/">timeline</a></footer>
+</article>
+</main>"#,
+        header = render_site_header(&ctx),
+        crumbs = crumbs(),
+        canonical = html_escape(&canon_href),
+        post_header = post_header(entry),
+        title = html_escape(label),
+        count = html_escape(&count),
+        collision = collision,
+        intro = intro,
+        grid = grid,
+    );
+
+    page_shell(&format!("esko.bar — {}", label), &body, "listing", false)
+}
+
+/// The listing collision notice: several files claimed the primary slot, so the
+/// server declined to guess and listed instead. Prominent and persistent (never
+/// auto-dismissed); an `index/` marker silences it (the notice is then empty).
+fn listing_collision_notice(listing: &Listing) -> String {
+    if listing.collision.is_empty() {
+        return String::new();
+    }
+    let names: String = listing
+        .collision
+        .iter()
+        .map(|n| format!("<code>{}</code>", html_escape(n)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        r#"<aside>Several files claim the primary slot ({names}), so this folder is shown as a listing rather than a single page. Remove all but one, or add an empty <code>index/</code> folder to make the listing intentional.</aside>"#,
+        names = names,
+    )
+}
+
+/// The listing body: a gallery (`<ul>` of figures) when every public item is an
+/// image, else a file list (`<ol>`). Item links resolve as folder-relative assets
+/// (`/label/file.ext`) off the listing's own canonical path.
+fn listing_grid(base_path: &str, listing: &Listing) -> String {
+    if listing.items.is_empty() {
+        return r#"<section><p class="empty">Nothing here is public yet &mdash; tag a file <code>public</code> to list it.</p></section>"#.to_string();
+    }
+    if listing.is_gallery() {
+        let tiles: String = listing
+            .items
+            .iter()
+            .map(|it| {
+                let href = encode_path(&format!("{}/{}", base_path, it.name));
+                format!(
+                    r#"<li><a href="{href}"><figure><div><img src="{href}" alt="{alt}" loading="lazy"></div><figcaption><b>{stem}<small>{ext}</small></b><span>{size}</span></figcaption></figure></a></li>"#,
+                    href = html_escape(&href),
+                    alt = html_escape(&it.stem),
+                    stem = html_escape(&it.stem),
+                    ext = html_escape(&dot_ext(&it.ext)),
+                    size = html_escape(&human_size(it.size)),
+                )
+            })
+            .collect();
+        format!("<section><ul>{}</ul></section>", tiles)
+    } else {
+        let rows: String = listing
+            .items
+            .iter()
+            .map(|it| {
+                let href = encode_path(&format!("{}/{}", base_path, it.name));
+                let (badge, color) = kind_badge(&it.ext);
+                format!(
+                    r#"<li><a href="{href}"><i style="--kind:{color}">{badge}</i><b>{stem}<small>{ext}</small></b><span>{size}</span><time datetime="{iso}">{date}</time></a></li>"#,
+                    href = html_escape(&href),
+                    color = color,
+                    badge = html_escape(&badge),
+                    stem = html_escape(&it.stem),
+                    ext = html_escape(&dot_ext(&it.ext)),
+                    size = html_escape(&human_size(it.size)),
+                    iso = html_escape(&it.mtime.format("%Y-%m-%dT%H:%M:%S").to_string()),
+                    date = html_escape(&it.mtime.format("%Y-%m-%d").to_string()),
+                )
+            })
+            .collect();
+        format!("<section><ol>{}</ol></section>", rows)
+    }
+}
+
+/// `.ext` for display, empty for a dotless file.
+fn dot_ext(ext: &str) -> String {
+    if ext.is_empty() {
+        String::new()
+    } else {
+        format!(".{}", ext)
+    }
+}
+
+/// A human-readable byte size for a listing row (binary units, one decimal).
+fn human_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.0} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+/// The type badge (uppercase label + a color var) for a file-list row.
+fn kind_badge(ext: &str) -> (String, &'static str) {
+    let e = ext.to_ascii_lowercase();
+    let color = match e.as_str() {
+        "pdf" => "var(--tag-red)",
+        "txt" | "md" | "markdown" | "rtf" | "doc" | "docx" | "pages" => "var(--tag-blue)",
+        "zip" | "gz" | "tar" | "7z" | "dmg" | "pkg" => "var(--tag-green)",
+        "mp3" | "wav" | "m4a" | "mp4" | "mov" | "aif" | "aiff" => "var(--tag-yellow)",
+        _ => "var(--tag-gray)",
+    };
+    let label = if e.is_empty() {
+        "FILE".to_string()
+    } else {
+        e.to_ascii_uppercase().chars().take(4).collect()
+    };
+    (label, color)
 }
 
 /// Render an image viewer page.
@@ -2770,6 +2984,7 @@ mod tests {
             aliases: Vec::new(),
             revisions: Vec::new(),
             error: None,
+            listing: None,
         }
     }
 

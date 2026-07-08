@@ -38,14 +38,75 @@ pub struct Revision {
 /// names (relative to the post) so the error page can name the exact fix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PostError {
-    /// A folder post carried more than one date-marker subfolder.
+    /// A folder post carried more than one date-marker subfolder. This stays a
+    /// hard error — no degraded rendering can respect an unknown publish date.
     MultipleDateMarkers(Vec<String>),
-    /// More than one file could be the primary content, or none could be chosen
-    /// from several (stem `index` or matching the folder name resolves it).
-    AmbiguousPrimary(Vec<String>),
     /// The folder post has no file that can serve as primary content (it is empty
-    /// of regular files).
+    /// of regular files, with no `index/` listing marker either).
     NoPrimary,
+}
+
+/// One entry in a folder listing: a public file (`post-model.md` §6). Ordered by
+/// filename. Built at scan time from the folder's public-tagged children;
+/// membership is a `public` allowlist, never a blocklist, so nothing leaks by
+/// default (`.DS_Store`, drafts and markers are excluded simply by being untagged).
+#[derive(Debug, Clone)]
+pub struct ListItem {
+    /// The file name as shown, including its extension.
+    pub name: String,
+    /// The stem (name without the trailing extension) — the display label.
+    pub stem: String,
+    /// The lowercased extension (empty for a dotless file).
+    pub ext: String,
+    /// Absolute path to the file. Consumed in Commit 6c (content hash + nested
+    /// serving); the row href is built folder-relative from `name` today.
+    #[allow(dead_code)]
+    pub path: PathBuf,
+    pub mtime: NaiveDateTime,
+    /// Size in bytes, shown discreetly in the row.
+    pub size: u64,
+    /// Whether this is an image medium (drives gallery vs. file-list).
+    pub is_image: bool,
+}
+
+/// A folder that renders as a browsable index rather than a single document — the
+/// `kind = folder` case (`post-model.md` §6). A folder becomes a listing when it
+/// has no single primary (several primary candidates, or media with no document),
+/// or when an empty `index/` marker forces it. Membership is the same fail-closed
+/// `public` allowlist used everywhere else.
+#[derive(Debug, Clone)]
+pub struct Listing {
+    /// The public files, in filename order.
+    pub items: Vec<ListItem>,
+    /// Total candidate files in the folder (public or not), for the "N files,
+    /// M public" count — so a reader can tell that something is withheld.
+    pub total: usize,
+    /// An `index`/folder-name document rendered as intro prose above the grid
+    /// (the `index/`-marker "a gallery with a story" case). `None` otherwise.
+    pub intro: Option<PathBuf>,
+    /// The intro document's extension, for rendering it.
+    pub intro_ext: String,
+    /// When several files claimed the primary slot, the server declines to guess
+    /// and lists instead: their names, for a prominent collision notice. Empty
+    /// unless that demotion happened (an `index/` marker silences it).
+    pub collision: Vec<String>,
+}
+
+impl Listing {
+    /// All public items are images → render as a gallery; mixed / any non-image →
+    /// a file list. An empty listing is a (degenerate) file list.
+    pub fn is_gallery(&self) -> bool {
+        !self.items.is_empty() && self.items.iter().all(|i| i.is_image)
+    }
+}
+
+/// Whether an extension names an image medium (drives `kind()` and gallery
+/// detection). Compared after `normalize_ext`.
+pub fn is_image_ext(ext: &str) -> bool {
+    matches!(
+        normalize_ext(ext).as_str(),
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "heic" | "heif" | "tiff" | "bmp"
+    )
 }
 
 /// A post: a bare file or a folder in the content tree, resolved to the bytes it
@@ -104,6 +165,11 @@ pub struct Entry {
     /// Set when the post scanned wrong. It still renders — as a fail-closed error
     /// page/row — so the conflict is surfaced, never hidden.
     pub error: Option<PostError>,
+    /// Set when this folder post is a browsable listing rather than a single
+    /// document (no primary, or an `index/` marker). Carries the public files to
+    /// list and the collision notice. `None` for a normal document post or a
+    /// bare-file post. See `post-model.md` §6.
+    pub listing: Option<Listing>,
 }
 
 impl Entry {
@@ -146,8 +212,13 @@ impl Entry {
     /// "photo" finds photos with zero extra UI. Not the format (that's the
     /// extension) and not the genre (that's an author tag). See `post-model.md` §3.
     pub fn kind(&self) -> &'static str {
+        // A listing folder is browsable, not a document — classify it before the
+        // extension (its `path` is a directory, not a readable file).
+        if self.listing.is_some() {
+            return "folder";
+        }
         match normalize_ext(&self.extension).as_str() {
-            "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "heic" | "heif" | "tiff" | "bmp" => "photo",
+            _ if is_image_ext(&self.extension) => "photo",
             // `html` is the one format that can be a complete self-contained
             // document served ~as-is (bypassing site chrome).
             "html" | "htm" => "html",
