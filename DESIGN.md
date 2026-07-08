@@ -366,15 +366,58 @@ security-critical:
   timeout. This closes the prior hole where reqwest's default auto-redirect could
   follow a `Location:` into an internal address unchecked.
 
-**Known gap (NOT yet closed — tracked for a follow-up).** The scheme guard covers
-`<a href>` navigation only. Pandoc still passes **raw HTML verbatim** (`<script>`,
-`on*` handlers, `<iframe>`), and there is **no Content-Security-Policy** yet, so a
-content author (or anything upstream of the content tree) can still inject
-stored script that executes in our origin without touching a link. That is a
-distinct XSS surface from the outbound-scheme guard and needs its own mitigation
-— a strict CSP (the DESIGN "zero third-party requests / security headers"
-roadmap item) plus either disabling pandoc's `raw_html` or an allowlist HTML
-sanitizer. The href guard is a necessary layer, not a sufficient one on its own.
+### Content security — CSP, raw-HTML, standalone-`.html` sandboxing (DECIDED 2026-07-08, NOT yet built)
+
+The outbound scheme guard above covers `<a href>` navigation only. Pandoc/
+Asciidoctor still pass **raw HTML verbatim** (`<script>`, `on*` handlers,
+`<iframe>`), and there is **no Content-Security-Policy** yet, so a content author
+— or anything upstream of the content tree (a stray/synced file, a pasted quote,
+the third-party oEmbed HTML the embed system already injects) — can execute
+stored script in our origin without touching a link. Single-author + no-cookies
+makes the blast radius "deface / phish the visitor" today, not account theft;
+but the stated bar (a hospital or law firm, hence future auth + multiple
+contributors) means this must be closed durably, cheap-to-reverse-proofed. The
+decided plan (its own commit, sequenced **after** the `link_url` axis):
+
+- **Raw HTML off in every format except `.html`/`.htm`.** Disable the reader's
+  raw-HTML hatch for markdown/rst/adoc/org/tex (per-format where possible; the
+  CSP below is the format-agnostic backstop for any hatch that can't be switched
+  off, and for Asciidoctor's passthrough). `.html`/`.htm` is the **one**
+  deliberate raw surface — and it is sandboxed (next point). So raw HTML lives in
+  exactly one place, and that place is jailed.
+- **Standalone `.html` → fullscreen sandboxed iframe.** A self-contained document
+  (`kind = html`, `is_complete_html`) renders in a full-viewport
+  `<iframe srcdoc="…" sandbox="allow-scripts allow-popups">` — **not**
+  `allow-same-origin`. **JS still runs** (canvas, widgets, games); the opaque
+  origin just can't read our cookies/DOM/storage or act as the user. Never pair
+  `allow-scripts` with `allow-same-origin` (that lets the frame remove its own
+  sandbox). Fullscreen means **no resize JS is needed** — the frame is
+  `100vw×100vh` and the doc scrolls itself (the sizing-JS problem only afflicts
+  *inline* iframes). Browser Back returns to the timeline (normal navigation), so
+  an in-page back-link is optional polish (TBD — maybe a slim top bar), not a
+  safety need. The timeline already flags these via the `kind=html` badge.
+- **Strict CSP, no `unsafe-inline`, no nonces — via externalized JS/CSS.** Move
+  our inline `<script>`/`<style>` to files served from esko.bar so the policy is
+  `default-src 'self'; script-src 'self'; style-src 'self'`. External JS is
+  cached across pages (faster than per-page inline); external CSS is cacheable and
+  CSP-clean (HTTP/2+ makes "one more file" cheap — caching/strictness win). The
+  **one** exception: a tiny render-blocking inline bootstrap that applies persisted
+  UI prefs (typeface, reading width) before first paint to kill FOUC — nonce it,
+  or use a no-flash attribute trick. (The light/dark *theme* is already flash-free:
+  pure CSS `light-dark()`, OS-driven, no JS.)
+- **Kill the last inline style attribute.** Embed cards currently emit
+  `style="--embed-accent: …"`; move the per-platform accent to a
+  `data-platform="…"` attribute + a rule in our stylesheet
+  (`[data-platform="twitter"] { --embed-accent: #1d9bf0 }`), matching the
+  no-classes/attribute-selector convention, so `style-src 'self'` stays strict.
+  All card styling is ours (`EMBED_CSS`); we never import a third-party stylesheet
+  — only the embedded post *markup* is foreign, and it is sanitized.
+- **CSP delivers the "zero third-party requests" reader-privacy goal** (below):
+  the browser refuses any request to a non-esko.bar host, so a reader's IP/UA/
+  Referer never leak to an outside server. The sandboxed frame inherits this via
+  `srcdoc` CSP inheritance (or gets its own CSP header — verify the mechanism at
+  build; both are safe). **Safety verdict:** the sandbox makes standalone `.html`
+  XSS-safe unconditionally; the CSP makes it privacy-safe (no third-party leak).
 
 ## Presentation
 
