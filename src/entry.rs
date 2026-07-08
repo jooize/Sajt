@@ -1,3 +1,4 @@
+use crate::postdate::PostDate;
 use crate::tags::Tag;
 use chrono::NaiveDateTime;
 use std::path::PathBuf;
@@ -60,10 +61,11 @@ pub struct Entry {
     /// The post's directory when it is a folder post; `None` for a bare-file post.
     /// Assets (and the alias/date markers) resolve relative to this.
     pub dir: Option<PathBuf>,
-    /// Publish date: the empty date-marker subfolder for folder posts, otherwise
-    /// the primary file's mtime (bare files, or folder posts with no marker).
-    /// Read as local wall-clock — that is how Finder/`touch` write times.
-    pub timestamp: NaiveDateTime,
+    /// Publish date, precision-aware: the empty date-marker subfolder or a
+    /// date-named post carries its own precision (year / month / day / minute /
+    /// second, BCE possible); otherwise it is the primary file's mtime at second
+    /// precision. Read as local wall-clock — that is how Finder/`touch` write it.
+    pub timestamp: PostDate,
     /// Edited date = the primary file's mtime, recorded only when it is
     /// meaningfully later than `timestamp` (folder posts with a date marker). A
     /// bare file's mtime *is* its publish date, so this stays `None` for them.

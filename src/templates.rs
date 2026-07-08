@@ -1826,14 +1826,13 @@ fn format_datetime_attr(ts: &chrono::NaiveDateTime) -> String {
     ts.format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
-/// A canonical address: the decoded path, plus — only for same-day label
-/// collisions and unlabeled entries — a `time` disambiguator carried as
-/// `?time=HHMMSS`. Dates are a slash hierarchy (`/2026/03/12`).
+/// A canonical address: one decoded path. Any time-of-day disambiguator is a
+/// path segment inline (`/2026/03/12/191430[/label]`), not a `?time=` query.
+/// Dates are a slash hierarchy (`/2026/03/12`), precision-aware.
 pub struct Canonical {
-    /// Decoded path, e.g. `/label`, `/2026/03/12/label`, or `/2026/03/12`.
+    /// Decoded path, e.g. `/label`, `/2026/03/12/label`, `/2026/03/12/191430`,
+    /// or `/2026/03/12/191430/label` (time segment on a same-day collision).
     pub path: String,
-    /// The `HHMMSS` for `?time=`, present only when the path alone is ambiguous.
-    pub time: Option<String>,
 }
 
 /// Every entry that claims a name in the flat namespace: those whose slug matches,
@@ -1909,43 +1908,50 @@ fn name_shares<'a>(entry: &Entry, all_entries: &[&'a Entry]) -> Vec<&'a Entry> {
 /// The `path` is decoded (compare against decoded request paths); run it
 /// through [`encode_path`] before emitting into an href or Location header.
 pub fn canonical(entry: &Entry, all_entries: &[&Entry]) -> Canonical {
-    let ymd = || entry.timestamp.format("/%Y/%m/%d").to_string();
-    let hms = || entry.timestamp.format("%H%M%S").to_string();
+    let base = entry.timestamp.date_path();
+    // An unlabeled/reserved post is addressed at its date path plus a time segment
+    // when it has a real time (minute/second precision); coarse dates have none.
+    let dated = || match entry.timestamp.time_seg() {
+        Some(hms) => format!("{}/{}", base, hms),
+        None => base.clone(),
+    };
 
     // The address is the slug. An unlabeled post (no slug) or a reserved slug
     // (saved / numeric — the router owns those) is addressed at its date path.
     let slug = match &entry.slug {
         Some(s) if !is_reserved_slug(s) => s,
-        _ => return Canonical { path: ymd(), time: Some(hms()) },
+        _ => return Canonical { path: dated() },
     };
 
     let claimants = name_claimants(slug, all_entries);
     if claimants.len() <= 1 {
-        return Canonical { path: format!("/{}", slug), time: None };
+        return Canonical { path: format!("/{}", slug) };
     }
 
     // The oldest claim owns the bare slug; this entry owns it only if it is
     // that unique-oldest claimant (an alias or a tie sends it to a date path).
     let owns_bare = name_owner(slug, all_entries).map_or(false, |o| std::ptr::eq(o, entry));
     if owns_bare {
-        return Canonical { path: format!("/{}", slug), time: None };
+        return Canonical { path: format!("/{}", slug) };
     }
 
-    let day = entry.timestamp.format("%Y-%m-%d").to_string();
-    let same_day = claimants
-        .iter()
-        .filter(|e| e.timestamp.format("%Y-%m-%d").to_string() == day)
-        .count();
+    let day = entry.timestamp.short_date();
+    let same_day = claimants.iter().filter(|e| e.timestamp.short_date() == day).count();
     if same_day == 1 {
-        Canonical { path: format!("{}/{}", ymd(), slug), time: None }
+        Canonical { path: format!("{}/{}", base, slug) }
     } else {
-        Canonical { path: format!("{}/{}", ymd(), slug), time: Some(hms()) }
+        // Same-day collision: the time segment disambiguates, before the slug.
+        match entry.timestamp.time_seg() {
+            Some(hms) => Canonical { path: format!("{}/{}/{}", base, hms, slug) },
+            None => Canonical { path: format!("{}/{}", base, slug) },
+        }
     }
 }
 
-/// Compose a ready-to-emit href from a decoded path: append an optional raw-file
-/// extension and an optional `?time=` disambiguator, encoding as it goes.
-fn compose_href(path: &str, ext: Option<&str>, time: Option<&str>) -> String {
+/// Compose a ready-to-emit href from a decoded path, appending an optional
+/// raw-file extension and encoding as it goes. Any time disambiguator is already
+/// a path segment inside `path`.
+fn compose_href(path: &str, ext: Option<&str>) -> String {
     let mut decoded = path.to_string();
     if let Some(e) = ext {
         if !e.is_empty() {
@@ -1953,37 +1959,27 @@ fn compose_href(path: &str, ext: Option<&str>, time: Option<&str>) -> String {
             decoded.push_str(e);
         }
     }
-    let mut out = encode_path(&decoded);
-    if let Some(t) = time {
-        out.push_str("?time=");
-        out.push_str(&percent_encode(t));
-    }
-    out
+    encode_path(&decoded)
 }
 
-/// The full addressable href for an entry (encoded path + `?time=` when needed).
+/// The full addressable href for an entry (encoded canonical path).
 fn canonical_href(entry: &Entry, all_entries: &[&Entry]) -> String {
-    let c = canonical(entry, all_entries);
-    compose_href(&c.path, None, c.time.as_deref())
+    compose_href(&canonical(entry, all_entries).path, None)
 }
 
-/// The raw-bytes href for an entry: canonical path + extension (+ `?time=`), so
-/// the parser reads the extension back off the last segment. Folders have none.
+/// The raw-bytes href for an entry: canonical path + extension, so the parser
+/// reads the extension back off the last segment. Folders have none.
 fn canonical_raw_href(entry: &Entry, all_entries: &[&Entry]) -> String {
-    let c = canonical(entry, all_entries);
     let ext = (!entry.extension.is_empty()).then_some(entry.extension.as_str());
-    compose_href(&c.path, ext, c.time.as_deref())
+    compose_href(&canonical(entry, all_entries).path, ext)
 }
 
-/// The full canonical location for a redirect: encoded path + `?time=` (when the
-/// address needs it) + the view filters (grade/favorites/search), in that order.
-/// Everything non-canonical is dropped, so every alias 301s onto one address.
+/// The full canonical location for a redirect: encoded path + the view filters
+/// (grade/favorites/search). Everything non-canonical is dropped, so every alias
+/// and non-canonical URL 301s onto one address.
 pub fn canonical_location(entry: &Entry, all_entries: &[&Entry], view: &ViewFilter) -> String {
     let c = canonical(entry, all_entries);
     let mut parts: Vec<String> = Vec::new();
-    if let Some(t) = &c.time {
-        parts.push(format!("time={}", percent_encode(t)));
-    }
     if view.notable {
         parts.push(format!("grade={}", view.grade_word()));
     }
@@ -2011,14 +2007,10 @@ pub fn encode_path(path: &str) -> String {
 }
 
 /// A stable per-entry key for the reader's localStorage bookmarks: the canonical
-/// address (path + `?time=`), unique even across entries sharing a label.
+/// address (its full path, including any time segment), unique even across
+/// entries sharing a label.
 fn canonical_key(c: &Canonical) -> String {
-    let mut k = c.path.trim_start_matches('/').to_string();
-    if let Some(t) = &c.time {
-        k.push_str("?time=");
-        k.push_str(t);
-    }
-    k
+    c.path.trim_start_matches('/').to_string()
 }
 
 /// Render an entry's topical tags as a vertical rail nav with Finder-color dots.
@@ -2065,10 +2057,10 @@ fn render_meter(grade: Option<f32>) -> String {
 
 /// Render one timeline row.
 fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
-    let datetime = format_datetime_attr(&entry.timestamp);
-    let date = entry.timestamp.format("%Y-%m-%d").to_string();
+    let datetime = entry.timestamp.iso_attr();
+    let date = entry.timestamp.short_date();
     let canon = canonical(entry, all_entries);
-    let href = compose_href(&canon.path, None, canon.time.as_deref());
+    let href = compose_href(&canon.path, None);
     let key = canonical_key(&canon);
 
     // A post that scanned wrong still shows — loud, never hidden — as an errored
@@ -2140,8 +2132,8 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
             let items: String = others
                 .iter()
                 .map(|e| {
-                    let dt = format_datetime_attr(&e.timestamp);
-                    let d = e.timestamp.format("%Y-%m-%d").to_string();
+                    let dt = e.timestamp.iso_attr();
+                    let d = e.timestamp.short_date();
                     let t = e.display_label.as_deref().or(e.label.as_deref()).unwrap_or("(untitled)");
                     format!(
                         r#"<li><a href="{href}"><time datetime="{dt}">{d}</time> {t}</a></li>"#,
@@ -2210,14 +2202,17 @@ pub fn timeline_page(
     let mut current_month = String::new();
     let mut open_section = false;
     for entry in entries {
-        let month = entry.timestamp.format("%B %Y").to_string();
+        // Group by the post's precision: dated posts by "Month Year", year-only
+        // (and BCE) posts by their year label ("3000 BCE").
+        let month = entry.timestamp.group_label();
         if month != current_month {
             if open_section {
                 rows.push_str("</ul></section>");
             }
-            // The month heading links into that month's view, grafting the date
-            // onto any active tag path and keeping the current view filters.
-            let month_path = format!("/{}{}", entry.timestamp.format("%Y/%m"), ctx.path_tags);
+            // The heading links into that group's scope (the month, or the year
+            // for year-precision posts), grafting the date onto any active tag
+            // path and keeping the current view filters.
+            let month_path = format!("{}{}", entry.timestamp.group_path(), ctx.path_tags);
             rows.push_str(&format!(
                 r#"<section><h2><a href="{href}">{label}</a></h2><ul>"#,
                 href = html_escape(&make_url(&month_path, ctx.view)),
@@ -2262,8 +2257,8 @@ fn crumbs() -> &'static str {
 /// The entry-post header: mono date, quality meter, Finder-color dot tags.
 /// Shared by the document and image entry pages.
 fn post_header(entry: &Entry) -> String {
-    let datetime = format_datetime_attr(&entry.timestamp);
-    let date = entry.timestamp.format("%Y-%m-%d %H:%M").to_string();
+    let datetime = entry.timestamp.iso_attr();
+    let date = entry.timestamp.long_date();
     format!(
         r#"<header>
 <time datetime="{datetime}">{date}</time>
@@ -2285,8 +2280,8 @@ fn continue_nav(next: Option<&Entry>, all_entries: &[&Entry]) -> String {
         None => return String::new(),
     };
     let href = canonical_href(next, all_entries);
-    let datetime = format_datetime_attr(&next.timestamp);
-    let date = next.timestamp.format("%Y-%m-%d").to_string();
+    let datetime = next.timestamp.iso_attr();
+    let date = next.timestamp.short_date();
     let title = match next.display_label.as_deref().or(next.label.as_deref()) {
         Some(label) => html_escape(label),
         None => "(untitled)".to_string(),
@@ -2301,12 +2296,13 @@ fn continue_nav(next: Option<&Entry>, all_entries: &[&Entry]) -> String {
 }
 
 /// The date-path address of one archived revision: the current post's slug at
-/// the revision's own date, always with `?time=` (revisions collide with the
-/// current post and each other on the day, so the time always disambiguates).
+/// the revision's own date, always with the time segment (revisions collide with
+/// the current post and each other on the day, so the time always disambiguates).
+/// A revision's date is a plain mtime, so its full `/Y/M/D/HHMMSS` segments all
+/// come straight off it.
 fn revision_href(slug: &str, rev: &Revision) -> String {
-    let decoded = format!("{}/{}", rev.date.format("/%Y/%m/%d"), slug);
-    let hms = rev.date.format("%H%M%S").to_string();
-    compose_href(&decoded, None, Some(&hms))
+    let decoded = format!("{}/{}", rev.date.format("/%Y/%m/%d/%H%M%S"), slug);
+    compose_href(&decoded, None)
 }
 
 /// The dated `<li>` links for a post's archived revisions, newest first.
@@ -2377,8 +2373,8 @@ fn name_share_notice(entry: &Entry, all_entries: &[&Entry]) -> String {
             format!(
                 r#"<li><a href="{href}"><time datetime="{dt}">{date}</time> {title}</a></li>"#,
                 href = html_escape(&canonical_href(e, all_entries)),
-                dt = html_escape(&format_datetime_attr(&e.timestamp)),
-                date = html_escape(&e.timestamp.format("%Y-%m-%d").to_string()),
+                dt = html_escape(&e.timestamp.iso_attr()),
+                date = html_escape(&e.timestamp.short_date()),
                 title = html_escape(title),
             )
         })
@@ -2752,8 +2748,10 @@ mod tests {
         assert_eq!(order, ["apple", "mango", "Zebra"]);
     }
 
-    fn ts(s: &str) -> NaiveDateTime {
-        NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H%M%S").unwrap()
+    fn ts(s: &str) -> crate::postdate::PostDate {
+        crate::postdate::PostDate::from_mtime(
+            NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H%M%S").unwrap(),
+        )
     }
 
     fn mkentry(label: &str, at: &str) -> Entry {
@@ -2784,7 +2782,6 @@ mod tests {
 
         // Oldest owns the bare label; the newer claim gets a dated URL.
         assert_eq!(canonical(&old, &all).path, "/foo");
-        assert!(canonical(&old, &all).time.is_none());
         assert_eq!(canonical(&newer, &all).path, "/2026/03/10/foo");
         assert!(std::ptr::eq(name_owner("foo", &all).unwrap(), &old));
     }
@@ -2844,9 +2841,8 @@ mod tests {
         // segment, so it is addressed at its date path, not the bare "/2026".
         let year = mkentry("2026", "2026-12-31T120000");
         let all = vec![&year];
-        let c = canonical(&year, &all);
-        assert_eq!(c.path, "/2026/12/31");
-        assert!(c.time.is_some());
+        // Addressed at its date path (with the time segment), not the bare "/2026".
+        assert_eq!(canonical(&year, &all).path, "/2026/12/31/120000");
         // The bare URL never resolves to it.
         assert!(name_owner("2026", &all).is_none());
     }
@@ -2868,10 +2864,11 @@ mod tests {
     fn revision_href_is_dated_with_time() {
         let mut e = mkentry("post", "2026-03-01T120000");
         e.revisions = vec![Revision {
-            date: ts("2026-02-15T091500"),
+            date: NaiveDateTime::parse_from_str("2026-02-15T091500", "%Y-%m-%dT%H%M%S").unwrap(),
             path: "/c/post/post copy.md".into(),
             rank: 1,
         }];
-        assert!(revision_items(&e).contains("/2026/02/15/post?time=091500"));
+        // The time is a path segment now, before the slug.
+        assert!(revision_items(&e).contains("/2026/02/15/091500/post"));
     }
 }

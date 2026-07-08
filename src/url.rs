@@ -1,4 +1,4 @@
-use chrono::NaiveDateTime;
+use crate::postdate::PostDate;
 
 /// Parsed URL query: date filter, tag filter, label lookup.
 #[derive(Debug, Default, Clone)]
@@ -7,9 +7,9 @@ pub struct ContentQuery {
     /// "2026-03-25" (year / year-month / year-month-day). Assembled from the
     /// slash-separated path segments; matched as a prefix of the timestamp.
     pub date_prefix: Option<String>,
-    /// Time-of-day disambiguator (`?time=HHMMSS`, or any left-anchored prefix
-    /// like `14` or `1430`). Only same-day label collisions need it; it never
-    /// appears in the path. Set by the route handler from the query string.
+    /// Time-of-day disambiguator (`HHMMSS`, or any left-anchored prefix like
+    /// `14` or `1430`). A URL **path segment** now (`/2026/07/04/191430`), after
+    /// a full day — only same-day slug collisions and unlabeled entries need it.
     pub time: Option<String>,
     /// Tags combined with AND (from `+tag1+tag2`)
     pub and_tags: Vec<String>,
@@ -27,19 +27,17 @@ impl ContentQuery {
     /// Check if an entry matches this query. `slug` is the entry's URL slug (the
     /// address projection of its name); the query label is slugified before
     /// comparison, so `/Fog%20Over%20The%20Bay` matches `fog-over-the-bay`.
-    pub fn matches(&self, timestamp: &NaiveDateTime, slug: &Option<String>, tags: &[String]) -> bool {
-        // Date prefix filter — compare against the compact timestamp string.
+    pub fn matches(&self, timestamp: &PostDate, slug: &Option<String>, tags: &[String]) -> bool {
+        // Date prefix filter — compare against the padded, precision-aware date.
         if let Some(ref prefix) = self.date_prefix {
-            let full = timestamp.format("%Y-%m-%dT%H%M%S").to_string();
-            if !full.starts_with(prefix.as_str()) {
+            if !timestamp.match_string().starts_with(prefix.as_str()) {
                 return false;
             }
         }
 
         // Time-of-day disambiguator (left-anchored prefix of HHMMSS).
         if let Some(ref time) = self.time {
-            let hms = timestamp.format("%H%M%S").to_string();
-            if !hms.starts_with(time.as_str()) {
+            if !timestamp.hms().starts_with(time.as_str()) {
                 return false;
             }
         }
@@ -119,6 +117,7 @@ pub fn parse_url_path(path: &str) -> ContentQuery {
     // records a raw-file request for an otherwise unlabeled entry.
     let mut idx = 0;
     let mut date = String::new();
+    let mut has_day = false;
 
     if let Some(seg) = segments.get(idx) {
         let (name, ext) = split_ext(seg);
@@ -141,6 +140,7 @@ pub fn parse_url_path(path: &str) -> ContentQuery {
                             date.push('-');
                             date.push_str(name);
                             idx += 1;
+                            has_day = true;
                             if let Some(e) = ext {
                                 query.raw_extension = Some(e.to_string());
                             }
@@ -153,6 +153,22 @@ pub fn parse_url_path(path: &str) -> ContentQuery {
 
     if !date.is_empty() {
         query.date_prefix = Some(date);
+    }
+
+    // After a full Y/M/D, a purely-numeric segment is the time-of-day disambiguator
+    // (`/2026/07/04/191430`, or a left-anchored prefix) — a path segment now, not
+    // `?time=`. It may carry a raw-file extension for an unlabeled entry.
+    if has_day && query.raw_extension.is_none() {
+        if let Some(seg) = segments.get(idx) {
+            let (name, ext) = split_ext(seg);
+            if !name.is_empty() && name.len() <= 6 && name.bytes().all(|b| b.is_ascii_digit()) {
+                query.time = Some(name.to_string());
+                idx += 1;
+                if let Some(e) = ext {
+                    query.raw_extension = Some(e.to_string());
+                }
+            }
+        }
     }
 
     // --- Remaining segments: tags (`+…`) and a single label ---
@@ -189,9 +205,10 @@ fn split_ext(seg: &str) -> (&str, Option<&str>) {
     (seg, None)
 }
 
-/// A 4-digit year (`2026`).
+/// A 4-digit year, optionally BCE with a leading `-` (`2026`, `-3000`).
 fn is_year(s: &str) -> bool {
-    s.len() == 4 && s.bytes().all(|b| b.is_ascii_digit())
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    digits.len() == 4 && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// A zero-padded 2-digit number within `[lo, hi]` (month 1..=12, day 1..=31).
@@ -220,8 +237,8 @@ mod tests {
     use super::*;
     use chrono::NaiveDateTime;
 
-    fn ts(s: &str) -> NaiveDateTime {
-        NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H%M%S").unwrap()
+    fn ts(s: &str) -> PostDate {
+        PostDate::from_mtime(NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H%M%S").unwrap())
     }
 
     #[test]
@@ -291,6 +308,31 @@ mod tests {
         assert_eq!(q.date_prefix.as_deref(), Some("2026-03-04"));
         assert!(q.label.is_none());
         assert_eq!(q.raw_extension.as_deref(), Some("txt"));
+    }
+
+    #[test]
+    fn time_is_a_path_segment() {
+        // After a full day, a numeric segment is the time-of-day.
+        let q = parse_url_path("/2026/07/04/191430");
+        assert_eq!(q.date_prefix.as_deref(), Some("2026-07-04"));
+        assert_eq!(q.time.as_deref(), Some("191430"));
+        assert!(q.label.is_none());
+
+        // Time plus a slug (a same-day collision's disambiguated address).
+        let q = parse_url_path("/2026/07/04/191430/fog-over-the-bay");
+        assert_eq!(q.time.as_deref(), Some("191430"));
+        assert_eq!(q.label.as_deref(), Some("fog-over-the-bay"));
+
+        // A left-anchored prefix works as a coarse disambiguator.
+        let q = parse_url_path("/2026/07/04/1914");
+        assert_eq!(q.time.as_deref(), Some("1914"));
+    }
+
+    #[test]
+    fn bce_year_filter() {
+        let q = parse_url_path("/-3000");
+        assert_eq!(q.date_prefix.as_deref(), Some("-3000"));
+        assert!(q.label.is_none());
     }
 
     #[test]

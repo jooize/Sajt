@@ -229,6 +229,26 @@ Old date+label URLs 301-redirect to label-only. `/best` and `/everything`
 are retired (DECIDED 2026-07-04): the timeline with its filter row
 (everything · notable · best · ★ favorites) covers both — see Presentation.
 
+**SHIPPED 2026-07-08 (`post-model.md` §2) — precision-aware dates, time as a
+path segment, BCE, scheduled publish.** Publish dates are now a precision-aware
+`PostDate` (year / month / day / minute / second, with signed BCE years —
+`-3000` is literally 3000 BCE). The `?time=` disambiguator is gone: the
+time-of-day is a **path segment** after a full day, `/2026/07/04/191430`
+(`/2026/07/04/191430/label` on a same-day slug collision). A label-free
+`/Y/M/D[/HHMMSS]` is a **date-time deeplink** — a rename-durable citation that
+resolves by timestamp (301 to whatever the canonical URL is now) and degrades
+to the **day view** on no/ambiguous match, never a 404. Date-marker folders and
+date-**named** posts share one grammar `[-]YYYY[-MM[-DD[Thhmm[ss]]]]` (the
+mandatory `T` is gone — a bare date is a valid marker); a whole-date name is
+unlabeled and date-addressed, a `<date> <text>` name is date-addressed with the
+text as a **display title** (never a slug/bare-URL claim). A post's display
+title is its primary's first **H1** if present, else the filename text
+(foundation #4) — but the **slug/identity stays filename-derived, never the
+H1**. A **future-dated** post is held out of the served set until its moment;
+the server wakes at the next scheduled timestamp to rescan (a fail-safe:
+a future misdrop stays hidden). The timeline groups by precision — "Month Year",
+a bare year, or "3000 BCE".
+
 **No more untitled entries — SHIPPED 2026-07-06.** Under the old convention a
 filename that was only a timestamp minted a bare-timestamp canonical URL that
 collided with the date-filter route (the entry rendered as a timeline, so

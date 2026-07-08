@@ -60,7 +60,7 @@ pub struct CloudStats {
 pub fn compute_cloud(entries: &[&Entry]) -> CloudStats {
     let mut by_name: BTreeMap<String, TagStat> = BTreeMap::new();
     for entry in entries {
-        let date = entry.timestamp.date();
+        let date = entry.timestamp.to_naive_date();
         for tag in entry.topical_tags() {
             let stat = by_name.entry(tag.name.clone()).or_insert(TagStat {
                 name: tag.name.clone(),

@@ -4,6 +4,7 @@ mod entry;
 mod grade;
 mod grader;
 mod migrate;
+mod postdate;
 mod render;
 mod routes;
 mod slug;
@@ -191,6 +192,33 @@ async fn main() {
             }
         }
     });
+
+    // Future-hold waker: wake at the next scheduled (future-dated) post's moment
+    // and rescan, so a scheduled post appears exactly when due rather than on the
+    // next unrelated change. Idle-polls hourly when nothing is scheduled. Reuses
+    // the same write+rescan path as the FS watcher.
+    {
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            loop {
+                let delay = { state.read().await.next_future_delay() };
+                match delay {
+                    Some(d) => {
+                        tokio::time::sleep(d).await;
+                        let mut store = state.write().await;
+                        match store.rescan() {
+                            Ok(()) => {
+                                store.resolve_embeds().await;
+                                tracing::info!("Rescanned for a scheduled (future-dated) post");
+                            }
+                            Err(e) => tracing::error!("Scheduled rescan failed: {}", e),
+                        }
+                    }
+                    None => tokio::time::sleep(Duration::from_secs(3600)).await,
+                }
+            }
+        });
+    }
 
     // Spawn periodic liveness check for embeds
     if args.embed_check_hours > 0 {

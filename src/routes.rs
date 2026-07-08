@@ -166,15 +166,9 @@ pub async fn catch_all(
         return resp;
     }
 
-    let mut query = parse_url_path(&format!("/{}", path));
-    // The `?time=` disambiguator lives in the query string, not the path. Accept
-    // only a left-anchored HHMMSS prefix of digits; anything else is ignored
-    // (an unmatched time simply yields no results — fail closed).
-    query.time = params
-        .get("time")
-        .map(|t| t.trim())
-        .filter(|t| !t.is_empty() && t.len() <= 6 && t.bytes().all(|b| b.is_ascii_digit()))
-        .map(|t| t.to_string());
+    // The time-of-day disambiguator is a URL path segment now (`/2026/07/04/191430`),
+    // parsed straight off the path — no `?time=` query string.
+    let query = parse_url_path(&format!("/{}", path));
     let view = view_from_query(&params);
     let requested = format!("/{}", path);
 
@@ -182,7 +176,7 @@ pub async fn catch_all(
     // `alias <name>/` marker) owns it, so a URL's meaning never changes.
     if is_bare_label(&query) {
         if let Some(owner) = templates::name_owner(query.label.as_deref().unwrap(), &all_entries) {
-            return serve_resolved(owner, &all_entries, &store, &requested, &query.time, &view).await;
+            return serve_resolved(owner, &all_entries, &store, &requested, &view).await;
         }
     }
 
@@ -221,12 +215,28 @@ pub async fn catch_all(
     };
 
     if let Some(entry) = target {
-        return serve_resolved(entry, &all_entries, &store, &requested, &query.time, &view).await;
+        return serve_resolved(entry, &all_entries, &store, &requested, &view).await;
     }
 
-    // An archived revision addressed at its date path (+ `?time=`).
+    // An archived revision addressed at its date path (+ time segment).
     if let Some((parent, rev)) = find_revision(&all_entries, &query) {
         return serve_revision(parent, rev, &store).await;
+    }
+
+    // A label-free date+time deeplink with no exact match lands on the day view,
+    // never a 404 — an edited-that-day post is right there. (The citation
+    // survives renames: it resolves by timestamp, or degrades to the day.)
+    if query.label.is_none() && query.time.is_some() && query.date_prefix.is_some() {
+        let mut day_q = query.clone();
+        day_q.time = None;
+        let day: Vec<&Entry> = store
+            .entries
+            .iter()
+            .filter(|e| day_q.matches(&e.timestamp, &e.slug, &e.tag_names()))
+            .collect();
+        if !day.is_empty() {
+            return render_listing(&day, &all_entries, &day_q, &view, &path);
+        }
     }
 
     if matching.is_empty() {
@@ -277,11 +287,10 @@ async fn serve_resolved(
     all_entries: &[&Entry],
     store: &ContentStore,
     requested: &str,
-    req_time: &Option<String>,
     view: &ViewFilter,
 ) -> Response {
     let canon = templates::canonical(entry, all_entries);
-    if requested != canon.path || *req_time != canon.time {
+    if requested != canon.path {
         return redirect(&templates::canonical_location(entry, all_entries, view));
     }
     if entry.error.is_some() {
@@ -411,7 +420,7 @@ fn find_revision<'a>(
 async fn serve_revision(parent: &Entry, rev: &Revision, store: &ContentStore) -> Response {
     let mut e = parent.clone();
     e.path = rev.path.clone();
-    e.timestamp = rev.date;
+    e.timestamp = crate::postdate::PostDate::from_mtime(rev.date);
     e.edited = None;
     e.revisions = Vec::new();
     e.aliases = Vec::new();
@@ -655,11 +664,7 @@ async fn serve_raw_bytes(entry: &Entry) -> Response {
 
     let filename = match &entry.label {
         Some(label) => format!("{}.{}", sanitize_filename(label), entry.extension),
-        None => format!(
-            "{}.{}",
-            entry.timestamp.format("%Y-%m-%dT%H%M%S"),
-            entry.extension
-        ),
+        None => format!("{}.{}", entry.timestamp.file_stamp(), entry.extension),
     };
 
     let disposition = format!(r#"inline; filename="{}""#, filename);

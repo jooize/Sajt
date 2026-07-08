@@ -1,8 +1,9 @@
 use crate::embed::EmbedData;
 use crate::entry::{Entry, PostError, Revision, COPY_KEYWORD};
+use crate::postdate::PostDate;
 use crate::slug::{is_reserved_slug, slug};
 use crate::tags::{read_finder_comment, read_tags_colored, Tag};
-use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone};
+use chrono::{DateTime, Local, NaiveDate, NaiveDateTime};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -14,6 +15,11 @@ pub struct ContentStore {
     /// content tree so the server never writes into content. See `entry-model.md`.
     pub cache_dir: PathBuf,
     pub embed_cache: HashMap<PathBuf, EmbedData>,
+    /// The earliest future-dated (scheduled) post's moment, as a local instant.
+    /// The server wakes at this time to rescan so a scheduled post appears
+    /// exactly when due, not on the next unrelated change. `None` when nothing
+    /// is scheduled. See `post-model.md` §2 (future-hold).
+    pub next_future: Option<NaiveDateTime>,
 }
 
 impl ContentStore {
@@ -42,6 +48,31 @@ impl ContentStore {
                 entries.len()
             );
         }
+
+        // Future-hold (post-model.md §2): a post dated in the future is held out
+        // of the served set until its moment. Fail-safe — a future misdrop stays
+        // hidden. Record the earliest future moment so the server can wake and
+        // rescan exactly then, rather than waiting for an unrelated change.
+        let now = PostDate::now();
+        let mut future_wakes: Vec<NaiveDateTime> = Vec::new();
+        entries.retain(|e| {
+            if e.timestamp.is_future(&now) {
+                if let Some(inst) = e.timestamp.to_local_instant() {
+                    future_wakes.push(inst);
+                }
+                false
+            } else {
+                true
+            }
+        });
+        if !future_wakes.is_empty() {
+            tracing::info!(
+                "Future-hold: {} post(s) scheduled, hidden until their date",
+                future_wakes.len()
+            );
+        }
+        let next_future = future_wakes.into_iter().min();
+
         tracing::info!("Scanned {} entries from {}", entries.len(), content_dir.display());
 
         Ok(ContentStore {
@@ -49,6 +80,7 @@ impl ContentStore {
             content_dir: content_dir.to_path_buf(),
             cache_dir: cache_dir.to_path_buf(),
             embed_cache: HashMap::new(),
+            next_future,
         })
     }
 
@@ -56,8 +88,18 @@ impl ContentStore {
     pub fn rescan(&mut self) -> std::io::Result<()> {
         let new = Self::scan(&self.content_dir, &self.cache_dir)?;
         self.entries = new.entries;
+        self.next_future = new.next_future;
         self.embed_cache.clear();
         Ok(())
+    }
+
+    /// How long until the next scheduled (future-dated) post is due, for the
+    /// future-hold wake timer. `None` when nothing is scheduled. A one-second
+    /// cushion ensures the moment has passed by the time the rescan runs.
+    pub fn next_future_delay(&self) -> Option<std::time::Duration> {
+        let inst = self.next_future?;
+        let secs = (inst - Local::now().naive_local()).num_seconds().max(0) as u64;
+        Some(std::time::Duration::from_secs(secs + 1))
     }
 
     /// Resolve embeds for entries containing recognized URLs.
@@ -190,23 +232,35 @@ fn build_post(item: &TopItem) -> Entry {
 fn build_bare_post(item: &TopItem) -> Entry {
     let (stem, ext) = split_name(&item.name);
     let tags = read_tags_colored(&item.path);
-    let timestamp = mtime_local(&item.path).unwrap_or_else(epoch);
+    let mtime = mtime_local(&item.path).unwrap_or_else(epoch);
     // Bare file: the file itself is both the commented object and the text source.
     let excerpt = row_description(&item.path, &item.path, ext);
+    // Display title = the primary's first H1 if present, else the filename text
+    // (foundation #4). The slug/identity stays filename-derived — never the H1.
+    let h1 = extract_h1(&item.path, ext);
 
-    // Natural filenames (spaces, case, punctuation) publish now: the address is
-    // the derived slug, so a spaced name is no error. Visibility is gated by the
-    // `public`/`private` tag, never by the name — a mistyped name cannot leak.
-    let slug = derive_slug(stem);
+    // A date-named bare file is dated by its own name (any precision) and never
+    // claims a bare URL; its trailing text (or an H1) shows as a display title.
+    // Natural filenames otherwise publish as a normal labeled post at their
+    // mtime, addressed by the derived slug — a spaced name is no error.
+    let (timestamp, label, slug, display_label) = match parse_date_name(stem) {
+        Some((date, title)) => (date, title.clone(), None, h1.or(title)),
+        None => (
+            PostDate::from_mtime(mtime),
+            Some(stem.to_string()),
+            derive_slug(stem),
+            h1,
+        ),
+    };
 
     Entry {
         path: item.path.clone(),
         dir: None,
         timestamp,
         edited: None,
-        label: Some(stem.to_string()),
+        label,
         slug,
-        display_label: None,
+        display_label,
         excerpt,
         extension: ext.to_string(),
         tags,
@@ -260,27 +314,41 @@ fn build_folder_post(item: &TopItem) -> Entry {
     // Folder post: the comment is read at the post level (the folder, like tags),
     // the auto-excerpt from the primary file inside it.
     let excerpt = row_description(dir, &primary.path, ext);
+    let h1 = extract_h1(&primary.path, ext);
 
-    // Publish date: the date marker, else the primary's mtime. The edited line is
-    // the primary's mtime, shown only when it is meaningfully later than publish.
-    let (timestamp, edited) = match scan.date_marker {
-        Some(marker) => {
-            let edited = (primary.mtime > marker + chrono::Duration::minutes(1)).then_some(primary.mtime);
-            (marker, edited)
-        }
-        None => (primary.mtime, None),
+    // "Edited" = the primary's mtime, shown only when meaningfully later than the
+    // publish date. Compared against the publish date's starting instant.
+    let edited_after = |date: &PostDate| {
+        date.to_local_instant()
+            .filter(|inst| primary.mtime > *inst + chrono::Duration::minutes(1))
+            .map(|_| primary.mtime)
     };
 
-    let slug = derive_slug(&label);
+    // A date-named folder is dated by its own name at that precision, unlabeled,
+    // never claiming a bare URL. Otherwise: the empty date-marker subfolder pins
+    // the publish date, else the primary's mtime; the slug comes from the label.
+    let (timestamp, edited, post_label, post_slug, display_label) = match parse_date_name(&label) {
+        Some((date, title)) => {
+            let edited = edited_after(&date);
+            (date, edited, title.clone(), None, h1.or(title))
+        }
+        None => {
+            let (timestamp, edited) = match scan.date_marker {
+                Some(marker) => (marker, edited_after(&marker)),
+                None => (PostDate::from_mtime(primary.mtime), None),
+            };
+            (timestamp, edited, Some(label.clone()), derive_slug(&label), h1)
+        }
+    };
 
     Entry {
         path: primary.path,
         dir: Some(dir.clone()),
         timestamp,
         edited,
-        label: Some(label),
-        slug,
-        display_label: None,
+        label: post_label,
+        slug: post_slug,
+        display_label,
         excerpt,
         extension: ext.to_string(),
         tags,
@@ -297,7 +365,7 @@ fn errored_folder(item: &TopItem, tags: Vec<Tag>, error: PostError) -> Entry {
     Entry {
         path: item.path.clone(),
         dir: Some(item.path.clone()),
-        timestamp: mtime_local(&item.path).unwrap_or_else(epoch),
+        timestamp: PostDate::from_mtime(mtime_local(&item.path).unwrap_or_else(epoch)),
         edited: None,
         label: Some(item.name.clone()),
         slug: slug(&item.name),
@@ -370,6 +438,56 @@ fn extract_excerpt(path: &Path, ext: &str) -> Option<String> {
     } else {
         Some(truncate_words(&para, DESCRIPTION_MAX_LEN))
     }
+}
+
+/// The primary's first heading as a display title (foundation #4): a markdown
+/// ATX `# Title`, an AsciiDoc `= Title`, or a setext title underlined with `===`.
+/// Best-effort, text formats only; `None` when there is no leading heading (the
+/// display then falls back to the filename text). Never reads HTML, whose markup
+/// must not leak into a title (same rule as the excerpt).
+fn extract_h1(path: &Path, ext: &str) -> Option<String> {
+    const MAX_READ: u64 = 16 * 1024;
+    let text_like = matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "md" | "markdown" | "txt" | "text" | "adoc" | "asciidoc" | "rst" | "org" | "tex"
+    );
+    if !text_like {
+        return None;
+    }
+    let mut buf = Vec::new();
+    {
+        use std::io::Read;
+        let file = std::fs::File::open(path).ok()?;
+        file.take(MAX_READ).read_to_end(&mut buf).ok()?;
+    }
+    let text = String::from_utf8_lossy(&buf);
+    first_heading(&text)
+}
+
+/// The first heading in a text document, or `None`. Recognizes ATX (`# `),
+/// AsciiDoc (`= `), and setext (a line underlined by `===`). Only the first
+/// non-blank line is considered, so prose without a heading yields no title.
+fn first_heading(text: &str) -> Option<String> {
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    let first = lines.next()?;
+    if let Some(rest) = first.strip_prefix("# ") {
+        let title = collapse_ws(&strip_inline_markup(rest));
+        return (!title.is_empty()).then_some(title);
+    }
+    if let Some(rest) = first.strip_prefix("= ") {
+        let title = collapse_ws(&strip_inline_markup(rest));
+        return (!title.is_empty()).then_some(title);
+    }
+    // Setext H1: a plain line underlined by two or more `=` on the next line.
+    if let Some(next) = lines.next() {
+        let underlined = next.len() >= 2 && next.bytes().all(|b| b == b'=');
+        let is_prose = !first.starts_with(['#', '>', '|', '-', '*', '+', '=']);
+        if underlined && is_prose {
+            let title = collapse_ws(&strip_inline_markup(first));
+            return (!title.is_empty()).then_some(title);
+        }
+    }
+    None
 }
 
 /// The first run of prose lines: skips leading blanks, ATX headings, block
@@ -519,14 +637,14 @@ struct FileChild {
 /// The result of scanning a folder post's contents.
 struct FolderScan {
     primary: Option<PrimaryFile>,
-    date_marker: Option<NaiveDateTime>,
+    date_marker: Option<PostDate>,
     aliases: Vec<String>,
     revisions: Vec<Revision>,
     error: Option<PostError>,
 }
 
 fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
-    let mut date_markers: Vec<(String, NaiveDateTime)> = Vec::new();
+    let mut date_markers: Vec<(String, PostDate)> = Vec::new();
     let mut aliases: Vec<String> = Vec::new();
     let mut files: Vec<FileChild> = Vec::new();
 
@@ -787,57 +905,31 @@ fn parse_revision_suffix(name: &str) -> Option<(String, u32)> {
     None
 }
 
-/// Parse an empty date-marker folder name into a publish date, normalized to
-/// site-local. Format: ISO-8601 basic, colon-free `YYYY-MM-DDTHHMM[SS]` with an
-/// optional zone (`Z` or `±HHMM`); a bare (zoneless) marker is already local.
-/// Returns `None` for any name that is not such a date.
-fn parse_date_marker(name: &str) -> Option<NaiveDateTime> {
-    let (body, offset) = split_zone(name)?;
-    let naive = NaiveDateTime::parse_from_str(body, "%Y-%m-%dT%H%M%S")
-        .or_else(|_| NaiveDateTime::parse_from_str(body, "%Y-%m-%dT%H%M"))
-        .ok()?;
-    match offset {
-        None => Some(naive),
-        Some(off) => off
-            .from_local_datetime(&naive)
-            .single()
-            .map(|dt| dt.with_timezone(&Local).naive_local()),
-    }
+/// Parse an empty date-marker folder name into a precision-aware publish date.
+/// Format: `[-]YYYY[-MM[-DD[Thhmm[ss]]]]` with an optional trailing zone (`Z` or
+/// `±HHMM`, only after a time); a bare (zoneless) marker is already local. The
+/// mandatory `T` is gone — a bare date is a valid, day/month/year-precision
+/// marker. Returns `None` for any name that is not such a date. See `PostDate`.
+fn parse_date_marker(name: &str) -> Option<PostDate> {
+    PostDate::parse(name)
 }
 
-/// Split an optional trailing timezone (`Z` or `±HHMM`) off a datetime marker.
-/// Returns `None` only when the name has no `T` at all (so it cannot be a marker).
-fn split_zone(name: &str) -> Option<(&str, Option<FixedOffset>)> {
-    let t_idx = name.find('T')?;
-
-    if let Some(body) = name.strip_suffix('Z') {
-        return Some((body, Some(FixedOffset::east_opt(0)?)));
+/// If a top-level post name is itself a date, or a date followed by descriptive
+/// text, return its publish date and an optional display title. A whole-date
+/// name is unlabeled (date-addressed, no slug claim); `<date> <text>` is
+/// date-addressed with the trailing text shown for recognition — never a slug.
+/// See `post-model.md` §2 (date-named posts) and the [review] amendment.
+fn parse_date_name(name: &str) -> Option<(PostDate, Option<String>)> {
+    if let Some(d) = PostDate::parse(name) {
+        return Some((d, None)); // whole name is a date -> unlabeled
     }
-
-    // A numeric `±HHMM` zone sits after the time, so its sign is past the `T`;
-    // the date's own hyphens are before it and never match.
-    if name.len() >= 5 {
-        let sign_idx = name.len() - 5;
-        let bytes = name.as_bytes();
-        if sign_idx > t_idx && (bytes[sign_idx] == b'+' || bytes[sign_idx] == b'-') {
-            let digits = &name[sign_idx + 1..];
-            if digits.bytes().all(|b| b.is_ascii_digit()) {
-                let h: i32 = name[sign_idx + 1..sign_idx + 3].parse().ok()?;
-                let m: i32 = name[sign_idx + 3..sign_idx + 5].parse().ok()?;
-                if h <= 23 && m <= 59 {
-                    let secs = h * 3600 + m * 60;
-                    let off = if bytes[sign_idx] == b'+' {
-                        FixedOffset::east_opt(secs)
-                    } else {
-                        FixedOffset::west_opt(secs)
-                    }?;
-                    return Some((&name[..sign_idx], Some(off)));
-                }
-            }
+    if let Some((head, tail)) = name.split_once(' ') {
+        if let Some(d) = PostDate::parse(head) {
+            let title = tail.trim();
+            return Some((d, (!title.is_empty()).then(|| title.to_string())));
         }
     }
-
-    Some((name, None))
+    None
 }
 
 /// Whether a directory has no non-dotfile children (`.DS_Store` does not count).
@@ -1102,19 +1194,24 @@ mod tests {
 
     #[test]
     fn date_marker_parsing() {
-        let hms = NaiveDate::from_ymd_opt(2026, 3, 3).unwrap().and_hms_opt(14, 30, 52).unwrap();
-        let hm = NaiveDate::from_ymd_opt(2026, 3, 3).unwrap().and_hms_opt(14, 30, 0).unwrap();
-        assert_eq!(parse_date_marker("2026-03-03T143052"), Some(hms));
-        assert_eq!(parse_date_marker("2026-03-03T1430"), Some(hm));
+        use crate::postdate::Precision;
+        let sec = parse_date_marker("2026-03-03T143052").unwrap();
+        assert_eq!(sec.precision, Precision::Second);
+        assert_eq!(sec.short_date(), "2026-03-03");
+        assert_eq!(sec.hms(), "143052");
+        assert_eq!(parse_date_marker("2026-03-03T1430").unwrap().precision, Precision::Minute);
+        // Bare dates are valid markers now — the mandatory `T` is gone.
+        assert_eq!(parse_date_marker("2026-03-03").unwrap().precision, Precision::Day);
+        assert_eq!(parse_date_marker("2026-03").unwrap().precision, Precision::Month);
+        assert_eq!(parse_date_marker("2026").unwrap().precision, Precision::Year);
         // Zoned markers parse (exact local value depends on the machine tz).
         assert!(parse_date_marker("2026-03-03T143052Z").is_some());
         assert!(parse_date_marker("2026-03-03T1430+0200").is_some());
         assert!(parse_date_marker("2026-03-03T1430-0500").is_some());
         // Non-dates.
-        assert_eq!(parse_date_marker("hello-world"), None);
-        assert_eq!(parse_date_marker("alias resume"), None);
-        assert_eq!(parse_date_marker("2026-13-03T1430"), None); // bad month
-        assert_eq!(parse_date_marker("2026-03-03"), None); // no time
+        assert!(parse_date_marker("hello-world").is_none());
+        assert!(parse_date_marker("alias resume").is_none());
+        assert!(parse_date_marker("2026-13-03T1430").is_none()); // bad month
     }
 
     // ── scanner ──
@@ -1144,8 +1241,7 @@ mod tests {
         assert_eq!(e.extension, "md");
         assert!(e.dir.is_some());
         assert!(e.error.is_none());
-        let expect = NaiveDate::from_ymd_opt(2026, 3, 3).unwrap().and_hms_opt(14, 30, 0).unwrap();
-        assert_eq!(e.timestamp, expect);
+        assert_eq!(e.timestamp, PostDate::parse("2026-03-03T1430").unwrap());
         // The primary was written just now, well after the 2026 marker → edited.
         assert!(e.edited.is_some());
     }
@@ -1309,6 +1405,57 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].label.as_deref(), Some("x"));
         assert_eq!(entries[0].extension, "link");
+    }
+
+    // ── date-named posts & future-hold ──
+
+    #[test]
+    fn whole_date_name_is_unlabeled_and_dated() {
+        use crate::postdate::Precision;
+        let t = TmpDir::new();
+        touch(t.path(), "2026-07-04.md", "body");
+        let entries = scan_entries(t.path()).unwrap();
+        let e = &entries[0];
+        assert!(e.label.is_none(), "a whole-date name is unlabeled");
+        assert!(e.slug.is_none(), "and never claims a bare URL");
+        assert_eq!(e.timestamp.precision, Precision::Day);
+        assert_eq!(e.timestamp.short_date(), "2026-07-04");
+    }
+
+    #[test]
+    fn date_prefixed_name_shows_title_but_claims_no_slug() {
+        let t = TmpDir::new();
+        touch(t.path(), "1980-08-11 that thing about stuff.md", "no heading here");
+        let entries = scan_entries(t.path()).unwrap();
+        let e = &entries[0];
+        // Date-addressed; the trailing text is a display title, never a slug.
+        assert!(e.slug.is_none());
+        assert_eq!(e.timestamp.short_date(), "1980-08-11");
+        assert_eq!(e.display_label.as_deref(), Some("that thing about stuff"));
+    }
+
+    #[test]
+    fn h1_overrides_filename_for_display_title() {
+        let t = TmpDir::new();
+        touch(t.path(), "my-trip.md", "# Summer in Rome\n\nWe went south.");
+        let entries = scan_entries(t.path()).unwrap();
+        let e = &entries[0];
+        // Identity stays the filename; the display title is the H1.
+        assert_eq!(e.label.as_deref(), Some("my-trip"));
+        assert_eq!(e.slug.as_deref(), Some("my-trip"));
+        assert_eq!(e.display_label.as_deref(), Some("Summer in Rome"));
+    }
+
+    #[test]
+    fn future_dated_post_is_held() {
+        let t = TmpDir::new();
+        touch(t.path(), "2999-01-01.md", "from the future");
+        if !set_tags(&t.path().join("2999-01-01.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        let store = ContentStore::scan(t.path(), &std::env::temp_dir()).unwrap();
+        assert!(store.entries.is_empty(), "a future-dated post is withheld until its date");
+        assert!(store.next_future.is_some(), "and a wake is scheduled for it");
     }
 
     // ── visibility gate (fail-closed) ──
