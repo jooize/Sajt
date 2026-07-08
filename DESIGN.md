@@ -334,8 +334,32 @@ opaque `file`.
   map Asciidoctor's Rouge/Pygments classes onto the same custom properties so
   code looks identical regardless of source format.
 - Everything else as today: `.rst`/`.org`/`.tex` via Pandoc, `.html`
-  passthrough, `.txt` in `<pre>`, `.link` via embeds, images in viewer,
-  `.prompt` via Claude API, other files as downloads.
+  passthrough, `.txt` in `<pre>`, images in viewer, `.prompt` via Claude API,
+  other files as downloads. (The old `.link` extension is **retired** — a link
+  is now the `link_url` axis below, not a special format.)
+
+**The `link_url` axis + outbound cites (SHIPPED 2026-07-09, `post-model.md` §4).**
+A post's outbound destination is orthogonal to its `kind`. The scanner resolves
+`Entry.link_url` (always an `http(s)` URL that passed the scheme guard, or `None`)
+from a `.webloc`/`.url` bookmark, a text file whose **entire** content is a single
+URL, or a folder's `link.*` sidecar; anything else — a `javascript:` target, a
+title line *plus* a URL — is refused and the file stays an ordinary post (fail
+closed, no clickable link). Two shapes follow:
+- **The post IS the link** (`kind() == "link"`: a bare bookmark / single-URL
+  text) — its body is the rich embed card; its timeline row is the destination's
+  own headline (a labeled bookmark keeps *our* label linking to *our* page and
+  cites the source beneath; an unlabeled one promotes the cite into the heading
+  with a quiet `¶` permalink back to our card page).
+- **The post CITES a link** (a document with a `link.*` sidecar) — it keeps its
+  own medium and words, and a `<cite>` source line renders beneath the body
+  (a `#source` section on its page, an inline cite in its row).
+The cite is a semantic `<cite>` (favicon tile · title · domain, external `↗`,
+`rel="noreferrer"`; `http://` flagged in pure CSS) per `static/link-rows-mockup
+.html`. Title comes from the embed cache (`link_title`), degrading to the bare
+domain on a fetch miss, and is dropped when it merely repeats our own heading.
+The **favicon is a CSS-only letter tile** (a hashed color via `data-tile`, no
+inline style) — a real favicon fetch is deferred precisely so a link row makes
+**zero third-party requests**, never leaking a reader's IP to the destination.
 
 **Outbound safety — scheme guard + SSRF-hardened fetcher (SHIPPED 2026-07-08,
 `post-model.md` §7; the fetcher half of §4).** Two fail-closed choke points, both

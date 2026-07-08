@@ -253,6 +253,11 @@ fn build_bare_post(item: &TopItem, claim: Option<&str>) -> Entry {
     // (foundation #4). The slug/identity stays filename-derived — never the H1.
     let h1 = extract_h1(&item.path, ext);
 
+    // A bare file that resolves to a single URL (`.webloc`/`.url`/URL-only text)
+    // IS a link post (post-model.md §4): the file's whole substance is the
+    // destination, so `kind()` becomes `link` and the body is the embed card.
+    let link_url = resolve_link_destination(&item.path, ext);
+
     // A date-named bare file is dated by its own name (any precision) and never
     // claims a bare URL; its trailing text (or an H1) shows as a display title.
     // Natural filenames otherwise publish as a normal labeled post at their
@@ -284,6 +289,8 @@ fn build_bare_post(item: &TopItem, claim: Option<&str>) -> Entry {
         error: None,
         listing: None,
         attachments: Vec::new(),
+        link_url,
+        link_title: None,
     }
 }
 
@@ -380,6 +387,8 @@ fn build_folder_post(item: &TopItem, claim: Option<&str>) -> Entry {
         error: None,
         listing: None,
         attachments: scan.attachments,
+        link_url: scan.link_url,
+        link_title: None,
     }
 }
 
@@ -432,6 +441,8 @@ fn build_listing_post(
         error: None,
         listing: Some(listing),
         attachments: Vec::new(),
+        link_url: None,
+        link_title: None,
     }
 }
 
@@ -456,6 +467,8 @@ fn errored_folder(item: &TopItem, label: &str, tags: Vec<Tag>, error: PostError)
         error: Some(error),
         listing: None,
         attachments: Vec::new(),
+        link_url: None,
+        link_title: None,
     }
 }
 
@@ -721,10 +734,79 @@ struct FolderScan {
     listing: Option<Listing>,
     /// A document post's public sibling files (empty for a listing or an error).
     attachments: Vec<ListItem>,
+    /// The post's outbound destination (post-model.md §4): a `link.*` sidecar or a
+    /// non-primary file that resolves to a single URL. `None` for a plain post, or
+    /// when several destinations claimed the slot with no `link.*` tie-break (the
+    /// scanner declines to guess and emits no cite). Set only in the primary branch.
+    link_url: Option<String>,
     date_marker: Option<PostDate>,
     aliases: Vec<String>,
     revisions: Vec<Revision>,
     error: Option<PostError>,
+}
+
+/// Read a text file, capped, for link/URL detection. A file larger than the cap
+/// cannot be a single-URL link anyway, so the truncated read simply fails the
+/// single-token test below.
+fn read_text_capped(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let f = std::fs::File::open(path).ok()?;
+    let mut buf = Vec::new();
+    f.take(64 * 1024).read_to_end(&mut buf).ok()?;
+    String::from_utf8(buf).ok()
+}
+
+/// The `URL` value of a macOS `.webloc` bookmark (a plist with a `URL` key).
+fn read_webloc_url(path: &Path) -> Option<String> {
+    let val = plist::Value::from_file(path).ok()?;
+    let url = val.as_dictionary()?.get("URL")?.as_string()?.trim().to_string();
+    (!url.is_empty()).then_some(url)
+}
+
+/// The `URL=` value of a Windows-style `.url` shortcut (INI). Case-insensitive key.
+fn read_dot_url(path: &Path) -> Option<String> {
+    let content = read_text_capped(path)?;
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some(eq) = line.find('=') {
+            if line[..eq].trim().eq_ignore_ascii_case("URL") {
+                let u = line[eq + 1..].trim();
+                if !u.is_empty() {
+                    return Some(u.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Resolve a file to a single outbound destination, or `None` if it is not a link
+/// (`post-model.md` §4). A `.webloc`/`.url` bookmark yields its target; a plain-
+/// text file yields its content **only when the entire trimmed content is exactly
+/// one token** — a title line plus a URL is a note-with-a-link, not a link. The
+/// destination must pass the scheme guard as an `http(s)` URL; anything else
+/// (`javascript:`, a bare word, …) is not a link, so the file stays ordinary.
+fn resolve_link_destination(path: &Path, ext: &str) -> Option<String> {
+    let url = match crate::entry::normalize_ext(ext).as_str() {
+        "webloc" => read_webloc_url(path)?,
+        "url" => read_dot_url(path)?,
+        // Plain-text media (and dotless text): a whole-content single URL.
+        "md" | "txt" | "" => {
+            let content = read_text_capped(path)?;
+            let t = content.trim();
+            if t.is_empty() || t.split_whitespace().count() != 1 {
+                return None;
+            }
+            t.to_string()
+        }
+        _ => return None,
+    };
+    // Only an http(s) destination is a link; the scheme guard's http/https verdict
+    // is the single source of truth (it also normalizes and rejects obfuscation).
+    match crate::outbound::classify_scheme(&url) {
+        crate::outbound::Scheme::HttpsWeb | crate::outbound::Scheme::HttpWeb => Some(url),
+        _ => None,
+    }
 }
 
 fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
@@ -785,6 +867,7 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
             primary: None,
             listing: None,
             attachments: Vec::new(),
+            link_url: None,
             date_marker: None,
             aliases,
             revisions: Vec::new(),
@@ -821,6 +904,7 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
             primary: None,
             listing: Some(listing),
             attachments: Vec::new(),
+            link_url: None,
             date_marker,
             aliases,
             revisions: Vec::new(),
@@ -848,6 +932,7 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
                     primary: None,
                     listing: None,
                     attachments: Vec::new(),
+                    link_url: None,
                     date_marker,
                     aliases,
                     revisions: Vec::new(),
@@ -876,6 +961,7 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
                 primary: None,
                 listing: Some(listing),
                 attachments: Vec::new(),
+                link_url: None,
                 date_marker,
                 aliases,
                 revisions: Vec::new(),
@@ -899,11 +985,55 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         mtime: primary_child.mtime,
     };
 
+    // Outbound destination (post-model.md §4): a `link.*` sidecar, or any
+    // non-primary file whose whole content is one URL, drops out of the file set
+    // and becomes the post's cite. The stem `link` is the explicit tie-break;
+    // several destinations with no single `link.*` never guess — emit no cite,
+    // log loudly (the files then stay ordinary listed/attachment content).
+    let destinations: Vec<(&FileChild, String)> = plain
+        .iter()
+        .filter(|f| f.path != primary_child.path)
+        .filter_map(|f| {
+            let (_, ext) = split_name(&f.name);
+            resolve_link_destination(&f.path, ext).map(|u| (f, u))
+        })
+        .collect();
+    let (link_url, link_path): (Option<String>, Option<PathBuf>) = match destinations.len() {
+        0 => (None, None),
+        1 => (Some(destinations[0].1.clone()), Some(destinations[0].0.path.clone())),
+        _ => {
+            let marked: Vec<&(&FileChild, String)> = destinations
+                .iter()
+                .filter(|(f, _)| f.stem.eq_ignore_ascii_case("link"))
+                .collect();
+            if marked.len() == 1 {
+                (Some(marked[0].1.clone()), Some(marked[0].0.path.clone()))
+            } else {
+                let mut names: Vec<String> =
+                    destinations.iter().map(|(f, _)| f.name.clone()).collect();
+                names.sort();
+                tracing::warn!(
+                    "Folder post {} claims {} outbound destinations ({}) with no single `link.*` \
+                     tie-break; emitting no cite. Keep one, or name one `link.*`.",
+                    dir.display(),
+                    destinations.len(),
+                    names.join(", ")
+                );
+                (None, None)
+            }
+        }
+    };
+
     // Attachments = the post's public sibling files + public subfolders (folder
-    // rows), in filename order — rendered below the body (post-model.md §6).
+    // rows), in filename order — rendered below the body (post-model.md §6). The
+    // promoted destination file drops out (it is the cite, not a listed sibling).
     let mut att_files: Vec<ListItem> = plain
         .iter()
-        .filter(|f| f.path != primary_child.path && file_is_public(&f.path))
+        .filter(|f| {
+            f.path != primary_child.path
+                && Some(&f.path) != link_path.as_ref()
+                && file_is_public(&f.path)
+        })
         .map(to_list_item)
         .collect();
     att_files.sort_by(|a, b| a.name.cmp(&b.name));
@@ -915,6 +1045,7 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         primary: Some(primary),
         listing: None,
         attachments,
+        link_url,
         date_marker,
         aliases,
         revisions,
@@ -1948,6 +2079,75 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].label.as_deref(), Some("x"));
         assert_eq!(entries[0].extension, "link");
+    }
+
+    // ── link axis: destinations & cites (post-model.md §4) ──
+
+    /// A macOS `.webloc` bookmark: an XML plist with a single `URL` key.
+    fn webloc(url: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>URL</key><string>{}</string></dict></plist>"#,
+            url
+        )
+    }
+
+    #[test]
+    fn bare_webloc_is_a_link_post() {
+        let t = TmpDir::new();
+        touch(t.path(), "worth-saving.webloc", &webloc("https://github.com/rust-lang/rust"));
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "worth-saving");
+        assert_eq!(e.kind(), "link");
+        assert_eq!(e.link_url.as_deref(), Some("https://github.com/rust-lang/rust"));
+    }
+
+    #[test]
+    fn single_url_text_is_a_link_but_a_sentence_is_not() {
+        let t = TmpDir::new();
+        touch(t.path(), "read-this.txt", "https://example.com/article");
+        touch(t.path(), "note.txt", "read this https://example.com/article");
+        let entries = scan_entries(t.path()).unwrap();
+
+        let link = find(&entries, "read-this");
+        assert_eq!(link.kind(), "link");
+        assert_eq!(link.link_url.as_deref(), Some("https://example.com/article"));
+
+        // A title line plus a URL is a note *with* a link, not a link.
+        let note = find(&entries, "note");
+        assert!(note.link_url.is_none());
+        assert_ne!(note.kind(), "link");
+    }
+
+    #[test]
+    fn unsafe_scheme_is_never_a_link() {
+        // A `javascript:` (or `data:`/`file:`) destination is refused at scan time —
+        // link_url stays None and the file is an ordinary post, never a clickable link.
+        let t = TmpDir::new();
+        touch(t.path(), "sneaky.webloc", &webloc("javascript:alert(document.cookie)"));
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "sneaky");
+        assert!(e.link_url.is_none(), "javascript: must be refused");
+        assert_ne!(e.kind(), "link");
+    }
+
+    #[test]
+    fn folder_with_link_sidecar_cites_but_keeps_its_medium() {
+        // `narrow/index.md` (the commentary, primary) + `narrow/link.webloc` (the
+        // cited destination): the folder post carries the link_url but stays a text
+        // post, and the destination file drops out of the attachment list.
+        let t = TmpDir::new();
+        touch(t.path(), "narrow/index.md", "# Narrow streets\n\nMy take on road diets.");
+        touch(t.path(), "narrow/link.webloc", &webloc("https://nytimes.com/road-diets"));
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "narrow");
+        assert_eq!(e.link_url.as_deref(), Some("https://nytimes.com/road-diets"));
+        assert_ne!(e.kind(), "link", "a content post that cites keeps its own medium");
+        assert!(
+            e.attachments.iter().all(|a| a.name != "link.webloc"),
+            "the cited destination is not also listed as an attachment"
+        );
     }
 
     // ── date-named posts & future-hold ──

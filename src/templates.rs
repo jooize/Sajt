@@ -482,11 +482,76 @@ main section article aside > button[aria-pressed="true"] svg { fill: currentColo
 
 /* content: every title the same size */
 main section article h3 { font-size: 1rem; font-weight: 650; letter-spacing: -.011em; line-height: 1.5; margin: 0; }
-main section article h3 a { color: var(--ink); }
-main section article h3 a:hover { color: var(--violet); text-decoration: none; }
+/* child combinator: OUR label -> OUR page. A promoted cite (h3 > cite > a, a bare
+   link with no label of its own) links out instead, and keeps the cite styling. */
+main section article h3 > a { color: var(--ink); }
+main section article h3 > a:hover { color: var(--violet); text-decoration: none; }
 main section article h3 small { font-size: 1em; font-weight: inherit; color: var(--soft); }
 main section article h3 i { font-weight: 450; color: var(--faint); }
 main section article > div > p { margin: .12rem 0 0; font-size: .875rem; line-height: 1.5; color: var(--soft); }
+
+/* ---- outbound cite: the DESTINATION (external), post-model.md §4 ---- */
+/* Scoped to `article` so timeline rows and entry pages (#source / #linkcard) share
+   one styling; a semantic <cite>, no class. Ported from static/link-rows-mockup.html. */
+article cite {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  font-style: normal;
+  font-size: .8rem;
+  margin-top: .4rem;
+  max-width: 100%;
+}
+article cite > a { display: inline-flex; align-items: center; gap: .45rem; color: var(--soft); min-width: 0; }
+article cite > a:hover { color: var(--violet); text-decoration: none; }
+article cite b { font-weight: 550; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+article cite > a:hover b { color: var(--violet); }
+article cite span { color: var(--faint); white-space: nowrap; }        /* domain */
+article cite span::before { content: "\00B7\00A0"; }                   /* "· " */
+/* the "leaves the site" arrow, appended to any external source link */
+article cite > a::after { content: "\2197"; font-size: .82em; color: var(--faint); translate: 0 -.05em; }
+/* http:// gets a caution tint on the domain (the scheme guard, echoed in CSS) */
+article cite a[href^="http://"] span { color: var(--tag-red); }
+article cite a[href^="http://"] span::after { content: " (not secure)"; }
+
+/* stand-in favicon tile: the domain's first letter on a hashed color (data-tile),
+   a static rule so no inline style and zero third-party requests (privacy). */
+article cite i {
+  flex: none;
+  width: 1.05rem; height: 1.05rem;
+  border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font: 700 .62rem/1 var(--sans);
+  font-style: normal;
+  color: #fff;
+}
+article cite i[data-tile="0"] { background: #d1495b; }
+article cite i[data-tile="1"] { background: #2a9d8f; }
+article cite i[data-tile="2"] { background: #e76f51; }
+article cite i[data-tile="3"] { background: #4361ee; }
+article cite i[data-tile="4"] { background: #7b2cbf; }
+article cite i[data-tile="5"] { background: #386641; }
+
+/* a quiet internal permalink for a bare link that has no label of its own (case 4) */
+main section article > div > a[data-perma] {
+  display: inline-block;
+  margin-top: .35rem;
+  font: 500 .72rem var(--mono);
+  color: var(--faint);
+}
+main section article > div > a[data-perma]:hover { color: var(--violet); text-decoration: none; }
+main section article > div > a[data-perma]::before { content: "\00B6\00A0"; }   /* "¶ " */
+
+/* entry-page source section (below a commentary body) + bare-link fallback body */
+main > article > section#source { margin-top: 1.9rem; }
+main > article > section#source > h2 {
+  font: 600 .72rem var(--mono);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 0 0 .35rem;
+}
+main > article > section > div#linkcard { margin: .5rem 0; }
 
 main > p.empty { padding: 3rem 0; text-align: center; font-size: .875rem; color: var(--soft); }
 main > p.empty[hidden] { display: none; }
@@ -2113,6 +2178,77 @@ fn render_meter(grade: Option<f32>) -> String {
     }
 }
 
+/// The display domain for a cite line: the URL's host, lowercased, `www.`-stripped,
+/// port and userinfo dropped. Display-only — `link_url` was already vetted by the
+/// scheme guard (and, before any fetch, the SSRF guard), so this never gates a
+/// request; it only turns a stored `http(s)` URL into a readable source label.
+fn link_domain(url: &str) -> String {
+    let after = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
+    let authority = after.split(['/', '?', '#']).next().unwrap_or(after);
+    // Drop userinfo (`user@host`) and port (`host:443`); keep only the host.
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let host = host.split(':').next().unwrap_or(host).trim().to_lowercase();
+    host.strip_prefix("www.").unwrap_or(&host).to_string()
+}
+
+/// A deterministic stand-in favicon (`post-model.md` §4, `static/link-rows-mockup
+/// .html`): the domain's first letter on a colored tile whose color is a stable
+/// hash of the domain. A real favicon fetch is deliberately deferred — a CSS-only
+/// tile makes zero third-party requests, so it can never leak a reader's IP to the
+/// destination. The color is bucketed into a `data-tile` attribute (a static CSS
+/// rule, not an inline `style`) to keep the Content-Security-Policy clean.
+fn favicon_tile(domain: &str) -> String {
+    let letter = domain
+        .chars()
+        .find(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .unwrap_or('#');
+    // A cheap, stable byte-sum bucket — no cryptographic property is needed, only
+    // that the same domain always lands on the same color.
+    let bucket = domain.bytes().fold(0u16, |a, b| a.wrapping_add(b as u16)) % 6;
+    format!(
+        r#"<i data-tile="{bucket}">{letter}</i>"#,
+        bucket = bucket,
+        letter = html_escape(&letter.to_string()),
+    )
+}
+
+/// The external `<cite>` line for a post's outbound destination (`post-model.md`
+/// §4, `static/link-rows-mockup.html`): a stand-in favicon, the destination's own
+/// title, and its domain, linking out with `rel="noreferrer"`. `http://` targets
+/// get a caution flag purely in CSS (the scheme guard already refused every
+/// non-`http(s)` destination, so `link_url` is always safe to link here).
+///
+/// `own_title` is the post's own heading text, used for two degrade rules:
+/// - fetch never resolved a title → show the bare domain (favicon + domain only);
+/// - the destination's title equals our heading → drop it so it isn't said twice.
+/// Pass `None` to always show the title (a bare link that promotes the cite into
+/// its own heading, where there is no separate heading to duplicate).
+fn cite_line(entry: &Entry, own_title: Option<&str>) -> String {
+    let url = match entry.link_url.as_deref() {
+        Some(u) => u,
+        None => return String::new(),
+    };
+    let domain = link_domain(url);
+    let tile = favicon_tile(&domain);
+
+    let title = entry.link_title.as_deref().filter(|t| !t.is_empty());
+    let duplicate =
+        matches!((title, own_title), (Some(t), Some(o)) if t.eq_ignore_ascii_case(o.trim()));
+    let title_html = match title {
+        Some(t) if !duplicate => format!("<b>{}</b>", html_escape(t)),
+        _ => String::new(),
+    };
+
+    format!(
+        r#"<cite><a href="{href}" rel="noreferrer">{tile}{title}<span>{domain}</span></a></cite>"#,
+        href = html_escape(url),
+        tile = tile,
+        title = title_html,
+        domain = html_escape(&domain),
+    )
+}
+
 /// Render one timeline row.
 fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
     let datetime = entry.timestamp.iso_attr();
@@ -2211,6 +2347,61 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
         }
     };
 
+    // The content column varies with the post's link axis (post-model.md §4):
+    //   1. no destination        -> heading (our page) + excerpt
+    //   2/5. cites a source       -> heading (our page) + excerpt + cite
+    //   3. IS a link, labeled     -> heading (our page) + cite, no prose body
+    //   4. IS a link, no label    -> the destination's headline promotes into the
+    //                                heading, with a quiet permalink to our card
+    let own_title = entry.display_label.as_deref().or(entry.label.as_deref());
+    let is_link_post = entry.kind() == "link";
+
+    let content = if is_link_post && entry.label.is_none() {
+        // Case 4: nothing of ours to title, so the target's headline is the
+        // headline (links out), and a quiet permalink keeps our card reachable.
+        let cite = cite_line(entry, None);
+        if cite.is_empty() {
+            // A link post with no resolvable destination should never occur (the
+            // scanner sets kind=link only when link_url is Some); fail safe to the
+            // ordinary heading rather than emit an empty row.
+            format!(
+                r#"<h3><a href="{href}">{title}</a></h3>{revisions}{shares}"#,
+                href = html_escape(&href),
+                title = title,
+                revisions = revisions,
+                shares = shares,
+            )
+        } else {
+            format!(
+                r#"<h3>{cite}</h3><a data-perma href="{href}">{perma}</a>{revisions}{shares}"#,
+                cite = cite,
+                href = html_escape(&href),
+                perma = html_escape(href.trim_start_matches('/')),
+                revisions = revisions,
+                shares = shares,
+            )
+        }
+    } else {
+        // Cases 1/2/3/5: our own heading links to our page; a cite (when the post
+        // carries a destination) and a prose excerpt (a content post, never a bare
+        // link) follow it.
+        let cite = if entry.link_url.is_some() {
+            cite_line(entry, own_title)
+        } else {
+            String::new()
+        };
+        let body = if is_link_post { String::new() } else { excerpt };
+        format!(
+            r#"<h3><a href="{href}">{title}</a></h3>{body}{cite}{revisions}{shares}"#,
+            href = html_escape(&href),
+            title = title,
+            body = body,
+            cite = cite,
+            revisions = revisions,
+            shares = shares,
+        )
+    };
+
     format!(
         r#"<li><article data-key="{key}">
 <aside>
@@ -2218,7 +2409,7 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
 {star}<button type="button" aria-pressed="false" aria-label="Save for later (stays in this browser)" title="Save for later &mdash; stays in this browser">{bookmark}</button>
 {meter}{tags}
 </aside>
-<div><h3><a href="{href}">{title}</a></h3>{excerpt}{revisions}{shares}</div>
+<div>{content}</div>
 </article></li>"#,
         key = html_escape(&key),
         datetime = html_escape(&datetime),
@@ -2227,11 +2418,7 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
         bookmark = BOOKMARK_SVG,
         meter = meter,
         tags = rail_tags(entry),
-        href = html_escape(&href),
-        title = title,
-        excerpt = excerpt,
-        revisions = revisions,
-        shares = shares,
+        content = content,
     )
 }
 
@@ -2563,6 +2750,7 @@ pub fn entry_page(
 <article id="post" data-canonical="{canonical}" data-title="{data_title}">
 {post_header}
 <section>{content}</section>
+{cite}
 {attachments}
 {extras}
 <footer><a href="{raw_href}">source</a> <a href="/">timeline</a></footer>
@@ -2575,6 +2763,7 @@ pub fn entry_page(
         data_title = html_escape(label),
         post_header = post_header(entry),
         content = rendered_html,
+        cite = cite_section(entry),
         attachments = attachments_section(entry, all_entries),
         extras = post_extras(entry, all_entries),
         raw_href = html_escape(&raw_href),
@@ -2827,6 +3016,35 @@ fn attachments_section(entry: &Entry, all_entries: &[&Entry]) -> String {
         word = if n == 1 { "attachment" } else { "attachments" },
         list = file_list_html(&base, &entry.attachments),
     )
+}
+
+/// The source cite shown below a content post's body on its own page (post-model
+/// md §4): the same `<cite>` as the timeline, in a labeled section. Empty unless
+/// the post *cites* a destination while being its own medium — a link post shows
+/// its embed card instead, so it never carries a duplicate cite here.
+fn cite_section(entry: &Entry) -> String {
+    if entry.link_url.is_none() || entry.kind() == "link" {
+        return String::new();
+    }
+    let own = entry.display_label.as_deref().or(entry.label.as_deref());
+    let cite = cite_line(entry, own);
+    if cite.is_empty() {
+        return String::new();
+    }
+    format!(r#"<section id="source"><h2>Source</h2>{cite}</section>"#, cite = cite)
+}
+
+/// The body for a link post whose embed never resolved (fetch failed, upstream
+/// deleted, or not yet fetched): just the destination cite, so the page is still a
+/// working link rather than a raw `.webloc`/`.url` download. `#linkcard` scopes the
+/// cite CSS the same as a timeline row and the `#source` section.
+pub fn bare_link_body(entry: &Entry) -> String {
+    let cite = cite_line(entry, None);
+    if cite.is_empty() {
+        // A link post always has a destination; this is only a defensive fallback.
+        return "<p>This link has no reachable destination.</p>".to_string();
+    }
+    format!(r#"<div id="linkcard">{cite}</div>"#, cite = cite)
 }
 
 /// `.ext` for display, empty for a dotless file.
@@ -3095,6 +3313,8 @@ mod tests {
             error: None,
             listing: None,
             attachments: Vec::new(),
+            link_url: None,
+            link_title: None,
         }
     }
 
@@ -3195,5 +3415,139 @@ mod tests {
         }];
         // The time is a path segment now, before the slug.
         assert!(revision_items(&e).contains("/2026/02/15/091500/post"));
+    }
+
+    // ── outbound cite / link axis (post-model.md §4) ──
+
+    #[test]
+    fn link_domain_strips_scheme_www_port_and_userinfo() {
+        assert_eq!(link_domain("https://www.example.com/x"), "example.com");
+        assert_eq!(link_domain("https://example.com:8443/path?q=1"), "example.com");
+        assert_eq!(link_domain("http://user:pass@nytimes.com/2026"), "nytimes.com");
+        assert_eq!(link_domain("https://bsky.app"), "bsky.app");
+    }
+
+    #[test]
+    fn favicon_tile_is_deterministic_first_letter() {
+        let a = favicon_tile("github.com");
+        let b = favicon_tile("github.com");
+        assert_eq!(a, b, "same domain -> same tile");
+        assert!(a.contains(">G<"), "first letter, uppercased: {a}");
+        assert!(a.contains("data-tile=\""), "color as a data attribute, not inline style");
+    }
+
+    /// A folder post that cites a `link.*` sidecar: our label -> our page, plus a
+    /// separate cite -> the destination (mockup case 2).
+    fn cite_folder(label: &str) -> Entry {
+        let mut e = mkentry(label, "2026-07-06T120000");
+        e.dir = Some(format!("/c/{}", label).into());
+        e.link_url = Some("https://nytimes.com/2026/07/road-diets".to_string());
+        e.link_title = Some("Road Diets Are Quietly Reshaping American Suburbs".to_string());
+        e
+    }
+
+    #[test]
+    fn cite_line_shows_title_and_domain() {
+        let e = cite_folder("narrow-streets");
+        let out = cite_line(&e, e.label.as_deref());
+        assert!(out.contains(r#"rel="noreferrer""#), "external links get noreferrer");
+        assert!(out.contains("<b>Road Diets Are Quietly Reshaping American Suburbs</b>"));
+        assert!(out.contains("<span>nytimes.com</span>"));
+        assert!(out.contains(r#"href="https://nytimes.com/2026/07/road-diets""#));
+    }
+
+    #[test]
+    fn cite_line_drops_title_equal_to_our_heading() {
+        // "label == title" degrade: the source is shown once (domain only), not twice.
+        let mut e = cite_folder("x");
+        e.link_title = Some("My Own Heading".to_string());
+        let out = cite_line(&e, Some("my own heading")); // case-insensitive match
+        assert!(!out.contains("<b>"), "duplicated title suppressed: {out}");
+        assert!(out.contains("<span>nytimes.com</span>"));
+    }
+
+    #[test]
+    fn cite_line_degrades_to_bare_domain_without_title() {
+        // Fetch never resolved a title -> the cite is just favicon + domain.
+        let mut e = cite_folder("x");
+        e.link_title = None;
+        let out = cite_line(&e, e.label.as_deref());
+        assert!(!out.contains("<b>"), "no title element without a resolved title");
+        assert!(out.contains("<span>nytimes.com</span>"));
+    }
+
+    #[test]
+    fn cite_line_preserves_http_for_the_css_caution_flag() {
+        let mut e = cite_folder("x");
+        e.link_url = Some("http://oldsite.example/gallery".to_string());
+        let out = cite_line(&e, e.label.as_deref());
+        // The scheme guard already vetted it; the "(not secure)" flag is pure CSS,
+        // so the template only has to preserve the http:// href verbatim.
+        assert!(out.contains(r#"href="http://oldsite.example/gallery""#));
+        assert!(out.contains("<span>oldsite.example</span>"));
+    }
+
+    #[test]
+    fn row_content_cite_keeps_our_heading_and_adds_a_source() {
+        let e = cite_folder("narrow-streets");
+        let all = vec![&e];
+        let row = render_row(&e, &all);
+        // Our label links to our page...
+        assert!(row.contains(r#"<h3><a href="/narrow-streets">"#), "row: {row}");
+        // ...and the destination is cited below it.
+        assert!(row.contains("<cite>"));
+        assert!(row.contains("<span>nytimes.com</span>"));
+    }
+
+    /// A bare link file (the post IS the destination). `webloc`/`url`/single-URL
+    /// text -> kind() == "link".
+    fn bare_link(label: Option<&str>) -> Entry {
+        let mut e = mkentry(label.unwrap_or("placeholder"), "2026-07-05T120000");
+        e.extension = "webloc".to_string();
+        e.link_url = Some("https://github.com/rust-lang/rust".to_string());
+        e.link_title = Some("rust-lang/rust".to_string());
+        if label.is_none() {
+            e.label = None;
+            e.slug = None;
+        }
+        e
+    }
+
+    #[test]
+    fn labeled_bare_link_is_a_link_post_with_our_heading() {
+        let e = bare_link(Some("worth-saving"));
+        assert_eq!(e.kind(), "link");
+        let all = vec![&e];
+        let row = render_row(&e, &all);
+        // Case 3: our label -> our page (card), the source cited below.
+        assert!(row.contains(r#"<h3><a href="/worth-saving">"#), "row: {row}");
+        assert!(row.contains("<cite>"));
+        assert!(row.contains("<b>rust-lang/rust</b>"));
+    }
+
+    #[test]
+    fn unlabeled_bare_link_promotes_the_cite_and_keeps_a_permalink() {
+        let e = bare_link(None);
+        assert_eq!(e.kind(), "link");
+        let all = vec![&e];
+        let row = render_row(&e, &all);
+        // Case 4: the destination's headline IS the headline (inside <h3>)...
+        assert!(row.contains("<h3><cite>"), "promoted cite: {row}");
+        assert!(row.contains("<b>rust-lang/rust</b>"));
+        // ...and a quiet permalink keeps our own card page reachable.
+        assert!(row.contains("data-perma"));
+    }
+
+    #[test]
+    fn cite_section_only_renders_for_a_content_post_that_cites() {
+        // A content post that cites -> a Source section on its page.
+        let cite_post = cite_folder("narrow-streets");
+        assert!(cite_section(&cite_post).contains(r#"<section id="source">"#));
+        // A bare link post shows its card instead, so no duplicate cite section.
+        let link_post = bare_link(Some("worth-saving"));
+        assert!(cite_section(&link_post).is_empty());
+        // A plain post with no destination -> nothing.
+        let plain = mkentry("just-a-note", "2026-07-01T120000");
+        assert!(cite_section(&plain).is_empty());
     }
 }

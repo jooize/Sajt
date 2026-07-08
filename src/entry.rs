@@ -178,6 +178,19 @@ pub struct Entry {
     /// an attachment file list below the body (`post-model.md` §6). Empty for a
     /// bare file, a listing (its files are the listing), or a post with none.
     pub attachments: Vec<ListItem>,
+    /// An outbound destination this post resolves to or cites (`post-model.md` §4),
+    /// orthogonal to `kind`. Set by the scanner from a `.webloc`/`.url`/single-URL
+    /// text file (the post *is* the link → `kind = "link"`) or a `link.*` sidecar
+    /// (a content post that *cites* a destination → keeps its own medium). Always
+    /// an `http(s)` URL that passed the scheme guard; `None` otherwise. The cite
+    /// renders it with `rel="noreferrer"` and the scheme flag. See `outbound.rs`.
+    pub link_url: Option<String>,
+    /// The destination's own headline for the cite line, resolved from the embed
+    /// cache by `resolve_embeds` (`post-model.md` §4). `None` until (or unless) that
+    /// fetch succeeds — the cite then degrades to the bare domain. It never
+    /// overrides the post's own `label`; a bare link with no label of its own
+    /// promotes this into its heading. Not part of a post's identity.
+    pub link_title: Option<String>,
 }
 
 impl Entry {
@@ -224,6 +237,17 @@ impl Entry {
         // extension (its `path` is a directory, not a readable file).
         if self.listing.is_some() {
             return "folder";
+        }
+        // A post whose whole substance is an outbound destination is a `link`
+        // (post-model.md §4): a bare file that IS a URL (`.webloc`/`.url`/single-
+        // URL text — `dir` is `None`), or a folder whose primary is a link file.
+        // A *content* post that merely cites a destination keeps its own medium,
+        // so this only fires when the primary itself is the link.
+        if self.link_url.is_some()
+            && (self.dir.is_none()
+                || matches!(normalize_ext(&self.extension).as_str(), "webloc" | "url"))
+        {
+            return "link";
         }
         match normalize_ext(&self.extension).as_str() {
             _ if is_image_ext(&self.extension) => "photo",

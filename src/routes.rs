@@ -691,14 +691,26 @@ async fn serve_entry(entry: &Entry, store: &ContentStore) -> Response {
         .filter(|e| e.timestamp < entry.timestamp)
         .max_by_key(|e| e.timestamp);
 
-    // Check if this entry has a cached embed
-    if let Some(embed_data) = store.embed_cache.get(&entry.path) {
-        if !embed_data.is_upstream_deleted() {
-            let cache_dir =
-                crate::embed::cache_dir_for(&store.cache_dir, &store.content_dir, &entry.path);
-            let card_html = crate::embed::render_embed_card(embed_data, &cache_dir);
-            return Html(templates::entry_page(entry, &card_html, &all, next)).into_response();
+    // A link post *is* its destination (post-model.md §4): its body is the rich
+    // embed card. A content post that merely *cites* a destination keeps its own
+    // body and gets a cite section below it (handled by the render path + template),
+    // so the card branch is gated to link posts only — otherwise a folder post with
+    // a `link.*` sidecar (also in the embed cache, keyed by its primary) would be
+    // hijacked into showing the card instead of its own words.
+    if entry.kind() == "link" {
+        if let Some(embed_data) = store.embed_cache.get(&entry.path) {
+            if !embed_data.is_upstream_deleted() {
+                let cache_dir =
+                    crate::embed::cache_dir_for(&store.cache_dir, &store.content_dir, &entry.path);
+                let card_html = crate::embed::render_embed_card(embed_data, &cache_dir);
+                return Html(templates::entry_page(entry, &card_html, &all, next)).into_response();
+            }
         }
+        // A link post with no usable embed (fetch failed / upstream deleted / not
+        // yet fetched): render the bare destination cite rather than fall through to
+        // a raw `.webloc`/`.url` byte download, so the page stays a working link.
+        let body = templates::bare_link_body(entry);
+        return Html(templates::entry_page(entry, &body, &all, next)).into_response();
     }
 
     let content = match std::fs::read(&entry.path) {

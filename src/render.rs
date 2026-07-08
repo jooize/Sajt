@@ -63,15 +63,6 @@ pub async fn render_entry(extension: &str, file_content: &[u8]) -> Result<Render
         } else {
             Ok(RenderedContent::Html(html))
         }
-    } else if ext == "link" {
-        // .link files are rendered via embed system; fallback to plain link.
-        // (Retired in Commit 7 in favor of the `link_url` axis.)
-        let url = String::from_utf8_lossy(file_content).trim().to_string();
-        let html = format!(
-            r#"<p><a href="{url}" rel="noopener noreferrer" target="_blank">{url}</a></p>"#,
-            url = url.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;"),
-        );
-        Ok(RenderedContent::Html(html))
     } else if ext == "txt" {
         let text = String::from_utf8_lossy(file_content).to_string();
         Ok(RenderedContent::PreformattedText(text))

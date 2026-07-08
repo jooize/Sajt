@@ -8,9 +8,12 @@
 //!
 //! Periodic liveness checks verify originals are still public; deleted/removed content stops being served.
 //!
-//! Trust model: the site operator authors every `.link` file, so URLs are trusted.
-//! Outbound fetches still go through a single shared client that pins timeouts and
-//! a generic User-Agent so we never leak request-shape detail about the operator.
+//! Trust model: the site operator authors every link destination (`post-model.md`
+//! §4), but destinations are not blindly trusted -- each URL passes the scheme
+//! guard (`outbound.rs`) before it is stored, and every outbound fetch goes through
+//! the SSRF-hardened `guarded_fetch` (pinned DNS, public-IP-only, redirect-vetted,
+//! timeout- and size-capped) with a generic User-Agent, so a hostile destination
+//! can neither reach an internal address nor learn request-shape detail.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -546,6 +549,24 @@ impl EmbedData {
                     None => source.to_string(),
                 }
             }
+        }
+    }
+
+    /// The destination's own headline for a `<cite>` line (`post-model.md` §4) —
+    /// the bare title, without the `\u{00b7} source` suffix `display_label` adds
+    /// for generic pages (the cite shows the domain separately, so appending it
+    /// here would say it twice). Social/Apple embeds have no clean title distinct
+    /// from their label, so they reuse `display_label`, whose suffix is a handle or
+    /// artist, not the domain. Falls back to the host when the page had no title.
+    pub fn cite_title(&self) -> String {
+        match self {
+            EmbedData::Generic(e) => e
+                .title
+                .as_deref()
+                .filter(|t| !t.is_empty())
+                .unwrap_or(&e.hostname)
+                .to_string(),
+            _ => self.display_label(),
         }
     }
 
@@ -1869,13 +1890,16 @@ fn extract_instagram_username(url: &str) -> Option<String> {
 
 // ─── Public API ─────────────────────────────────────────────────
 
-/// Resolve embeds for entries that contain recognized URLs.
+/// Resolve embeds for every post that resolves to (or cites) an outbound URL.
 ///
-/// For each `.link` entry:
+/// The scanner already extracted and scheme-guarded the destination into
+/// `entry.link_url` (`post-model.md` §4) — a bare link post, or a content post
+/// citing a `link.*` sidecar. For each such entry:
 /// 1. Check sidecar cache -- if `meta.json5` exists, load it
 /// 2. Otherwise, fetch via oEmbed, OG tags, or iTunes Lookup API
-/// 3. Write cache to sidecar directory
-/// 4. Set `display_label` on the entry
+/// 3. Write cache to sidecar directory (keyed by the entry's own path)
+/// 4. Set `link_title` (the cite headline) always, and `display_label` only when
+///    the post has no label of its own (a bare link inherits its target's title)
 pub async fn resolve_embeds(
     entries: &mut [crate::entry::Entry],
     content_dir: &Path,
@@ -1884,24 +1908,23 @@ pub async fn resolve_embeds(
     let mut cache = HashMap::new();
 
     for entry in entries.iter_mut() {
-        // .link files contain a single URL
-        if entry.extension != "link" {
-            continue;
-        }
-
-        let content = match std::fs::read_to_string(&entry.path) {
-            Ok(c) => c,
-            Err(_) => continue,
+        // A post's outbound destination (already http(s), vetted by the scheme
+        // guard at scan time) is what we fetch; posts with none are skipped.
+        let url = match entry.link_url.clone() {
+            Some(u) => u,
+            None => continue,
         };
 
-        let trimmed = content.trim();
-
-        let parsed = match parse_link_url(trimmed) {
+        let parsed = match parse_link_url(&url) {
             Some(s) => s,
             None => {
+                // A well-formed destination with no embed provider (e.g. a plain
+                // `http://` page — `parse_link_url` handles only https platforms and
+                // the generic-https fallback). The cite still shows the bare domain.
                 tracing::debug!(
-                    "File {} has .link extension but content is not a recognized URL",
-                    entry.path.display()
+                    "No embed provider for outbound link {} ({})",
+                    entry.path.display(),
+                    url
                 );
                 continue;
             }
@@ -1917,10 +1940,12 @@ pub async fn resolve_embeds(
             .into_owned();
 
         // Reuse the cache only when it was written for the current mtime; an
-        // edited .link (new mtime) reads as a miss and refetches below.
+        // edited link destination (new mtime) reads as a miss and refetches below.
         if let Some(data) = read_cached(&entry_cache_dir, mtime) {
             if !data.is_upstream_deleted() {
-                // Only set display_label if entry has no custom label
+                // The cite headline always comes from the destination; the post's
+                // own display label only when it has none of its own.
+                entry.link_title = Some(data.cite_title());
                 if entry.label.is_none() {
                     entry.display_label = Some(data.display_label());
                 }
@@ -1964,7 +1989,9 @@ pub async fn resolve_embeds(
                     ),
                 }
 
-                // Set display_label if no custom label
+                // The cite headline always comes from the destination; the post's
+                // own display label only when it has none of its own.
+                entry.link_title = Some(data.cite_title());
                 if entry.label.is_none() {
                     entry.display_label = Some(data.display_label());
                 }
@@ -2984,6 +3011,38 @@ mod tests {
             last_checked: None,
         });
         assert_eq!(data.display_label(), "Hello \u{00b7} example.com");
+    }
+
+    #[test]
+    fn generic_cite_title_is_the_bare_title_without_the_source_suffix() {
+        // The cite shows the domain separately, so cite_title must NOT append it
+        // (unlike display_label) -- otherwise the source reads twice.
+        let data = EmbedData::Generic(GenericEmbed {
+            url: "https://example.com/x".to_string(),
+            hostname: "example.com".to_string(),
+            site_name: Some("Example Site".to_string()),
+            title: Some("Hello".to_string()),
+            description: None,
+            image_url: None,
+            image_file: None,
+            upstream_deleted: false,
+            last_checked: None,
+        });
+        assert_eq!(data.cite_title(), "Hello");
+
+        // No title -> the host stands in as the headline.
+        let data = EmbedData::Generic(GenericEmbed {
+            url: "https://example.com/x".to_string(),
+            hostname: "example.com".to_string(),
+            site_name: None,
+            title: None,
+            description: None,
+            image_url: None,
+            image_file: None,
+            upstream_deleted: false,
+            last_checked: None,
+        });
+        assert_eq!(data.cite_title(), "example.com");
     }
 
     #[test]
