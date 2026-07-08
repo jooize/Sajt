@@ -731,6 +731,10 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
     let mut date_markers: Vec<(String, PostDate)> = Vec::new();
     let mut aliases: Vec<String> = Vec::new();
     let mut files: Vec<FileChild> = Vec::new();
+    // Public, non-marker subfolders are nested listings (post-model.md §6): folder
+    // rows in this folder's listing/attachments, browsable at `<parent>/<name>/`.
+    // Untagged subfolders stay invisible (fail-closed allowlist).
+    let mut subdirs: Vec<ListItem> = Vec::new();
     // An empty `index/` marker forces listing mode (post-model.md §6) — the same
     // file/folder split web servers use (`index.md` file = primary; `index/`
     // folder = listing directive). Joins the empty-folder marker vocabulary.
@@ -759,8 +763,11 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
                 }
             } else if let Some(alias) = parse_alias_marker(&cname) {
                 aliases.push(alias);
+            } else if file_is_public(&cpath) {
+                let mtime = mtime_local(&cpath).unwrap_or_else(epoch);
+                subdirs.push(dir_list_item(&cname, &cpath, mtime));
             } else {
-                tracing::debug!("Ignoring subfolder in {}: {}", dir.display(), cname);
+                tracing::debug!("Ignoring non-public subfolder in {}: {}", dir.display(), cname);
             }
         } else {
             let stem = split_name(&cname).0.to_string();
@@ -809,7 +816,7 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
     // `index`/folder-name document then becomes the listing's intro prose.
     if force_listing {
         let intro = plain.iter().find(|f| is_candidate(f));
-        let listing = build_listing(&plain, intro, Vec::new());
+        let listing = build_listing(&plain, &subdirs, intro, Vec::new());
         return Ok(FolderScan {
             primary: None,
             listing: Some(listing),
@@ -834,7 +841,9 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
     let primary_child = match primary_child {
         Some(p) => p,
         None => {
-            if plain.is_empty() {
+            // Truly empty (no files and no public subfolders) is the only NoPrimary
+            // case; a folder of only public subfolders is a listing of them.
+            if plain.is_empty() && subdirs.is_empty() {
                 return Ok(FolderScan {
                     primary: None,
                     listing: None,
@@ -862,7 +871,7 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
             } else {
                 Vec::new()
             };
-            let listing = build_listing(&plain, None, collision);
+            let listing = build_listing(&plain, &subdirs, None, collision);
             return Ok(FolderScan {
                 primary: None,
                 listing: Some(listing),
@@ -890,14 +899,17 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         mtime: primary_child.mtime,
     };
 
-    // Attachments = the post's public sibling files (everything else public),
-    // in filename order — rendered below the body (post-model.md §6).
-    let mut attachments: Vec<ListItem> = plain
+    // Attachments = the post's public sibling files + public subfolders (folder
+    // rows), in filename order — rendered below the body (post-model.md §6).
+    let mut att_files: Vec<ListItem> = plain
         .iter()
         .filter(|f| f.path != primary_child.path && file_is_public(&f.path))
         .map(to_list_item)
         .collect();
+    att_files.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut attachments = subdirs.clone();
     attachments.sort_by(|a, b| a.name.cmp(&b.name));
+    attachments.extend(att_files); // folders first, then files
 
     Ok(FolderScan {
         primary: Some(primary),
@@ -908,6 +920,53 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         revisions,
         error: None,
     })
+}
+
+/// Build a listing for a nested subfolder, read fresh from disk (post-model.md
+/// §6). A nested folder has no identity or primary resolution — it is purely a
+/// browsable index of its public files and public sub-subfolders. Markers,
+/// dotfiles, cache dirs, and `copy [n]` snapshots are excluded; the caller has
+/// already confirmed the whole path is `public` via `path_visible`.
+pub(crate) fn build_dir_listing(dir: &Path) -> Listing {
+    let mut plain: Vec<FileChild> = Vec::new();
+    let mut subdirs: Vec<ListItem> = Vec::new();
+    let read = match std::fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(_) => return build_listing(&[], &[], None, Vec::new()),
+    };
+    for child in read.filter_map(Result::ok) {
+        let cpath = child.path();
+        let cname = match cpath.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if cname.starts_with('.') || is_cache_name(&cname) {
+            continue;
+        }
+        match child.file_type() {
+            Ok(t) if t.is_dir() => {
+                // Skip the empty-marker vocabulary; list public content subfolders.
+                let is_marker = (cname.eq_ignore_ascii_case("index")
+                    || parse_date_marker(&cname).is_some()
+                    || parse_alias_marker(&cname).is_some())
+                    && is_effectively_empty(&cpath);
+                if !is_marker && file_is_public(&cpath) {
+                    let mtime = mtime_local(&cpath).unwrap_or_else(epoch);
+                    subdirs.push(dir_list_item(&cname, &cpath, mtime));
+                }
+            }
+            Ok(_) => {
+                let stem = split_name(&cname).0.to_string();
+                if parse_revision_suffix(&stem).is_some() {
+                    continue; // `copy [n]` snapshots are not listed
+                }
+                let mtime = mtime_local(&cpath).unwrap_or_else(epoch);
+                plain.push(FileChild { name: cname, stem, path: cpath, mtime });
+            }
+            Err(_) => continue,
+        }
+    }
+    build_listing(&plain, &subdirs, None, Vec::new())
 }
 
 /// Whether a file is `public` (and not `private`) at its own level — the listing
@@ -931,21 +990,46 @@ fn to_list_item(f: &FileChild) -> ListItem {
         path: f.path.clone(),
         mtime: f.mtime,
         size,
+        is_dir: false,
     }
 }
 
-/// Build a `Listing` from a folder's plain files: the public ones become rows (in
-/// filename order), an `intro` document is excluded from the grid, and `total`
-/// counts every candidate file so the reader can see something is withheld.
-fn build_listing(plain: &[FileChild], intro: Option<&FileChild>, collision: Vec<String>) -> Listing {
+/// A subfolder listing row — a nested listing reachable at `<parent>/<name>/`.
+fn dir_list_item(name: &str, path: &Path, mtime: NaiveDateTime) -> ListItem {
+    ListItem {
+        name: name.to_string(),
+        stem: name.to_string(),
+        ext: String::new(),
+        path: path.to_path_buf(),
+        mtime,
+        size: 0,
+        is_image: false,
+        is_dir: true,
+    }
+}
+
+/// Build a `Listing` from a folder's plain files and its public subfolders: the
+/// public files become rows (an `intro` document is excluded), the subfolders
+/// become nested-listing folder rows; all in filename order. `total` counts every
+/// candidate file so the reader can see something is withheld. Folders sort first.
+fn build_listing(
+    plain: &[FileChild],
+    subdirs: &[ListItem],
+    intro: Option<&FileChild>,
+    collision: Vec<String>,
+) -> Listing {
     let intro_path = intro.map(|f| f.path.as_path());
     let listable: Vec<&FileChild> =
         plain.iter().filter(|f| Some(f.path.as_path()) != intro_path).collect();
-    let mut items: Vec<ListItem> =
+    let mut files: Vec<ListItem> =
         listable.iter().filter(|f| file_is_public(&f.path)).map(|f| to_list_item(f)).collect();
-    items.sort_by(|a, b| a.name.cmp(&b.name)); // Finder's filename order, not mtime.
+    files.sort_by(|a, b| a.name.cmp(&b.name)); // Finder's filename order, not mtime.
+    let mut dirs = subdirs.to_vec();
+    dirs.sort_by(|a, b| a.name.cmp(&b.name));
+    // Folders first, then files — the usual Finder-column convention.
+    dirs.extend(files);
     Listing {
-        items,
+        items: dirs,
         total: listable.len(),
         intro: intro.map(|f| f.path.clone()),
         intro_ext: intro.map(|f| split_name(&f.name).1.to_string()).unwrap_or_default(),
@@ -1639,6 +1723,46 @@ mod tests {
         assert_eq!(names, vec!["cv.pdf", "refs.pdf"], "public siblings, filename order");
         assert!(!names.contains(&"resume.md"), "the primary is not an attachment");
         assert!(!names.contains(&"draft.txt"), "untagged sibling excluded");
+    }
+
+    #[test]
+    fn listing_includes_public_subfolders_as_rows_untagged_excluded() {
+        let t = TmpDir::new();
+        touch(t.path(), "gal/a.jpg", "1");
+        touch(t.path(), "gal/b.jpg", "2");
+        touch(t.path(), "gal/extra/c.jpg", "3");
+        touch(t.path(), "gal/hidden/d.jpg", "4");
+        if !set_tags(&t.path().join("gal/a.jpg"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        assert!(set_tags(&t.path().join("gal/b.jpg"), &["public"]));
+        assert!(set_tags(&t.path().join("gal/extra"), &["public"]));
+        // gal/hidden left untagged → never a row.
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "gal");
+        let listing = e.listing.as_ref().expect("no primary -> listing");
+        let dirs: Vec<&str> = listing.items.iter().filter(|i| i.is_dir).map(|i| i.name.as_str()).collect();
+        assert_eq!(dirs, vec!["extra"], "only the public subfolder rows; hidden excluded");
+        assert!(listing.items[0].is_dir, "folders sort before files");
+        assert!(!listing.is_gallery(), "a folder row present -> file list, not gallery");
+    }
+
+    #[test]
+    fn folder_of_only_public_subfolders_is_a_listing_not_error() {
+        let t = TmpDir::new();
+        touch(t.path(), "photos/travel/x.jpg", "x");
+        touch(t.path(), "photos/food/y.jpg", "y");
+        if !set_tags(&t.path().join("photos/travel"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        assert!(set_tags(&t.path().join("photos/food"), &["public"]));
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "photos");
+        assert!(e.error.is_none(), "subfolders-only is a listing, not NoPrimary");
+        let listing = e.listing.as_ref().expect("subfolders-only -> listing");
+        let names: Vec<&str> = listing.items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, vec!["food", "travel"], "both subfolders, filename order");
+        assert!(listing.items.iter().all(|i| i.is_dir));
     }
 
     #[test]

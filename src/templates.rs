@@ -2614,25 +2614,63 @@ pub fn listing_page(
     let canon = canonical(entry, all_entries);
     let canon_href = canonical_href(entry, all_entries);
 
-    // "N files" (or "N of M files public"), so a reader can tell that the
-    // allowlist is withholding something rather than the folder being empty.
-    let public = listing.items.len();
-    let count = if listing.total > public {
-        format!("{} of {} files public", public, listing.total)
-    } else if public == 1 {
-        "1 file".to_string()
-    } else {
-        format!("{} files", public)
-    };
+    let body = listing_body(
+        label,
+        &canon.path,
+        &canon_href,
+        &post_header(entry),
+        listing,
+        intro_html,
+        &render_site_header(&ctx),
+    );
+    page_shell(&format!("esko.bar — {}", label), &body, "listing", false)
+}
 
-    let collision = listing_collision_notice(listing);
+/// A nested subfolder listing (`post-model.md` §6): `/label/sub/…` browsed as its
+/// own page. It has no `Entry` (nested items carry no identity), so the title and
+/// item-href base come straight from the request path — the path IS the canonical
+/// URL, mirroring the filesystem verbatim. `base_path` is the decoded request path
+/// without a trailing slash (e.g. `/resume/talks`).
+pub fn nested_listing_page(
+    base_path: &str,
+    title: &str,
+    listing: &Listing,
+    all_entries: &[&Entry],
+) -> String {
+    let cloud = compute_cloud(all_entries);
+    let view = ViewFilter::default();
+    let ctx = HeaderContext::plain(&cloud, &view);
+
+    // A quiet breadcrumb up to the parent path stands in for the post header.
+    let parent = base_path.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+    let parent_href = if parent.is_empty() { "/".to_string() } else { encode_path(parent) };
+    let header = format!(
+        r#"<header><nav><a href="{href}">&larr; up</a></nav></header>"#,
+        href = html_escape(&parent_href),
+    );
+
+    let body =
+        listing_body(title, base_path, &encode_path(base_path), &header, listing, None, &render_site_header(&ctx));
+    page_shell(&format!("esko.bar — {}", title), &body, "listing", false)
+}
+
+/// The shared `<article id="listing">` body for both a top-level listing (Entry)
+/// and a nested one (path). `base_path` is the decoded path each item href hangs
+/// off; `header_html` is the post header (top-level) or a breadcrumb (nested).
+fn listing_body(
+    title: &str,
+    base_path: &str,
+    canon_href: &str,
+    header_html: &str,
+    listing: &Listing,
+    intro_html: Option<&str>,
+    site_header: &str,
+) -> String {
     let intro = match intro_html {
         Some(h) if !h.is_empty() => format!("<section>{}</section>", h),
         _ => String::new(),
     };
-    let grid = listing_grid(&canon.path, listing);
-
-    let body = format!(
+    format!(
         r#"{header}
 {crumbs}
 <main>
@@ -2643,18 +2681,37 @@ pub fn listing_page(
 <footer><a href="/">timeline</a></footer>
 </article>
 </main>"#,
-        header = render_site_header(&ctx),
+        header = site_header,
         crumbs = crumbs(),
-        canonical = html_escape(&canon_href),
-        post_header = post_header(entry),
-        title = html_escape(label),
-        count = html_escape(&count),
-        collision = collision,
+        canonical = html_escape(canon_href),
+        post_header = header_html,
+        title = html_escape(title),
+        count = html_escape(&listing_count(listing)),
+        collision = listing_collision_notice(listing),
         intro = intro,
-        grid = grid,
-    );
+        grid = listing_grid(base_path, listing),
+    )
+}
 
-    page_shell(&format!("esko.bar — {}", label), &body, "listing", false)
+/// The "N files" / "N of M files public" (+ folder count) header line, so a
+/// reader can tell the allowlist is withholding something. Folder rows are
+/// counted separately from files.
+fn listing_count(listing: &Listing) -> String {
+    let files = listing.items.iter().filter(|i| !i.is_dir).count();
+    let dirs = listing.items.iter().filter(|i| i.is_dir).count();
+    let mut s = if listing.total > files {
+        format!("{} of {} files public", files, listing.total)
+    } else if files == 1 {
+        "1 file".to_string()
+    } else {
+        format!("{} files", files)
+    };
+    if dirs == 1 {
+        s.push_str(", 1 folder");
+    } else if dirs > 1 {
+        s.push_str(&format!(", {} folders", dirs));
+    }
+    s
 }
 
 /// The listing collision notice: several files claimed the primary slot, so the
@@ -2716,6 +2773,20 @@ fn file_list_html(base_path: &str, items: &[ListItem]) -> String {
     let rows: String = items
         .iter()
         .map(|it| {
+            let iso = html_escape(&it.mtime.format("%Y-%m-%dT%H:%M:%S").to_string());
+            let date = html_escape(&it.mtime.format("%Y-%m-%d").to_string());
+            if it.is_dir {
+                // A subfolder row: a nested listing at `<base>/<name>/` (trailing
+                // slash). The path IS the canonical URL, mirroring the filesystem.
+                let href = format!("{}/", encode_path(&format!("{}/{}", base_path, it.name)));
+                return format!(
+                    r#"<li><a href="{href}"><i style="--kind:var(--violet)">&#9656;</i><b>{stem}<small>/</small></b><span>folder</span><time datetime="{iso}">{date}</time></a></li>"#,
+                    href = html_escape(&href),
+                    stem = html_escape(&it.stem),
+                    iso = iso,
+                    date = date,
+                );
+            }
             let href = encode_path(&format!("{}/{}", base_path, it.name));
             let (badge, color) = kind_badge(&it.ext);
             format!(
@@ -2726,8 +2797,8 @@ fn file_list_html(base_path: &str, items: &[ListItem]) -> String {
                 stem = html_escape(&it.stem),
                 ext = html_escape(&dot_ext(&it.ext)),
                 size = html_escape(&human_size(it.size)),
-                iso = html_escape(&it.mtime.format("%Y-%m-%dT%H:%M:%S").to_string()),
-                date = html_escape(&it.mtime.format("%Y-%m-%d").to_string()),
+                iso = iso,
+                date = date,
             )
         })
         .collect();

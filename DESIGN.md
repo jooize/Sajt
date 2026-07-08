@@ -204,7 +204,13 @@ where symlinks and xattrs do not.
   `public` sibling files render as a file list **below the body** (filename
   order) — one idiom, drop-and-tag to add, untag to remove. Listing and post are
   one gradient (primary + public files = post with attachments; no primary +
-  public files = pure listing).
+  public files = pure listing). **Public subfolders** are folder rows in the
+  list and are themselves **nested listings** browsable at `/label/sub/…` to any
+  depth — a nested item's **path IS its canonical URL**, mirroring the filesystem
+  verbatim (no flat-namespace claim, no identity). Visibility is gated at **every**
+  level (fail-closed AND, deny-wins): once a request is scoped into a folder post
+  it resolves to an asset, a nested listing, or a clean 404 — a hidden nested path
+  404s identically to a missing one (no existence oracle), never falling through.
 - The **only** remaining fail-closed *error* is **multiple date markers** — a
   genuinely no-right-answer case (an unknown publish date), shown as an errored
   row and an HTTP 500 page naming the conflict.

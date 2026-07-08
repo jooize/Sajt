@@ -166,6 +166,13 @@ pub async fn catch_all(
         return resp;
     }
 
+    // Nested subfolder listing (`/{folder}/{sub…}/`): a public subfolder browsed
+    // as its own page. Same precedence reason as assets — the parser can't read a
+    // multi-segment nested path. `try_asset` already handled nested files.
+    if let Some(resp) = try_folder_listing(&all_entries, &path, &store.content_dir) {
+        return resp;
+    }
+
     // The time-of-day disambiguator is a URL path segment now (`/2026/07/04/191430`),
     // parsed straight off the path — no `?time=` query string.
     let query = parse_url_path(&format!("/{}", path));
@@ -379,6 +386,74 @@ fn try_asset(all_entries: &[&Entry], path: &str, content_dir: &std::path::Path) 
             .body(Body::from(bytes))
             .unwrap_or_else(|_| not_found()),
     )
+}
+
+/// Resolve a nested subfolder listing request (`/{folder}/{sub…}/`) to a
+/// browsable directory strictly inside that post's folder. Returns None when the
+/// path is not a nested directory (wrong shape, a file — handled by `try_asset` —
+/// a hidden/escaping path, or the top-level `/label` itself), so the caller falls
+/// through. Every path component must be `public` (fail-closed, deny-wins).
+fn try_folder_listing(
+    all_entries: &[&Entry],
+    path: &str,
+    content_dir: &std::path::Path,
+) -> Option<Response> {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.len() < 2 {
+        return None; // the top-level `/label` listing is served as its own post
+    }
+    let first = segments[0];
+    // Never shadow the date hierarchy (`/2026/03/12/…`) with a same-named post.
+    if first.len() == 4 && first.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+
+    let owner = templates::name_owner(first, all_entries)?;
+    let dir = match owner.dir.as_ref() {
+        Some(d) => d,
+        None => return None, // a bare-file post has no subfolders — fall through
+    };
+
+    // Past this point the request is scoped *into* a real folder post, so it
+    // resolves here or 404s — it never falls through to the timeline. Visible
+    // files were already served by `try_asset`; a hidden or missing path 404s
+    // identically (no existence oracle), and so does a hidden nested listing.
+    let resolve = || -> Option<Response> {
+        let candidate = dir.join(segments[1..].join("/"));
+        let canon_dir = std::fs::canonicalize(dir).ok()?;
+        let canon_target = std::fs::canonicalize(&candidate).ok()?;
+        if !canon_target.starts_with(&canon_dir) {
+            return None; // path-traversal guard
+        }
+        if !std::fs::metadata(&canon_target).ok()?.is_dir() {
+            return None; // a file is an asset (try_asset), not a listing
+        }
+        // Fail-closed: every component (the post, each subfolder) must be public.
+        if !crate::tags::path_visible(content_dir, &canon_target) {
+            return None;
+        }
+        Some(render_nested_listing(&canon_target, first, &segments, all_entries))
+    };
+    Some(resolve().unwrap_or_else(not_found))
+}
+
+/// Render a resolved, visible nested subfolder as a listing page.
+fn render_nested_listing(
+    canon_target: &std::path::Path,
+    first: &str,
+    segments: &[&str],
+    all_entries: &[&Entry],
+) -> Response {
+    let listing = crate::content::build_dir_listing(canon_target);
+    let title = canon_target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(first)
+        .to_string();
+    // The request path (no trailing slash) IS the canonical URL and the base each
+    // item href hangs off — mirroring the filesystem verbatim.
+    let base = format!("/{}", segments.join("/"));
+    Html(templates::nested_listing_page(&base, &title, &listing, all_entries)).into_response()
 }
 
 /// Find the one archived revision a date-path request addresses, or None when

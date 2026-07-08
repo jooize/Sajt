@@ -63,10 +63,14 @@ pub struct ListItem {
     #[allow(dead_code)]
     pub path: PathBuf,
     pub mtime: NaiveDateTime,
-    /// Size in bytes, shown discreetly in the row.
+    /// Size in bytes, shown discreetly in the row (0 for a subfolder).
     pub size: u64,
     /// Whether this is an image medium (drives gallery vs. file-list).
     pub is_image: bool,
+    /// Whether this row is a public subfolder — a nested listing reachable at
+    /// `<parent>/<name>/` (post-model.md §6). Renders as a folder row, never a
+    /// gallery tile, so any subfolder forces the file-list style.
+    pub is_dir: bool,
 }
 
 /// A folder that renders as a browsable index rather than a single document — the
