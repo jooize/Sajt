@@ -6,6 +6,7 @@ mod grader;
 mod migrate;
 mod render;
 mod routes;
+mod slug;
 mod stats;
 mod tags;
 mod templates;

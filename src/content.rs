@@ -1,5 +1,6 @@
 use crate::embed::EmbedData;
 use crate::entry::{Entry, PostError, Revision, COPY_KEYWORD};
+use crate::slug::{is_reserved_slug, slug};
 use crate::tags::{read_finder_comment, read_tags_colored, Tag};
 use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone};
 use std::collections::HashMap;
@@ -175,13 +176,10 @@ fn build_bare_post(item: &TopItem) -> Entry {
     // Bare file: the file itself is both the commented object and the text source.
     let excerpt = row_description(&item.path, &item.path, ext);
 
-    // Copies were already routed away, so a space in a bare label means the name
-    // parsed as no known grammar (a typo or look-alike char) — fail closed.
-    let error = if stem.contains(' ') {
-        Some(PostError::UnparseableName(item.name.clone()))
-    } else {
-        None
-    };
+    // Natural filenames (spaces, case, punctuation) publish now: the address is
+    // the derived slug, so a spaced name is no error. Visibility is gated by the
+    // `public`/`private` tag, never by the name — a mistyped name cannot leak.
+    let slug = derive_slug(stem);
 
     Entry {
         path: item.path.clone(),
@@ -189,6 +187,7 @@ fn build_bare_post(item: &TopItem) -> Entry {
         timestamp,
         edited: None,
         label: Some(stem.to_string()),
+        slug,
         display_label: None,
         excerpt,
         extension: ext.to_string(),
@@ -196,8 +195,26 @@ fn build_bare_post(item: &TopItem) -> Entry {
         grade: None,
         aliases: Vec::new(),
         revisions: Vec::new(),
-        error,
+        error: None,
     }
+}
+
+/// Derive a post's slug and loudly log a reserved one. A slug that is `saved` or
+/// purely numeric never claims its bare URL (the router owns those segments), so
+/// the post lives at its date path instead; the log makes that non-silent.
+fn derive_slug(name: &str) -> Option<String> {
+    let s = slug(name);
+    if let Some(ref slug) = s {
+        if is_reserved_slug(slug) {
+            tracing::warn!(
+                "Post name '{}' slugs to the reserved segment '/{}' (a route or the year view); \
+                 it yields the bare URL and is addressed at its date path instead.",
+                name,
+                slug
+            );
+        }
+    }
+    s
 }
 
 /// A folder post: one primary content file, optional assets, and empty marker
@@ -207,12 +224,6 @@ fn build_folder_post(item: &TopItem) -> Entry {
     let label = item.name.clone();
     // Finder tags are read at the post level — here, the folder itself.
     let tags = read_tags_colored(dir);
-
-    // A spaced folder name is not a valid post name (aliases live inside; copies
-    // were routed away) — fail closed.
-    if label.contains(' ') {
-        return errored_folder(item, tags, PostError::UnparseableName(label));
-    }
 
     let scan = match scan_folder(dir, &label) {
         Ok(s) => s,
@@ -242,12 +253,15 @@ fn build_folder_post(item: &TopItem) -> Entry {
         None => (primary.mtime, None),
     };
 
+    let slug = derive_slug(&label);
+
     Entry {
         path: primary.path,
         dir: Some(dir.clone()),
         timestamp,
         edited,
         label: Some(label),
+        slug,
         display_label: None,
         excerpt,
         extension: ext.to_string(),
@@ -268,6 +282,7 @@ fn errored_folder(item: &TopItem, tags: Vec<Tag>, error: PostError) -> Entry {
         timestamp: mtime_local(&item.path).unwrap_or_else(epoch),
         edited: None,
         label: Some(item.name.clone()),
+        slug: slug(&item.name),
         display_label: None,
         excerpt: None,
         extension: String::new(),
@@ -1242,13 +1257,16 @@ mod tests {
     }
 
     #[test]
-    fn spaced_name_fails_closed() {
+    fn spaced_name_publishes_with_a_slug() {
         let t = TmpDir::new();
-        touch(t.path(), "my file.md", "oops");
+        touch(t.path(), "Fog Over The Bay.md", "natural filename");
         let entries = scan_entries(t.path()).unwrap();
         assert_eq!(entries.len(), 1);
         let e = &entries[0];
-        assert!(matches!(e.error, Some(PostError::UnparseableName(_))));
+        // Natural macOS filenames publish now; the address is the derived slug.
+        assert!(e.error.is_none());
+        assert_eq!(e.label.as_deref(), Some("Fog Over The Bay"));
+        assert_eq!(e.slug.as_deref(), Some("fog-over-the-bay"));
     }
 
     #[test]

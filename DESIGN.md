@@ -139,13 +139,27 @@ where symlinks and xattrs do not.
   shortlinks. A post's aliases are listed on its entry page (server-rendered),
   so they are never fully invisible. A bare file carries no aliases — fold it
   into a folder first.
+- **The address is a derived slug (SHIPPED 2026-07-08 — `post-model.md` §1).**
+  A post's name stays natural (spaces, case, punctuation — `Fog Over The Bay.jpg`
+  just publishes); the URL is a lowercase, hyphenated *projection* of it
+  (`/fog-over-the-bay`). Recipe (`slug.rs`): NFKD, drop combining marks (folds
+  `é`→`e`), NFC, Unicode-lowercase, apostrophes join (`it's`→`its`), every other
+  non-alphanumeric run → one hyphen; non-Latin scripts are kept (Hangul, Cyrillic,
+  Japanese). A punctuation-only name (`!!!`) has no slug and is date-addressed.
+  **Collisions key on the slug**, so `Fog Over The Bay`, `fog-over-the-bay`, and a
+  mixed-case URL all fold to one address (mixed case 301s to it). Reserved slugs
+  (`saved`, purely-numeric) never claim the bare URL — the router owns those — so
+  the post is date-addressed and carries a persistent reserved-name notice.
 - **One flat namespace; the oldest claim wins the bare URL.** When a name is
   claimed by more than one post/file/alias, the oldest claim keeps `/name` —
   an established URL never changes meaning (cool URIs), so a newly-dropped
   `IMG_4392` can never silently retarget an old link. The other claimants stay
   reachable at their date paths, the winning page carries a visible "this name
-  is also used by …" notice, and the collision is logged loudly. Handing a name
-  over is deliberate: delete the old claim.
+  is also used by …" notice (and each colliding **timeline row** now expands a
+  "N others share this address" disclosure), and the collision is logged loudly.
+  A **dead bare label** (renamed away, no `alias`) returns a 404 with closest-slug
+  suggestions — never an auto-redirect, which a reused name would mis-resolve.
+  Handing a name over is deliberate: delete the old claim.
 - **Revisions** are Finder's own ` copy [n]` suffix. The unsuffixed post is
   always current (keeps its URL, tags, and timeline slot); `label copy/`
   folders (or ` copy` files inside the post) are archived snapshots, dated by

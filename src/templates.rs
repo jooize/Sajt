@@ -1,4 +1,5 @@
 use crate::entry::{Entry, PostError, Revision};
+use crate::slug::{is_reserved_slug, slug};
 use crate::stats::{compute_cloud, finder_color_var, CloudStats, TagStat, ViewFilter};
 
 // ============================================================================
@@ -914,9 +915,16 @@ const JS: &str = r##"
     btn.textContent = done;
     setTimeout(function () { btn.innerHTML = original; }, 1400);
   }
+  /* Mirror of the server slug recipe (slug.rs), for in-page heading anchors:
+     NFKD, drop nonspacing marks, NFC, lowercase, join apostrophes/quotes, then
+     collapse every other non-alphanumeric run to a hyphen. Falls back to
+     "section" (headings are never date-addressed, so an empty id is useless). */
   function slugify(s) {
-    return s.toLowerCase().trim()
-      .replace(/[^\w\s-]/g, "").replace(/[\s_]+/g, "-").replace(/^-+|-+$/g, "") || "section";
+    return s.normalize("NFKD").replace(/\p{Mn}/gu, "").normalize("NFC")
+      .toLowerCase()
+      .replace(/['‘’‛ʼ`´"“”‟]/g, "")
+      .replace(/[^\p{L}\p{N}]+/gu, "-")
+      .replace(/^-+|-+$/g, "") || "section";
   }
 
   /* ---------- help dialog (both pages) ---------- */
@@ -1828,19 +1836,23 @@ pub struct Canonical {
     pub time: Option<String>,
 }
 
-/// Every entry that claims a name in the flat namespace: those literally labeled
-/// it, plus those that carry it as an `alias <name>/` marker (all
-/// case-insensitive). Errored posts do not claim a name — they resolve to an
-/// error page, never to content under a stable URL.
+/// Every entry that claims a name in the flat namespace: those whose slug matches,
+/// plus those that carry it as an `alias <name>/` marker (compared on the slug —
+/// so `Fog Over The Bay`, `fog-over-the-bay`, and `/FOG%20OVER...` all collide).
+/// Errored posts do not claim a name — they resolve to an error page, never to
+/// content under a stable URL.
 fn name_claimants<'a>(name: &str, all_entries: &[&'a Entry]) -> Vec<&'a Entry> {
-    let lower = name.to_lowercase();
+    let target = match slug(name) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
     all_entries
         .iter()
         .copied()
         .filter(|e| e.error.is_none())
         .filter(|e| {
-            e.label.as_ref().map_or(false, |l| l.to_lowercase() == lower)
-                || e.aliases.iter().any(|a| a.to_lowercase() == lower)
+            e.slug.as_deref() == Some(target.as_str())
+                || e.aliases.iter().any(|a| slug(a).as_deref() == Some(target.as_str()))
         })
         .collect()
 }
@@ -1862,18 +1874,24 @@ fn oldest_unique<'a>(entries: &[&'a Entry]) -> Option<&'a Entry> {
 /// never silently retarget an old `/IMG_4392` link). `None` when there is no
 /// claimant, or when the oldest publish date is itself tied (fail closed).
 pub fn name_owner<'a>(name: &str, all_entries: &[&'a Entry]) -> Option<&'a Entry> {
-    oldest_unique(&name_claimants(name, all_entries))
+    let target = slug(name)?;
+    // Reserved segments (saved / numeric) belong to the router, never a post — the
+    // bare URL never resolves to a post whose slug is reserved.
+    if is_reserved_slug(&target) {
+        return None;
+    }
+    oldest_unique(&name_claimants(&target, all_entries))
 }
 
 /// The other entries that claim the same bare name as `entry` (a folder vs a
 /// file, an old vs new version, an alias) — surfaced on the winning page so a
 /// shared name is never silent. Empty in the common unique-name case.
 fn name_shares<'a>(entry: &Entry, all_entries: &[&'a Entry]) -> Vec<&'a Entry> {
-    let label = match &entry.label {
-        Some(l) => l,
+    let slug = match &entry.slug {
+        Some(s) => s,
         None => return Vec::new(),
     };
-    name_claimants(label, all_entries)
+    name_claimants(slug, all_entries)
         .into_iter()
         .filter(|e| !std::ptr::eq(*e, entry))
         .collect()
@@ -1894,21 +1912,23 @@ pub fn canonical(entry: &Entry, all_entries: &[&Entry]) -> Canonical {
     let ymd = || entry.timestamp.format("/%Y/%m/%d").to_string();
     let hms = || entry.timestamp.format("%H%M%S").to_string();
 
-    let label = match &entry.label {
-        Some(label) => label,
-        None => return Canonical { path: ymd(), time: Some(hms()) },
+    // The address is the slug. An unlabeled post (no slug) or a reserved slug
+    // (saved / numeric — the router owns those) is addressed at its date path.
+    let slug = match &entry.slug {
+        Some(s) if !is_reserved_slug(s) => s,
+        _ => return Canonical { path: ymd(), time: Some(hms()) },
     };
 
-    let claimants = name_claimants(label, all_entries);
+    let claimants = name_claimants(slug, all_entries);
     if claimants.len() <= 1 {
-        return Canonical { path: format!("/{}", label), time: None };
+        return Canonical { path: format!("/{}", slug), time: None };
     }
 
-    // The oldest claim owns the bare label; this entry owns it only if it is
+    // The oldest claim owns the bare slug; this entry owns it only if it is
     // that unique-oldest claimant (an alias or a tie sends it to a date path).
-    let owns_bare = name_owner(label, all_entries).map_or(false, |o| std::ptr::eq(o, entry));
+    let owns_bare = name_owner(slug, all_entries).map_or(false, |o| std::ptr::eq(o, entry));
     if owns_bare {
-        return Canonical { path: format!("/{}", label), time: None };
+        return Canonical { path: format!("/{}", slug), time: None };
     }
 
     let day = entry.timestamp.format("%Y-%m-%d").to_string();
@@ -1917,9 +1937,9 @@ pub fn canonical(entry: &Entry, all_entries: &[&Entry]) -> Canonical {
         .filter(|e| e.timestamp.format("%Y-%m-%d").to_string() == day)
         .count();
     if same_day == 1 {
-        Canonical { path: format!("{}/{}", ymd(), label), time: None }
+        Canonical { path: format!("{}/{}", ymd(), slug), time: None }
     } else {
-        Canonical { path: format!("{}/{}", ymd(), label), time: Some(hms()) }
+        Canonical { path: format!("{}/{}", ymd(), slug), time: Some(hms()) }
     }
 }
 
@@ -2108,6 +2128,39 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
         )
     };
 
+    // When other posts slug to this same address, surface them inline so the
+    // collision is discoverable, never silent — each links to its own
+    // date-disambiguated (slug-carrying) URL. Same `<details>` idiom as revisions.
+    let shares = {
+        let others = name_shares(entry, all_entries);
+        if others.is_empty() {
+            String::new()
+        } else {
+            let n = others.len();
+            let items: String = others
+                .iter()
+                .map(|e| {
+                    let dt = format_datetime_attr(&e.timestamp);
+                    let d = e.timestamp.format("%Y-%m-%d").to_string();
+                    let t = e.display_label.as_deref().or(e.label.as_deref()).unwrap_or("(untitled)");
+                    format!(
+                        r#"<li><a href="{href}"><time datetime="{dt}">{d}</time> {t}</a></li>"#,
+                        href = html_escape(&canonical_href(e, all_entries)),
+                        dt = html_escape(&dt),
+                        d = html_escape(&d),
+                        t = html_escape(t),
+                    )
+                })
+                .collect();
+            format!(
+                r#"<details><summary>{n} other{s} share this address</summary><ol>{items}</ol></details>"#,
+                n = n,
+                s = if n == 1 { "" } else { "s" },
+                items = items,
+            )
+        }
+    };
+
     format!(
         r#"<li><article data-key="{key}">
 <aside>
@@ -2115,7 +2168,7 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
 {star}<button type="button" aria-pressed="false" aria-label="Save for later (stays in this browser)" title="Save for later &mdash; stays in this browser">{bookmark}</button>
 {meter}{tags}
 </aside>
-<div><h3><a href="{href}">{title}</a></h3>{excerpt}{revisions}</div>
+<div><h3><a href="{href}">{title}</a></h3>{excerpt}{revisions}{shares}</div>
 </article></li>"#,
         key = html_escape(&key),
         datetime = html_escape(&datetime),
@@ -2128,6 +2181,7 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
         title = title,
         excerpt = excerpt,
         revisions = revisions,
+        shares = shares,
     )
 }
 
@@ -2246,18 +2300,18 @@ fn continue_nav(next: Option<&Entry>, all_entries: &[&Entry]) -> String {
     )
 }
 
-/// The date-path address of one archived revision: the current post's label at
+/// The date-path address of one archived revision: the current post's slug at
 /// the revision's own date, always with `?time=` (revisions collide with the
 /// current post and each other on the day, so the time always disambiguates).
-fn revision_href(label: &str, rev: &Revision) -> String {
-    let decoded = format!("{}/{}", rev.date.format("/%Y/%m/%d"), label);
+fn revision_href(slug: &str, rev: &Revision) -> String {
+    let decoded = format!("{}/{}", rev.date.format("/%Y/%m/%d"), slug);
     let hms = rev.date.format("%H%M%S").to_string();
     compose_href(&decoded, None, Some(&hms))
 }
 
 /// The dated `<li>` links for a post's archived revisions, newest first.
 fn revision_items(entry: &Entry) -> String {
-    let label = entry.label.as_deref().unwrap_or("");
+    let label = entry.slug.as_deref().unwrap_or("");
     entry
         .revisions
         .iter()
@@ -2336,14 +2390,38 @@ fn name_share_notice(entry: &Entry, all_entries: &[&Entry]) -> String {
     )
 }
 
-/// The extra blocks under a post's content: revision nav, alias list, and the
-/// name-share notice (each empty unless it applies).
+/// A persistent notice on a post whose slug is reserved by the URL grammar: it
+/// explains why the post is addressed at its date path rather than the bare name.
+/// Empty unless the slug is reserved. Never auto-dismissed (the condition holds
+/// as long as the name does).
+fn reserved_name_notice(entry: &Entry) -> String {
+    let slug = match &entry.slug {
+        Some(s) if is_reserved_slug(s) => s,
+        _ => return String::new(),
+    };
+    let label = entry.label.as_deref().unwrap_or("");
+    let why = if slug == "saved" {
+        "a site route"
+    } else {
+        "the year / date view"
+    };
+    format!(
+        r#"<aside id="nameshare"><p>The name <code>{label}</code> reduces to <code>/{slug}</code>, which the site reserves for {why}. This post keeps its date-path address above and does not claim the bare name.</p></aside>"#,
+        label = html_escape(label),
+        slug = html_escape(slug),
+        why = why,
+    )
+}
+
+/// The extra blocks under a post's content: revision nav, alias list, the
+/// name-share notice, and the reserved-name notice (each empty unless it applies).
 fn post_extras(entry: &Entry, all_entries: &[&Entry]) -> String {
     format!(
-        "{}{}{}",
+        "{}{}{}{}",
         revision_nav(entry),
         alias_list(entry),
         name_share_notice(entry, all_entries),
+        reserved_name_notice(entry),
     )
 }
 
@@ -2398,13 +2476,6 @@ fn error_message(e: &PostError) -> (String, String) {
         PostError::NoPrimary => (
             "This post folder has no content file.".to_string(),
             "<p>Add a primary file named the folder name or <code>index</code>.</p>".to_string(),
-        ),
-        PostError::UnparseableName(name) => (
-            "This name is not a valid post name.".to_string(),
-            format!(
-                "<p>Post names are hyphenated, with no spaces: <code>{}</code>. Rename it, or use a <code>copy</code> / <code>alias</code> marker if that was the intent.</p>",
-                html_escape(name),
-            ),
         ),
     }
 }
@@ -2547,6 +2618,99 @@ fn post_tags(entry: &Entry) -> String {
     }
 }
 
+/// Character-level Levenshtein edit distance, for ranking closest slugs on a
+/// dead-label not-found page. Small inputs (slugs), so the plain DP is ample.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// The posts whose slugs are closest to a mistyped/renamed bare label, for the
+/// dead-label not-found page. Ranked by edit distance, thresholded so only real
+/// near-misses show; deduplicated by slug; capped at `max`. Only public posts in
+/// `all_entries` are considered, so this never reveals a hidden or missing post.
+fn closest_slugs<'a>(query: &str, all_entries: &[&'a Entry], max: usize) -> Vec<&'a Entry> {
+    let q = match slug(query) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    let threshold = (q.chars().count() / 2).max(2);
+    let mut scored: Vec<(usize, &Entry)> = all_entries
+        .iter()
+        .copied()
+        .filter(|e| e.error.is_none())
+        .filter_map(|e| e.slug.as_deref().map(|s| (levenshtein(&q, s), e)))
+        .filter(|(d, _)| *d <= threshold)
+        .collect();
+    scored.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    scored
+        .into_iter()
+        .filter(|(_, e)| e.slug.as_deref().map_or(false, |s| seen.insert(s)))
+        .take(max)
+        .map(|(_, e)| e)
+        .collect()
+}
+
+/// The not-found page for a dead bare label (a name with no claimant — e.g. a
+/// post renamed without an `alias`). It never auto-redirects (a reused name would
+/// mis-resolve); it offers the timeline, search, and closest-slug suggestions.
+/// Served with HTTP 404 by the router, identically to any missing path.
+pub fn not_found_label_page(label: &str, all_entries: &[&Entry]) -> String {
+    let cloud = compute_cloud(all_entries);
+    let view = ViewFilter::default();
+    let ctx = HeaderContext::plain(&cloud, &view);
+
+    let suggestions = closest_slugs(label, all_entries, 5);
+    let sugg_html = if suggestions.is_empty() {
+        String::new()
+    } else {
+        let items: String = suggestions
+            .iter()
+            .map(|e| {
+                let t = e.display_label.as_deref().or(e.label.as_deref()).unwrap_or("(untitled)");
+                format!(
+                    r#"<li><a href="{href}">{t}</a></li>"#,
+                    href = html_escape(&canonical_href(e, all_entries)),
+                    t = html_escape(t),
+                )
+            })
+            .collect();
+        format!("<p>Did you mean:</p><ul>{}</ul>", items)
+    };
+
+    let body = format!(
+        r#"{header}
+{crumbs}
+<main>
+<article id="post">
+<header><time>404</time></header>
+<section>
+<h1>Nothing at that name</h1>
+<p>No post is addressed <code>/{label}</code>. It may have been renamed. Try the timeline, the search above, or:</p>
+{suggestions}
+</section>
+</article>
+</main>"#,
+        header = render_site_header(&ctx),
+        crumbs = crumbs(),
+        label = html_escape(label),
+        suggestions = sugg_html,
+    );
+    page_shell(&format!("esko.bar — not found: {}", label), &body, "entry", false)
+}
+
 /// Render the 404 page (minimal — no cloud, just the way home).
 pub fn not_found_page() -> String {
     let body = r#"<nav id="crumbs" aria-label="Site"><a href="/">&#8592; Timeline</a></nav>
@@ -2599,6 +2763,7 @@ mod tests {
             timestamp: ts(at),
             edited: None,
             label: Some(label.to_string()),
+            slug: slug(label),
             display_label: None,
             excerpt: None,
             extension: "md".to_string(),
@@ -2656,6 +2821,47 @@ mod tests {
         // Even though `bad` is older, it does not claim the name — `good` owns it.
         assert!(std::ptr::eq(name_owner("x", &all).unwrap(), &good));
         assert_eq!(canonical(&good, &all).path, "/x");
+    }
+
+    #[test]
+    fn natural_and_hyphenated_names_collide_on_slug() {
+        // "Fog Over The Bay" and "fog-over-the-bay" reduce to one address.
+        let old = mkentry("Fog Over The Bay", "2026-03-01T120000");
+        let mut newer = mkentry("fog-over-the-bay", "2026-03-10T120000");
+        newer.path = "/c/fog/fog-over-the-bay.md".into();
+        let all = vec![&old, &newer];
+
+        assert_eq!(canonical(&old, &all).path, "/fog-over-the-bay");
+        assert_eq!(canonical(&newer, &all).path, "/2026/03/10/fog-over-the-bay");
+        assert!(std::ptr::eq(name_owner("Fog Over The Bay", &all).unwrap(), &old));
+        // Two others share the address as seen from each row.
+        assert_eq!(name_shares(&old, &all).len(), 1);
+    }
+
+    #[test]
+    fn reserved_slug_yields_the_bare_url() {
+        // A post literally named "2026" (a year-in-review) slugs to a reserved
+        // segment, so it is addressed at its date path, not the bare "/2026".
+        let year = mkentry("2026", "2026-12-31T120000");
+        let all = vec![&year];
+        let c = canonical(&year, &all);
+        assert_eq!(c.path, "/2026/12/31");
+        assert!(c.time.is_some());
+        // The bare URL never resolves to it.
+        assert!(name_owner("2026", &all).is_none());
+    }
+
+    #[test]
+    fn closest_slugs_suggests_near_misses() {
+        let a = mkentry("fog-over-the-bay", "2026-03-01T120000");
+        let b = mkentry("smog-over-the-bay", "2026-03-02T120000");
+        let c = mkentry("something-else-entirely", "2026-03-03T120000");
+        let all = vec![&a, &b, &c];
+        let sugg = closest_slugs("fog-over-the-bey", &all, 5);
+        // The two near names are suggested; the unrelated one is filtered out.
+        assert!(sugg.iter().any(|e| e.slug.as_deref() == Some("fog-over-the-bay")));
+        assert!(sugg.iter().any(|e| e.slug.as_deref() == Some("smog-over-the-bay")));
+        assert!(!sugg.iter().any(|e| e.slug.as_deref() == Some("something-else-entirely")));
     }
 
     #[test]

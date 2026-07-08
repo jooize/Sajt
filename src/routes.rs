@@ -186,11 +186,11 @@ pub async fn catch_all(
         }
     }
 
-    // Filter current entries matching the path query.
+    // Filter current entries matching the path query (label compared on slug).
     let matching: Vec<&Entry> = store
         .entries
         .iter()
-        .filter(|e| query.matches(&e.timestamp, &e.label, &e.tag_names()))
+        .filter(|e| query.matches(&e.timestamp, &e.slug, &e.tag_names()))
         .collect();
 
     // Raw file request (URL has extension like sunset.jpg)
@@ -230,6 +230,14 @@ pub async fn catch_all(
     }
 
     if matching.is_empty() {
+        // A dead bare label (renamed away, or a typo): offer the timeline, search,
+        // and closest-slug suggestions rather than auto-redirecting a reused name.
+        // Served with 404, identically to any missing path (no existence oracle).
+        if is_bare_label(&query) {
+            if let Some(label) = query.label.as_deref() {
+                return not_found_response(templates::not_found_label_page(label, &all_entries));
+            }
+        }
         return not_found();
     }
 
@@ -362,12 +370,12 @@ fn find_revision<'a>(
 ) -> Option<(&'a Entry, &'a Revision)> {
     let label = query.label.as_ref()?;
     let date_prefix = query.date_prefix.as_ref()?;
-    let lower = label.to_lowercase();
+    let want = crate::slug::slug(label)?;
 
     let mut found: Option<(&Entry, &Revision)> = None;
     let mut count = 0usize;
     for e in all_entries {
-        if e.error.is_some() || e.label.as_ref().map_or(true, |l| l.to_lowercase() != lower) {
+        if e.error.is_some() || e.slug.as_deref() != Some(want.as_str()) {
             continue;
         }
         for r in &e.revisions {
@@ -670,10 +678,16 @@ fn redirect(location: &str) -> Response {
 }
 
 fn not_found() -> Response {
+    not_found_response(templates::not_found_page())
+}
+
+/// A 404 response wrapping a specific not-found page body. Every not-found path
+/// shares this shape, so a hidden path is indistinguishable from a missing one.
+fn not_found_response(body: String) -> Response {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .body(Body::from(templates::not_found_page()))
+        .body(Body::from(body))
         .unwrap()
 }
 

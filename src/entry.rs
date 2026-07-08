@@ -45,10 +45,6 @@ pub enum PostError {
     /// The folder post has no file that can serve as primary content (it is empty
     /// of regular files).
     NoPrimary,
-    /// A top-level post name contains a space but matches no known grammar
-    /// (date marker, `alias …`, ` copy [n]`) — most likely a typo or a
-    /// look-alike character. Fail closed instead of publishing a stray sibling.
-    UnparseableName(String),
 }
 
 /// A post: a bare file or a folder in the content tree, resolved to the bytes it
@@ -75,6 +71,12 @@ pub struct Entry {
     #[allow(dead_code)]
     pub edited: Option<NaiveDateTime>,
     pub label: Option<String>,
+    /// The URL slug: a lowercase, hyphenated, collision-keying projection of the
+    /// name (`Fog Over The Bay` -> `fog-over-the-bay`). `None` when the name has
+    /// no letters or digits (a punctuation-only title) — such a post is unlabeled
+    /// and addressed at its date path. Identity is still the name (`label`); the
+    /// slug is the *address* and is what claim comparison keys on. See `slug.rs`.
+    pub slug: Option<String>,
     /// Auto-generated display label (e.g. "@handle · date" for social embeds).
     /// Templates use display_label.as_ref().or(label.as_ref()) for display.
     pub display_label: Option<String>,

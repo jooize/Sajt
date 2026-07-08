@@ -24,8 +24,10 @@ pub struct ContentQuery {
 }
 
 impl ContentQuery {
-    /// Check if an entry matches this query.
-    pub fn matches(&self, timestamp: &NaiveDateTime, label: &Option<String>, tags: &[String]) -> bool {
+    /// Check if an entry matches this query. `slug` is the entry's URL slug (the
+    /// address projection of its name); the query label is slugified before
+    /// comparison, so `/Fog%20Over%20The%20Bay` matches `fog-over-the-bay`.
+    pub fn matches(&self, timestamp: &NaiveDateTime, slug: &Option<String>, tags: &[String]) -> bool {
         // Date prefix filter — compare against the compact timestamp string.
         if let Some(ref prefix) = self.date_prefix {
             let full = timestamp.format("%Y-%m-%dT%H%M%S").to_string();
@@ -61,15 +63,13 @@ impl ContentQuery {
             }
         }
 
-        // Label filter
+        // Label filter — compared on the slug (the address projection), so a
+        // mixed-case or spaced URL segment resolves to the same entry.
         if let Some(ref query_label) = self.label {
-            match label {
-                Some(entry_label) => {
-                    if entry_label.to_lowercase() != query_label.to_lowercase() {
-                        return false;
-                    }
-                }
-                None => return false,
+            let want = crate::slug::slug(query_label);
+            match (slug, want) {
+                (Some(entry_slug), Some(w)) if *entry_slug == w => {}
+                _ => return false,
             }
         }
 
