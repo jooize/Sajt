@@ -174,11 +174,20 @@ where symlinks and xattrs do not.
   A **dead bare label** (renamed away, no `alias`) returns a 404 with closest-slug
   suggestions — never an auto-redirect, which a reused name would mis-resolve.
   Handing a name over is deliberate: delete the old claim.
-- **Revisions** are Finder's own ` copy [n]` suffix. The unsuffixed post is
-  always current (keeps its URL, tags, and timeline slot); `label copy/`
-  folders (or ` copy` files inside the post) are archived snapshots, dated by
-  their own mtime, reachable from the entry's revision nav and their date-path
-  URLs. Deleting a copy never breaks the post.
+- **Revisions & families** are Finder's own ` copy [n]` suffix. A **family** is
+  every item sharing a base name (`X`, `X copy`, `X copy 2`, …) and always
+  collapses to **one current post + a revision stack, keyed by the base name —
+  not by whether the base file exists** (SHIPPED 2026-07-08, `post-model.md`
+  §5). Base present → it is current, the copies are archived snapshots dated by
+  their own mtime (reachable from the entry's revision nav and their date-path
+  URLs). **Base absent → the newest-by-mtime orphan copy is promoted to be the
+  post** (claiming the base name and slug, so `/X` keeps resolving after the
+  base is deleted — a recovery property), the rest its revisions. This ends the
+  old *silent drop* of orphan copies; deleting a copy — or the base — never
+  breaks the post. A routine Cmd-D backup and a `foo copy` that a later `foo`
+  shadows are indistinguishable to a stateless scan (age can't separate them),
+  so each collapse is **logged** but carries no reader-facing notice; both just
+  work, and recovery from an unwanted collapse is one rename.
 - The **only** fail-closed *errors* are intra-post ambiguity (multiple primary
   candidates, multiple date markers) — genuinely no-right-answer cases, shown
   as an errored row and an HTTP 500 page naming the conflict.

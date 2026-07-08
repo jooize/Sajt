@@ -219,18 +219,32 @@ fn assign_grades(entries: &mut [Entry], content_dir: &Path) {
 
 /// Build a post from a top-level item: a bare file or a folder.
 fn build_post(item: &TopItem) -> Entry {
+    build_post_as(item, None)
+}
+
+/// Build a post, optionally *claiming* a base name. `claim` is `Some(base)` only
+/// when this item is a promoted orphan copy standing in for a missing base (`foo
+/// copy` with no `foo`, see `attach_revisions`): it then takes the base's identity
+/// (label + slug) and — for a folder — resolves its primary against the base name,
+/// since Finder's Cmd-D renames only the folder and leaves the inner files named
+/// after the base. A normal post passes `None` and is simply its own name.
+fn build_post_as(item: &TopItem, claim: Option<&str>) -> Entry {
     if item.is_dir {
-        build_folder_post(item)
+        build_folder_post(item, claim)
     } else {
-        build_bare_post(item)
+        build_bare_post(item, claim)
     }
 }
 
 /// A bare-file post: the file itself is the content, its mtime is the publish
 /// date, its stem is the label. Editing it moves the mtime (republishes) — by
 /// design; fold it into a folder to gain a stable date, assets, or aliases.
-fn build_bare_post(item: &TopItem) -> Entry {
+fn build_bare_post(item: &TopItem, claim: Option<&str>) -> Entry {
     let (stem, ext) = split_name(&item.name);
+    // Identity (label / slug / date-name) comes from the claimed base when this
+    // file is a promoted orphan copy; otherwise from its own stem. The bytes,
+    // mtime, tags, excerpt and title are always read from the file itself.
+    let ident = claim.unwrap_or(stem);
     let tags = read_tags_colored(&item.path);
     let mtime = mtime_local(&item.path).unwrap_or_else(epoch);
     // Bare file: the file itself is both the commented object and the text source.
@@ -243,12 +257,12 @@ fn build_bare_post(item: &TopItem) -> Entry {
     // claims a bare URL; its trailing text (or an H1) shows as a display title.
     // Natural filenames otherwise publish as a normal labeled post at their
     // mtime, addressed by the derived slug — a spaced name is no error.
-    let (timestamp, label, slug, display_label) = match parse_date_name(stem) {
+    let (timestamp, label, slug, display_label) = match parse_date_name(ident) {
         Some((date, title)) => (date, title.clone(), None, h1.or(title)),
         None => (
             PostDate::from_mtime(mtime),
-            Some(stem.to_string()),
-            derive_slug(stem),
+            Some(ident.to_string()),
+            derive_slug(ident),
             h1,
         ),
     };
@@ -291,9 +305,11 @@ fn derive_slug(name: &str) -> Option<String> {
 
 /// A folder post: one primary content file, optional assets, and empty marker
 /// folders (a single date marker, any number of `alias <name>/`).
-fn build_folder_post(item: &TopItem) -> Entry {
+fn build_folder_post(item: &TopItem, claim: Option<&str>) -> Entry {
     let dir = &item.path;
-    let label = item.name.clone();
+    // A promoted orphan copy claims the base name; its inner files keep the base's
+    // names (Cmd-D renames only the folder), so the primary resolves against it.
+    let label = claim.unwrap_or(&item.name).to_string();
     // Finder tags are read at the post level — here, the folder itself.
     let tags = read_tags_colored(dir);
 
@@ -301,12 +317,12 @@ fn build_folder_post(item: &TopItem) -> Entry {
         Ok(s) => s,
         Err(e) => {
             tracing::error!("Failed to read folder post {}: {}", dir.display(), e);
-            return errored_folder(item, tags, PostError::NoPrimary);
+            return errored_folder(item, &label, tags, PostError::NoPrimary);
         }
     };
 
     if let Some(err) = scan.error {
-        return errored_folder(item, tags, err);
+        return errored_folder(item, &label, tags, err);
     }
 
     let primary = scan.primary.expect("a folder post with no error has a primary");
@@ -360,15 +376,16 @@ fn build_folder_post(item: &TopItem) -> Entry {
 }
 
 /// A folder post that scanned wrong: still an entry (so it renders as a loud
-/// error, never vanishing), dated by the folder's own mtime.
-fn errored_folder(item: &TopItem, tags: Vec<Tag>, error: PostError) -> Entry {
+/// error, never vanishing), dated by the folder's own mtime. `label` is the
+/// effective name (the claimed base for a promoted copy, else the folder name).
+fn errored_folder(item: &TopItem, label: &str, tags: Vec<Tag>, error: PostError) -> Entry {
     Entry {
         path: item.path.clone(),
         dir: Some(item.path.clone()),
         timestamp: PostDate::from_mtime(mtime_local(&item.path).unwrap_or_else(epoch)),
         edited: None,
-        label: Some(item.name.clone()),
-        slug: slug(&item.name),
+        label: Some(label.to_string()),
+        slug: slug(label),
         display_label: None,
         excerpt: None,
         extension: String::new(),
@@ -750,54 +767,111 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
     Ok(FolderScan { primary: Some(primary), date_marker, aliases, revisions, error: None })
 }
 
-/// Attach each top-level ` copy [n]` sibling to the post it revises (same label,
-/// preferring the matching kind: a folder copy revises a folder post, a file
-/// copy a bare file). An orphan copy — one with no current post — is logged and
-/// dropped, since the timeline only shows the current revision.
-fn attach_revisions(entries: &mut [Entry], revisions: &[TopItem]) {
+/// Collapse each top-level `<base> copy [n]` sibling into its family. A family is
+/// keyed by the base name, *not* by whether the base file exists (`post-model.md`
+/// §5):
+///
+/// - **Base present** — a current post is named `<base>`: the copies attach to it
+///   as archived revisions, preferring a kind match (a folder copy revises a
+///   folder post, a file copy a bare file) when both claim the name.
+/// - **Base absent** — the newest-by-mtime orphan copy is *promoted* to be the
+///   post, claiming the base name and slug (so `/base` keeps resolving after the
+///   base is deleted — the recovery property), and the rest become its revisions.
+///
+/// This ends the old *silent drop* of orphan copies. Every collapse is logged so
+/// the family model is not invisible, but there is deliberately no reader-facing
+/// notice: a routine Cmd-D backup and a legitimately-titled `foo copy` that a
+/// later `foo` shadows are structurally identical to a stateless scan (age can't
+/// separate them — Cmd-D archives are legitimately older), and both "just work" —
+/// the copy stays reachable through the revision dropdown and its date-path URL.
+/// Recovery from an unwanted collapse is one rename.
+fn attach_revisions(entries: &mut Vec<Entry>, revisions: &[TopItem]) {
+    // Copies whose base has no current post, grouped by base for promotion.
+    let mut orphans: HashMap<String, Vec<(&TopItem, u32)>> = HashMap::new();
+
     for rev in revisions {
         let stem = if rev.is_dir { rev.name.clone() } else { split_name(&rev.name).0.to_string() };
         let (base, rank) = match parse_revision_suffix(&stem) {
             Some(v) => v,
             None => continue, // only copies reach here
         };
-        let (rev_path, rev_mtime) = match revision_primary(rev) {
-            Some(v) => v,
-            None => {
-                tracing::warn!("Skipping unreadable archived revision: {}", rev.path.display());
-                continue;
-            }
-        };
 
-        let mut chosen: Option<usize> = None;
-        for (i, e) in entries.iter().enumerate() {
-            if e.error.is_some() || e.label.as_deref() != Some(base.as_str()) {
-                continue;
-            }
-            match chosen {
-                None => chosen = Some(i),
-                Some(c) => {
-                    let cur_matches_kind = entries[c].dir.is_some() == rev.is_dir;
-                    let e_matches_kind = e.dir.is_some() == rev.is_dir;
-                    if e_matches_kind && !cur_matches_kind {
-                        chosen = Some(i);
+        match choose_current(entries, &base, rev.is_dir) {
+            Some(i) => {
+                let (rev_path, rev_mtime) = match revision_primary(rev) {
+                    Some(v) => v,
+                    None => {
+                        tracing::warn!("Skipping unreadable archived revision: {}", rev.path.display());
+                        continue;
                     }
+                };
+                entries[i].revisions.push(Revision { date: rev_mtime, path: rev_path, rank });
+                sort_revisions(&mut entries[i].revisions);
+                tracing::info!(
+                    "Revision family '{}': archived the copy '{}' as a revision of the current post.",
+                    base,
+                    rev.name
+                );
+            }
+            None => orphans.entry(base).or_default().push((rev, rank)),
+        }
+    }
+
+    // Promote each base-absent family: newest copy becomes the post, rest revisions.
+    for (base, group) in orphans {
+        // Resolve each orphan's primary (path + mtime); drop the unreadable ones.
+        let mut resolved: Vec<(&TopItem, u32, PathBuf, NaiveDateTime)> = group
+            .into_iter()
+            .filter_map(|(rev, rank)| match revision_primary(rev) {
+                Some((path, mtime)) => Some((rev, rank, path, mtime)),
+                None => {
+                    tracing::warn!("Skipping unreadable orphan copy: {}", rev.path.display());
+                    None
+                }
+            })
+            .collect();
+        if resolved.is_empty() {
+            continue;
+        }
+        // Newest first; a higher copy number breaks an exact mtime tie (matching
+        // `sort_revisions`). The head is promoted; the tail become its revisions.
+        resolved.sort_by(|a, b| b.3.cmp(&a.3).then(b.1.cmp(&a.1)));
+        let winner = resolved[0].0;
+        let mut promoted = build_post_as(winner, Some(base.as_str()));
+        for (_, rank, path, mtime) in resolved.into_iter().skip(1) {
+            promoted.revisions.push(Revision { date: mtime, path, rank });
+        }
+        sort_revisions(&mut promoted.revisions);
+        tracing::info!(
+            "Revision family '{}': no current post by that name; promoted the newest copy '{}' to be the post, with {} older revision(s).",
+            base,
+            winner.name,
+            promoted.revisions.len()
+        );
+        entries.push(promoted);
+    }
+}
+
+/// Index of the current post a `<base> copy` should revise: one whose label is
+/// exactly `base`, preferring a kind match (folder copy → folder post, file copy →
+/// bare file) when the name is claimed by both. `None` when no current post
+/// carries the name — the copy is then an orphan for `attach_revisions` to promote.
+fn choose_current(entries: &[Entry], base: &str, is_dir: bool) -> Option<usize> {
+    let mut chosen: Option<usize> = None;
+    for (i, e) in entries.iter().enumerate() {
+        if e.error.is_some() || e.label.as_deref() != Some(base) {
+            continue;
+        }
+        match chosen {
+            None => chosen = Some(i),
+            Some(c) => {
+                if (e.dir.is_some() == is_dir) && (entries[c].dir.is_some() != is_dir) {
+                    chosen = Some(i);
                 }
             }
         }
-
-        match chosen {
-            Some(i) => {
-                entries[i].revisions.push(Revision { date: rev_mtime, path: rev_path, rank });
-                sort_revisions(&mut entries[i].revisions);
-            }
-            None => tracing::warn!(
-                "Archived revision '{}' has no current post named '{}'; not shown",
-                rev.name,
-                base
-            ),
-        }
     }
+    chosen
 }
 
 /// The primary content file (and its mtime) of a top-level ` copy [n]` sibling.
@@ -1381,6 +1455,72 @@ mod tests {
         assert_eq!(entries.len(), 1);
         let e = find(&entries, "note");
         assert_eq!(e.revisions.len(), 1);
+    }
+
+    #[test]
+    fn lone_orphan_copy_becomes_a_standalone_post() {
+        // A ` copy` with no base is a real post now (family of one), not dropped.
+        let t = TmpDir::new();
+        touch(t.path(), "draft copy.md", "the only one");
+        let entries = scan_entries(t.path()).unwrap();
+        assert_eq!(entries.len(), 1, "the orphan must not vanish");
+        let e = &entries[0];
+        // It claims the base name/slug — so `/draft` keeps resolving.
+        assert_eq!(e.label.as_deref(), Some("draft"));
+        assert_eq!(e.slug.as_deref(), Some("draft"));
+        assert!(e.revisions.is_empty());
+        assert!(e.error.is_none());
+        assert!(e.path.ends_with("draft copy.md"), "serves the copy's bytes");
+    }
+
+    #[test]
+    fn orphan_copies_promote_newest_and_keep_the_rest() {
+        // No `draft` base: the newest copy promotes; older copies stay as its
+        // revisions. Nothing is dropped. The rank breaks any same-second mtime tie
+        // (a higher copy number is the newer one), so `draft copy 2` wins.
+        let t = TmpDir::new();
+        touch(t.path(), "draft copy.md", "older");
+        touch(t.path(), "draft copy 2.md", "newer");
+        let entries = scan_entries(t.path()).unwrap();
+        assert_eq!(entries.len(), 1, "one family row, not two posts");
+        let e = find(&entries, "draft");
+        assert_eq!(e.slug.as_deref(), Some("draft"), "recovery: claims the base slug");
+        assert_eq!(e.revisions.len(), 1, "the older copy is a revision, not gone");
+        let body = std::fs::read_to_string(&e.path).unwrap();
+        assert_eq!(body, "newer", "the newest copy is the current post");
+    }
+
+    #[test]
+    fn reappearing_base_absorbs_all_copies() {
+        // Create `draft` (the base): both copies become its revisions and nothing
+        // promotes — the family collapses to one current post + a two-deep stack.
+        let t = TmpDir::new();
+        touch(t.path(), "draft.md", "the real base");
+        touch(t.path(), "draft copy.md", "older");
+        touch(t.path(), "draft copy 2.md", "newer");
+        let entries = scan_entries(t.path()).unwrap();
+        assert_eq!(entries.len(), 1, "the base absorbs the copies");
+        let e = find(&entries, "draft");
+        let body = std::fs::read_to_string(&e.path).unwrap();
+        assert_eq!(body, "the real base", "the base is the current post");
+        assert_eq!(e.revisions.len(), 2);
+    }
+
+    #[test]
+    fn folder_orphan_copy_promotes_to_a_folder_post() {
+        // A `<base> copy/` folder with no `<base>/`: Cmd-D renamed only the folder,
+        // so its inner primary is still `draft.md`. It promotes to a folder post
+        // that claims `draft` and resolves that inner file as its primary.
+        let t = TmpDir::new();
+        touch(t.path(), "draft copy/draft.md", "archived-turned-current");
+        let entries = scan_entries(t.path()).unwrap();
+        assert_eq!(entries.len(), 1);
+        let e = find(&entries, "draft");
+        assert_eq!(e.slug.as_deref(), Some("draft"));
+        assert!(e.dir.is_some(), "it is a folder post");
+        assert!(e.path.ends_with("draft.md"), "inner primary resolved against the base");
+        assert!(e.error.is_none());
+        assert!(e.revisions.is_empty());
     }
 
     #[test]
