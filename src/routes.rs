@@ -668,7 +668,8 @@ async fn serve_entry(entry: &Entry, store: &ContentStore) -> Response {
             Some(p) => match std::fs::read(p) {
                 Ok(bytes) => match render_entry(&listing.intro_ext, &bytes).await {
                     Ok(RenderedContent::Html(h)) => {
-                        Some(crate::embed::expand_inline_embeds(&h, &store.embed_cache))
+                        let h = crate::embed::expand_inline_embeds(&h, &store.embed_cache);
+                        Some(crate::outbound::sanitize_body_links(&h))
                     }
                     Ok(RenderedContent::PreformattedText(t)) => {
                         Some(format!("<pre>{}</pre>", html_escape_content(&t)))
@@ -707,8 +708,12 @@ async fn serve_entry(entry: &Entry, store: &ContentStore) -> Response {
 
     match render_entry(&entry.extension, &content).await {
         Ok(RenderedContent::Html(html)) => {
-            // Expand inline URLs in rendered HTML to embed cards
+            // Expand inline URLs to embed cards, then run the fail-closed outbound
+            // scheme guard as the last transform before the body enters the shell:
+            // no unsafe-scheme anchor can survive, and every external link carries
+            // rel="noreferrer" (post-model.md §7).
             let html = crate::embed::expand_inline_embeds(&html, &store.embed_cache);
+            let html = crate::outbound::sanitize_body_links(&html);
             Html(templates::entry_page(entry, &html, &all, next)).into_response()
         }
         Ok(RenderedContent::Standalone(html)) => {

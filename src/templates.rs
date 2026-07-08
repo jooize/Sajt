@@ -587,6 +587,13 @@ main > article > section hr { border: 0; border-top: 1px solid var(--hair); marg
 main > article > section a { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--violet), transparent 55%); text-underline-offset: .15em; }
 main > article > section a:hover { text-decoration-color: currentColor; }
 
+/* Outbound-scheme guard (post-model.md §7). Plaintext http links are allowed but
+   flagged; unsafe schemes never reach here as anchors -- the server neutralizes
+   them into a [data-unsafe-link] span before the body is served. */
+main a[href^="http://"]::after { content: " \2197\FE0E (not secure)"; font-size: .82em; color: var(--tag-red); white-space: nowrap; }
+main [data-unsafe-link] { color: var(--tag-red); text-decoration: line-through; cursor: not-allowed; }
+main [data-unsafe-link]::before { content: "\26A0\FE0E\00A0"; }
+
 /* inline + block code (pandoc: bare <pre> or <div class="sourceCode"><pre>) */
 main > article > section code { font-family: var(--mono); font-size: .86em; background: var(--code-bg); padding: .12em .35em; border-radius: 5px; border: 1px solid var(--code-hair); }
 main > article > section pre { position: relative; overflow-x: auto; padding: 1em 1.1em; margin: 0 0 1.4rem; background: var(--code-bg); border: 1px solid var(--code-hair); border-radius: 11px; font-size: .85em; line-height: 1.55; }

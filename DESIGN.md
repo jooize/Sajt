@@ -337,6 +337,45 @@ opaque `file`.
   passthrough, `.txt` in `<pre>`, `.link` via embeds, images in viewer,
   `.prompt` via Claude API, other files as downloads.
 
+**Outbound safety — scheme guard + SSRF-hardened fetcher (SHIPPED 2026-07-08,
+`post-model.md` §7; the fetcher half of §4).** Two fail-closed choke points, both
+security-critical:
+
+- **Scheme allowlist (`src/outbound.rs`).** Every `<a href>` in rendered body
+  HTML passes through `classify_scheme` (an allowlist, not a blocklist): only
+  `https`, `http`, `mailto`, `tel` reach the reader. `http` is allowed but
+  **flagged** by the pure-CSS `main a[href^="http://"]` rule (no server class);
+  everything else (`javascript:`, `data:`, `vbscript:`, `file:`, custom handlers,
+  protocol-relative `//host`) is **refused at render time** and rendered as a
+  neutralized `[data-unsafe-link]` span — never a clickable anchor, because CSS
+  cannot stop navigation. Classification defeats browser-style obfuscation
+  (tab/newline stripping, entity decoding, case). External web links additionally
+  gain `rel="noreferrer"` for reader privacy. Applied as the last transform
+  before the body enters the shell, so nothing an embed expansion produced can
+  reintroduce an unsafe link. (Cites reuse the same guard — see §4, C7b.)
+- **SSRF-hardened fetcher (`src/embed.rs`).** All scan-time outbound requests
+  (oEmbed, OG scrape, iTunes, media download, liveness) funnel through one
+  `guarded_fetch`. reqwest auto-redirect is disabled; each of up to 5 hops is
+  followed by hand, its host re-resolved and **every** resolved IP checked
+  against `is_public_ip` (rejects loopback / RFC1918 / link-local incl. the
+  `169.254.169.254` metadata address / ULA / CGNAT / multicast / reserved /
+  documentation / IPv4-mapped IPv6 / 6to4 / Teredo), and the connection
+  **pinned** to a vetted address so a DNS rebind between check and connect cannot
+  slip through (non-ASCII/IDN hosts are refused so the pin key can't be dodged).
+  Bodies are capped while streaming (HTML ~1 MB, media ~8 MB) under a 5 s per-hop
+  timeout. This closes the prior hole where reqwest's default auto-redirect could
+  follow a `Location:` into an internal address unchecked.
+
+**Known gap (NOT yet closed — tracked for a follow-up).** The scheme guard covers
+`<a href>` navigation only. Pandoc still passes **raw HTML verbatim** (`<script>`,
+`on*` handlers, `<iframe>`), and there is **no Content-Security-Policy** yet, so a
+content author (or anything upstream of the content tree) can still inject
+stored script that executes in our origin without touching a link. That is a
+distinct XSS surface from the outbound-scheme guard and needs its own mitigation
+— a strict CSP (the DESIGN "zero third-party requests / security headers"
+roadmap item) plus either disabling pandoc's `raw_html` or an allowlist HTML
+sanitizer. The href guard is a necessary layer, not a sufficient one on its own.
+
 ## Presentation
 
 **DECIDED 2026-07-05: the "rows" glass variant** (supersedes the 2026-07-03

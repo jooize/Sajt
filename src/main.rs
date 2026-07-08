@@ -4,6 +4,7 @@ mod entry;
 mod grade;
 mod grader;
 mod migrate;
+mod outbound;
 mod postdate;
 mod render;
 mod routes;

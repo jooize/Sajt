@@ -861,37 +861,302 @@ fn urlencod(s: &str) -> String {
 
 const HEX: [u8; 16] = *b"0123456789ABCDEF";
 
-// ─── Fetching ───────────────────────────────────────────────────
+// ─── Outbound fetching (SSRF-hardened) ──────────────────────────
+//
+// Every outbound request — oEmbed, OG scrape, iTunes lookup, media/favicon
+// download, liveness HEAD — funnels through `guarded_fetch` (post-model.md §4/§7).
+// reqwest's automatic redirect following is DISABLED; we walk up to
+// `MAX_REDIRECTS` hops by hand so that EVERY hop's host is re-resolved and every
+// resolved IP is checked against `is_public_ip`, and the connection is pinned to
+// a vetted address (closing the resolve→connect DNS-rebinding window). Bodies are
+// capped while streaming, and a short hard timeout bounds every hop.
 
-/// Build a shared HTTP client with reasonable defaults.
-fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .user_agent("Mozilla/5.0 (compatible; esko-bar/0.1)")
-        .build()
-        .expect("Failed to build HTTP client")
+/// Hard per-hop timeout.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
+/// Redirect budget we follow manually (each hop re-resolved, re-vetted, and
+/// pinned). This is not a security parameter — every hop is checked identically,
+/// so a longer chain is no less safe; it only bounds worst-case work against a
+/// server that bounces us and stops infinite loops. Matches reqwest's own default
+/// so legitimate URL-shortener chains (shortener → tracker → apex → www → final)
+/// still resolve their title/favicon instead of degrading to a bare domain.
+const MAX_REDIRECTS: usize = 10;
+/// Title/OG scrape: read at most the first ~1 MB of HTML.
+const HTML_MAX_BYTES: usize = 1024 * 1024;
+/// oEmbed / iTunes JSON payloads.
+const JSON_MAX_BYTES: usize = 1024 * 1024;
+/// OG images and artwork (and, later, favicons).
+const MEDIA_MAX_BYTES: usize = 8 * 1024 * 1024;
+
+/// Generic UA; some sites gate meta tags on it. We never send cookies, auth, or
+/// anything that identifies the operator or the reader.
+const FETCH_UA: &str = "Mozilla/5.0 (compatible; esko-bar/1.0; +https://esko.bar)";
+
+/// Whether `ip` is a globally-routable public address. Fail closed: every
+/// non-global range a server-side fetch could be steered into (loopback, RFC1918
+/// private, link-local, ULA, CGNAT, multicast, reserved, documentation,
+/// unspecified) is rejected — for IPv4, IPv6, and IPv4-mapped IPv6. This is the
+/// core SSRF check; it runs on every resolved address of every redirect hop.
+fn is_public_ip(ip: &std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_unspecified()
+                || o[0] == 0                               // 0.0.0.0/8
+                || o[0] >= 224                             // 224/4 multicast + 240/4 reserved
+                || (o[0] == 100 && (o[1] & 0xc0) == 64)    // 100.64/10 CGNAT
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0) // 192.0.0/24 IETF protocol
+                || (o[0] == 198 && (o[1] & 0xfe) == 18))   // 198.18/15 benchmarking
+        }
+        IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                return false;
+            }
+            // Unwrap IPv4-mapped (::ffff:a.b.c.d) and judge the embedded v4.
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public_ip(&IpAddr::V4(v4));
+            }
+            let seg = v6.segments();
+            if (seg[0] & 0xfe00) == 0xfc00 {          // fc00::/7 unique-local
+                return false;
+            }
+            if (seg[0] & 0xffc0) == 0xfe80 {          // fe80::/10 link-local
+                return false;
+            }
+            if seg[0] == 0x2001 && seg[1] == 0x0db8 { // 2001:db8::/32 documentation
+                return false;
+            }
+            // 6to4 (2002::/16) and the 2001:0000::/23 special-purpose block
+            // (Teredo 2001:0000::/32, ORCHID, …) embed or tunnel another address
+            // that could be internal; `to_ipv4_mapped` does not unwrap them, so
+            // refuse the prefixes outright rather than trust the wrapper.
+            if seg[0] == 0x2002 {
+                return false;
+            }
+            if seg[0] == 0x2001 && (seg[1] & 0xfe00) == 0x0000 {
+                return false;
+            }
+            // Accept only global unicast 2000::/3; every other block (incl. the
+            // deprecated IPv4-compatible ::/96 and special-purpose ranges) is refused.
+            (seg[0] & 0xe000) == 0x2000
+        }
+    }
+}
+
+/// Resolve `host:port` and refuse the fetch unless EVERY resolved address is
+/// public. Fail closed: an unresolvable host, an empty result, or a single
+/// private/loopback address (split-horizon DNS or a rebinding attempt) refuses
+/// the whole target. Returns the vetted addresses so the caller pins the
+/// connection to one.
+async fn vet_host(host: &str, port: u16) -> Result<Vec<std::net::SocketAddr>, String> {
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|e| format!("DNS resolution failed for {host}: {e}"))?
+        .collect();
+    if addrs.is_empty() {
+        return Err(format!("no addresses resolved for {host}"));
+    }
+    for a in &addrs {
+        if !is_public_ip(&a.ip()) {
+            return Err(format!(
+                "refusing outbound fetch: {host} resolves to non-public address {}",
+                a.ip()
+            ));
+        }
+    }
+    Ok(addrs)
+}
+
+/// Parse an absolute http(s) URL into `(host, port, is_https)` for vetting.
+/// Rejects userinfo (`user@host`) and any non-http(s) scheme. Handles
+/// `[v6]:port` authorities.
+fn parse_fetch_target(url: &str) -> Result<(String, u16, bool), String> {
+    let (is_https, rest) = if let Some(r) = url.strip_prefix("https://") {
+        (true, r)
+    } else if let Some(r) = url.strip_prefix("http://") {
+        (false, r)
+    } else {
+        return Err(format!("not an http(s) URL: {url}"));
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    if authority.is_empty() {
+        return Err("empty authority".to_string());
+    }
+    if authority.contains('@') {
+        return Err("userinfo not allowed in fetch URL".to_string());
+    }
+    let default_port = if is_https { 443 } else { 80 };
+    let (host, port) = if authority.starts_with('[') {
+        let close = authority.find(']').ok_or("malformed IPv6 authority")?;
+        let host = authority[1..close].to_string();
+        let after = &authority[close + 1..];
+        let port = if let Some(p) = after.strip_prefix(':') {
+            p.parse::<u16>().map_err(|_| "invalid port".to_string())?
+        } else if after.is_empty() {
+            default_port
+        } else {
+            return Err("malformed IPv6 authority".to_string());
+        };
+        (host, port)
+    } else if let Some(colon) = authority.rfind(':') {
+        let host = authority[..colon].to_string();
+        let port = authority[colon + 1..]
+            .parse::<u16>()
+            .map_err(|_| "invalid port".to_string())?;
+        (host, port)
+    } else {
+        (authority.to_string(), default_port)
+    };
+    if host.is_empty() {
+        return Err("empty host".to_string());
+    }
+    // A non-ASCII (IDN) host would be punycoded by reqwest's URL parser but not
+    // by us, so our `.resolve()` pin key would miss and reqwest would fall back
+    // to its own unvetted DNS. Refuse it (fail closed): publish the punycode form.
+    if !host.is_ascii() {
+        return Err(format!("non-ASCII host not allowed (use punycode): {host}"));
+    }
+    Ok((host.to_ascii_lowercase(), port, is_https))
+}
+
+/// Join a redirect `Location` against the current URL. An absolute `http://`
+/// target passes through as-is so the https-only check below refuses it; https
+/// and relative targets resolve through the shared relative-URL resolver.
+fn join_redirect(base: &str, location: &str) -> Result<String, String> {
+    let loc = location.trim();
+    if loc.is_empty() {
+        return Err("empty redirect location".to_string());
+    }
+    if loc.starts_with("http://") {
+        return Ok(loc.to_string());
+    }
+    resolve_url_relative_to(base, loc).ok_or_else(|| format!("unresolvable redirect target: {loc}"))
+}
+
+#[derive(Clone, Copy)]
+enum FetchMethod {
+    Get,
+    Head,
+}
+
+struct GuardedResponse {
+    status: reqwest::StatusCode,
+    bytes: Vec<u8>,
+}
+
+/// The single hardened outbound fetch (see the module note above). `max_bytes`
+/// is enforced while streaming, so an oversized or internal response is dropped
+/// early rather than buffered whole.
+async fn guarded_fetch(
+    method: FetchMethod,
+    url: &str,
+    accept: Option<&str>,
+    max_bytes: usize,
+) -> Result<GuardedResponse, String> {
+    let mut current = url.to_string();
+    for _ in 0..=MAX_REDIRECTS {
+        let (host, port, is_https) = parse_fetch_target(&current)?;
+        if !is_https {
+            // We only ever fetch over TLS (no plaintext downgrade, no leaking a
+            // request to a plaintext internal service).
+            return Err(format!("refusing non-https fetch target: {current}"));
+        }
+        let addrs = vet_host(&host, port).await?;
+        let pinned = addrs[0];
+        // Pin resolution to the vetted address: reqwest still performs SNI and
+        // certificate verification against `host`, but connects only to `pinned`,
+        // so a DNS rebind between our check and the connect cannot redirect us.
+        let client = reqwest::Client::builder()
+            .timeout(FETCH_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve(&host, pinned)
+            .user_agent(FETCH_UA)
+            .build()
+            .map_err(|e| format!("client build failed: {e}"))?;
+        let mut req = match method {
+            FetchMethod::Get => client.get(&current),
+            FetchMethod::Head => client.head(&current),
+        };
+        if let Some(a) = accept {
+            req = req.header("Accept", a);
+        }
+        let mut resp = req.send().await.map_err(|e| format!("request failed: {e}"))?;
+        let status = resp.status();
+        if status.is_redirection() {
+            let location = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or("redirect response without a usable Location header")?;
+            current = join_redirect(&current, location)?;
+            continue;
+        }
+        if matches!(method, FetchMethod::Head) {
+            return Ok(GuardedResponse { status, bytes: Vec::new() });
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = resp
+            .chunk()
+            .await
+            .map_err(|e| format!("failed to read response body: {e}"))?
+        {
+            let remaining = max_bytes.saturating_sub(body.len());
+            if remaining == 0 {
+                break;
+            }
+            let take = remaining.min(chunk.len());
+            body.extend_from_slice(&chunk[..take]);
+            if body.len() >= max_bytes {
+                break;
+            }
+        }
+        return Ok(GuardedResponse { status, bytes: body });
+    }
+    Err(format!("too many redirects fetching {url}"))
+}
+
+/// Guarded GET returning the (capped) response body, erroring on non-2xx.
+async fn guarded_get_bytes(
+    url: &str,
+    accept: Option<&str>,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    let resp = guarded_fetch(FetchMethod::Get, url, accept, max_bytes).await?;
+    if !resp.status.is_success() {
+        return Err(format!("returned status {}", resp.status));
+    }
+    Ok(resp.bytes)
+}
+
+/// Guarded GET decoding the (capped) body as lossy UTF-8 text.
+async fn guarded_get_text(
+    url: &str,
+    accept: Option<&str>,
+    max_bytes: usize,
+) -> Result<String, String> {
+    let bytes = guarded_get_bytes(url, accept, max_bytes).await?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Fetch embed data for a social URL via oEmbed.
-async fn fetch_oembed(client: &reqwest::Client, social: &ParsedUrl) -> Result<EmbedData, String> {
+async fn fetch_oembed(social: &ParsedUrl) -> Result<EmbedData, String> {
     let endpoint = oembed_endpoint(social).ok_or("No oEmbed endpoint for this platform")?;
 
     tracing::info!("Fetching oEmbed: {}", endpoint);
 
-    let resp = client
-        .get(&endpoint)
-        .send()
+    // The Mastodon instance host is derived from the operator's URL, so this
+    // fetch is SSRF-guarded like every other outbound request.
+    let body = guarded_get_bytes(&endpoint, Some("application/json"), JSON_MAX_BYTES)
         .await
         .map_err(|e| format!("oEmbed request failed: {}", e))?;
 
-    if !resp.status().is_success() {
-        return Err(format!("oEmbed returned status {}", resp.status()));
-    }
-
-    let oembed: OEmbedResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse oEmbed JSON: {}", e))?;
+    let oembed: OEmbedResponse =
+        serde_json::from_slice(&body).map_err(|e| format!("Failed to parse oEmbed JSON: {}", e))?;
 
     let content_html = sanitize_oembed_html(oembed.html.as_deref().unwrap_or(""));
     let author_name = oembed.author_name.unwrap_or_default();
@@ -938,24 +1203,16 @@ async fn fetch_oembed(client: &reqwest::Client, social: &ParsedUrl) -> Result<Em
 }
 
 /// Fetch OG tags for Instagram/Threads (archived for personal use, not served publicly).
-async fn fetch_og_tags(client: &reqwest::Client, social: &ParsedUrl) -> Result<EmbedData, String> {
+async fn fetch_og_tags(social: &ParsedUrl) -> Result<EmbedData, String> {
     tracing::info!("Fetching OG tags: {}", social.url);
 
-    let resp = client
-        .get(&social.url)
-        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .send()
-        .await
-        .map_err(|e| format!("OG tag fetch failed: {}", e))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("OG tag fetch returned status {}", resp.status()));
-    }
-
-    let html = resp
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read response body: {}", e))?;
+    let html = guarded_get_text(
+        &social.url,
+        Some("text/html,application/xhtml+xml"),
+        HTML_MAX_BYTES,
+    )
+    .await
+    .map_err(|e| format!("OG tag fetch failed: {}", e))?;
 
     let (title, description, _image_url) = parse_og_tags(&html);
 
@@ -990,42 +1247,19 @@ async fn fetch_og_tags(client: &reqwest::Client, social: &ParsedUrl) -> Result<E
 }
 
 /// Fetch generic page metadata (OG / Twitter card / `<title>`) for any HTTPS URL.
-async fn fetch_generic_og(
-    client: &reqwest::Client,
-    parsed: &ParsedUrl,
-    cache_dir: &Path,
-) -> Result<EmbedData, String> {
+async fn fetch_generic_og(parsed: &ParsedUrl, cache_dir: &Path) -> Result<EmbedData, String> {
     tracing::info!("Fetching generic OG tags: {}", parsed.url);
 
-    let resp = client
-        .get(&parsed.url)
-        .header(
-            "User-Agent",
-            "Mozilla/5.0 (compatible; esko-bar/0.1; +https://esko.bar)",
-        )
-        // Most sites only emit OG tags to clients that accept HTML.
-        .header("Accept", "text/html,application/xhtml+xml")
-        .send()
-        .await
-        .map_err(|e| format!("Generic OG fetch failed: {}", e))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("Generic OG fetch returned status {}", resp.status()));
-    }
-
-    // Hard cap response body to avoid pulling in giant pages. 4 MiB is plenty for
-    // a `<head>`-heavy page and still cheap to discard if it's a media file.
-    let body = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read response body: {}", e))?;
-    const MAX_BYTES: usize = 4 * 1024 * 1024;
-    let html_bytes = if body.len() > MAX_BYTES {
-        &body[..MAX_BYTES]
-    } else {
-        &body[..]
-    };
-    let html = String::from_utf8_lossy(html_bytes);
+    // Most sites only emit OG tags to clients that accept HTML. The guarded
+    // fetch caps the body at the first ~1 MB while streaming, so a giant page or
+    // a mislabeled media file is dropped early.
+    let html = guarded_get_text(
+        &parsed.url,
+        Some("text/html,application/xhtml+xml"),
+        HTML_MAX_BYTES,
+    )
+    .await
+    .map_err(|e| format!("Generic OG fetch failed: {}", e))?;
 
     let (title, description, image_url, site_name) = parse_meta_tags(&html);
 
@@ -1062,7 +1296,7 @@ async fn fetch_generic_og(
     };
 
     if let Some(ref img_url) = resolved_image {
-        match download_media(client, img_url, cache_dir).await {
+        match download_media(img_url, cache_dir).await {
             Ok(filename) => embed.image_file = Some(filename),
             Err(e) => tracing::warn!("Failed to download generic OG image {}: {}", img_url, e),
         }
@@ -1119,11 +1353,7 @@ fn truncate_for_display(s: &str, max_chars: usize) -> String {
 }
 
 /// Download media file to sidecar cache directory, preserving original filename.
-async fn download_media(
-    client: &reqwest::Client,
-    media_url: &str,
-    cache_dir: &Path,
-) -> Result<String, String> {
+async fn download_media(media_url: &str, cache_dir: &Path) -> Result<String, String> {
     let filename = media_url
         .rsplit('/')
         .next()
@@ -1150,20 +1380,9 @@ async fn download_media(
 
     tracing::info!("Downloading media: {} -> {}", media_url, dest.display());
 
-    let resp = client
-        .get(media_url)
-        .send()
+    let bytes = guarded_get_bytes(media_url, None, MEDIA_MAX_BYTES)
         .await
         .map_err(|e| format!("Media download failed: {}", e))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("Media download returned status {}", resp.status()));
-    }
-
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read media bytes: {}", e))?;
 
     std::fs::create_dir_all(cache_dir)
         .map_err(|e| format!("Failed to create cache dir: {}", e))?;
@@ -1226,19 +1445,15 @@ struct ITunesResult {
 ///
 /// For numeric IDs, uses `https://itunes.apple.com/lookup?id={id}&country={country}`.
 /// For non-numeric IDs (UMC, playlists), falls back to OG tag scraping.
-async fn fetch_apple_content(
-    client: &reqwest::Client,
-    parsed: &ParsedUrl,
-    cache_dir: &Path,
-) -> Result<EmbedData, String> {
+async fn fetch_apple_content(parsed: &ParsedUrl, cache_dir: &Path) -> Result<EmbedData, String> {
     let country = parsed.country.as_deref().unwrap_or("us");
     let is_numeric = parsed.item_id.chars().all(|c| c.is_ascii_digit());
 
     let apple_embed = if is_numeric {
-        fetch_itunes_lookup(client, &parsed.item_id, country, parsed).await?
+        fetch_itunes_lookup(&parsed.item_id, country, parsed).await?
     } else {
         // UMC IDs (Apple TV+) and playlist IDs: fall back to OG tags
-        fetch_apple_og_tags(client, parsed).await?
+        fetch_apple_og_tags(parsed).await?
     };
 
     // Download artwork into the entry's cache directory (outside the content
@@ -1246,7 +1461,7 @@ async fn fetch_apple_content(
     // entry, never by the remote URL, so it can be served back via /_embed.
     let mut apple_embed = apple_embed;
     if let Some(ref artwork_url) = apple_embed.artwork_url {
-        match download_media(client, artwork_url, cache_dir).await {
+        match download_media(artwork_url, cache_dir).await {
             Ok(filename) => apple_embed.artwork_file = Some(filename),
             Err(e) => tracing::warn!("Failed to download Apple artwork: {}", e),
         }
@@ -1264,7 +1479,6 @@ async fn fetch_apple_content(
 
 /// Fetch metadata from the iTunes Lookup API for numeric Apple IDs.
 async fn fetch_itunes_lookup(
-    client: &reqwest::Client,
     item_id: &str,
     country: &str,
     parsed: &ParsedUrl,
@@ -1277,19 +1491,11 @@ async fn fetch_itunes_lookup(
 
     tracing::info!("Fetching iTunes Lookup: {}", lookup_url);
 
-    let resp = client
-        .get(&lookup_url)
-        .send()
+    let body = guarded_get_bytes(&lookup_url, Some("application/json"), JSON_MAX_BYTES)
         .await
         .map_err(|e| format!("iTunes Lookup request failed: {}", e))?;
 
-    if !resp.status().is_success() {
-        return Err(format!("iTunes Lookup returned status {}", resp.status()));
-    }
-
-    let lookup: ITunesLookupResponse = resp
-        .json()
-        .await
+    let lookup: ITunesLookupResponse = serde_json::from_slice(&body)
         .map_err(|e| format!("Failed to parse iTunes Lookup JSON: {}", e))?;
 
     if lookup.result_count == 0 || lookup.results.is_empty() {
@@ -1377,26 +1583,16 @@ async fn fetch_itunes_lookup(
 
 /// Fall back to OG tags for Apple content not in the iTunes Lookup API
 /// (Apple TV+ UMC IDs, playlists).
-async fn fetch_apple_og_tags(
-    client: &reqwest::Client,
-    parsed: &ParsedUrl,
-) -> Result<AppleEmbed, String> {
+async fn fetch_apple_og_tags(parsed: &ParsedUrl) -> Result<AppleEmbed, String> {
     tracing::info!("Fetching Apple OG tags: {}", parsed.url);
 
-    let resp = client
-        .get(&parsed.url)
-        .send()
-        .await
-        .map_err(|e| format!("Apple OG tag fetch failed: {}", e))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("Apple OG tag fetch returned status {}", resp.status()));
-    }
-
-    let html = resp
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read Apple response body: {}", e))?;
+    let html = guarded_get_text(
+        &parsed.url,
+        Some("text/html,application/xhtml+xml"),
+        HTML_MAX_BYTES,
+    )
+    .await
+    .map_err(|e| format!("Apple OG tag fetch failed: {}", e))?;
 
     let (title, description, image_url) = parse_og_tags(&html);
     let now = chrono::Utc::now().to_rfc3339();
@@ -1685,7 +1881,6 @@ pub async fn resolve_embeds(
     content_dir: &Path,
     cache_dir: &Path,
 ) -> HashMap<PathBuf, EmbedData> {
-    let client = http_client();
     let mut cache = HashMap::new();
 
     for entry in entries.iter_mut() {
@@ -1739,13 +1934,13 @@ pub async fn resolve_embeds(
         let _ = std::fs::remove_dir_all(&entry_cache_dir);
 
         let result = if parsed.platform.has_oembed() {
-            fetch_oembed(&client, &parsed).await
+            fetch_oembed(&parsed).await
         } else if parsed.platform.is_apple() {
-            fetch_apple_content(&client, &parsed, &entry_cache_dir).await
+            fetch_apple_content(&parsed, &entry_cache_dir).await
         } else if parsed.platform == Platform::Generic {
-            fetch_generic_og(&client, &parsed, &entry_cache_dir).await
+            fetch_generic_og(&parsed, &entry_cache_dir).await
         } else {
-            fetch_og_tags(&client, &parsed).await
+            fetch_og_tags(&parsed).await
         };
 
         match result {
@@ -1797,7 +1992,6 @@ pub async fn check_liveness(
     cache_dir: &Path,
     check_interval: Duration,
 ) {
-    let client = http_client();
     let now = chrono::Utc::now();
 
     for (path, data) in embed_cache.iter_mut() {
@@ -1832,22 +2026,20 @@ pub async fn check_liveness(
         let url = data.url().to_string();
         tracing::info!("Liveness check: {}", url);
 
-        let result = client
-            .head(&url)
-            .send()
-            .await;
+        // The stored URL is the operator's, but a HEAD to it is still an outbound
+        // request, so it goes through the same SSRF-guarded path (vetted + pinned).
+        let result = guarded_fetch(FetchMethod::Head, &url, None, 0).await;
 
         let now_str = now.to_rfc3339();
         let is_deleted = match result {
             Ok(resp) => {
-                let status = resp.status();
-                status == reqwest::StatusCode::NOT_FOUND
-                    || status == reqwest::StatusCode::GONE
-                    || status == reqwest::StatusCode::FORBIDDEN
+                resp.status == reqwest::StatusCode::NOT_FOUND
+                    || resp.status == reqwest::StatusCode::GONE
+                    || resp.status == reqwest::StatusCode::FORBIDDEN
             }
             Err(e) => {
                 tracing::warn!("Liveness check failed for {}: {}", url, e);
-                false // Network error — don't mark as deleted
+                false // Network error / refused target — don't mark as deleted
             }
         };
 
@@ -2902,5 +3094,117 @@ mod tests {
             last_checked: None,
         });
         assert_eq!(data.display_label(), "@user@mastodon.social");
+    }
+}
+
+// ─── SSRF-guard tests ───────────────────────────────────────────
+
+#[cfg(test)]
+mod ssrf_tests {
+    use super::*;
+    use std::net::IpAddr;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn public_ipv4_is_allowed() {
+        assert!(is_public_ip(&ip("8.8.8.8")));
+        assert!(is_public_ip(&ip("1.1.1.1")));
+        assert!(is_public_ip(&ip("140.82.121.3"))); // github
+    }
+
+    #[test]
+    fn private_and_special_ipv4_are_refused() {
+        for bad in [
+            "127.0.0.1",       // loopback
+            "10.0.0.1",        // RFC1918
+            "172.16.5.4",      // RFC1918
+            "192.168.1.1",     // RFC1918
+            "169.254.169.254", // link-local — cloud metadata endpoint
+            "100.64.0.1",      // CGNAT
+            "0.0.0.0",         // unspecified
+            "255.255.255.255", // broadcast
+            "224.0.0.1",       // multicast
+            "240.0.0.1",       // reserved
+            "192.0.2.5",       // documentation
+            "198.18.0.1",      // benchmarking
+        ] {
+            assert!(!is_public_ip(&ip(bad)), "{bad} must be refused");
+        }
+    }
+
+    #[test]
+    fn ipv6_ranges_are_judged() {
+        assert!(!is_public_ip(&ip("::1"))); // loopback
+        assert!(!is_public_ip(&ip("::"))); // unspecified
+        assert!(!is_public_ip(&ip("fc00::1"))); // unique-local
+        assert!(!is_public_ip(&ip("fd12:3456::1"))); // unique-local
+        assert!(!is_public_ip(&ip("fe80::1"))); // link-local
+        assert!(!is_public_ip(&ip("2001:db8::1"))); // documentation
+        assert!(!is_public_ip(&ip("ff02::1"))); // multicast
+        assert!(is_public_ip(&ip("2606:4700:4700::1111"))); // cloudflare
+        // IPv4-mapped IPv6 is judged by its embedded v4.
+        assert!(!is_public_ip(&ip("::ffff:10.0.0.1")));
+        assert!(is_public_ip(&ip("::ffff:8.8.8.8")));
+        // 6to4 / Teredo wrap a v4 that could be internal — refused wholesale.
+        assert!(!is_public_ip(&ip("2002:a9fe:a9fe::"))); // 6to4 of 169.254.169.254
+        assert!(!is_public_ip(&ip("2002:7f00:0001::"))); // 6to4 of 127.0.0.1
+        assert!(!is_public_ip(&ip("2001:0:0:1::1"))); // Teredo (2001:0000::/32)
+    }
+
+    #[test]
+    fn parse_fetch_target_extracts_host_port_scheme() {
+        assert_eq!(
+            parse_fetch_target("https://example.com/path?q=1").unwrap(),
+            ("example.com".to_string(), 443, true)
+        );
+        assert_eq!(
+            parse_fetch_target("http://example.com").unwrap(),
+            ("example.com".to_string(), 80, false)
+        );
+        assert_eq!(
+            parse_fetch_target("https://example.com:8443/x").unwrap(),
+            ("example.com".to_string(), 8443, true)
+        );
+        assert_eq!(
+            parse_fetch_target("https://[2606:4700::1]:8443/x").unwrap(),
+            ("2606:4700::1".to_string(), 8443, true)
+        );
+        // Non-http(s), userinfo, and non-ASCII (IDN) hosts are refused.
+        assert!(parse_fetch_target("ftp://example.com").is_err());
+        assert!(parse_fetch_target("https://user@example.com/").is_err());
+        assert!(parse_fetch_target("https://ex\u{00e4}mple.com/").is_err());
+    }
+
+    #[test]
+    fn join_redirect_resolves_relative_and_keeps_absolute() {
+        assert_eq!(
+            join_redirect("https://a.com/x/y", "https://b.com/z").unwrap(),
+            "https://b.com/z"
+        );
+        assert_eq!(
+            join_redirect("https://a.com/x/y", "/z").unwrap(),
+            "https://a.com/z"
+        );
+        // An absolute http:// target survives the join so the https-only check refuses it.
+        assert_eq!(
+            join_redirect("https://a.com/", "http://b.com/z").unwrap(),
+            "http://b.com/z"
+        );
+    }
+
+    #[tokio::test]
+    async fn vet_host_refuses_private_literals_and_allows_public() {
+        // IP literals resolve without touching the network.
+        assert!(vet_host("127.0.0.1", 443).await.is_err());
+        assert!(vet_host("169.254.169.254", 80).await.is_err());
+        assert!(vet_host("10.0.0.1", 443).await.is_err());
+        assert!(vet_host("::1", 443).await.is_err());
+        assert!(vet_host("fc00::1", 443).await.is_err());
+        // A public literal vets clean and returns its address.
+        let ok = vet_host("8.8.8.8", 443).await.unwrap();
+        assert!(ok.iter().all(|a| is_public_ip(&a.ip())));
     }
 }
