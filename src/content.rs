@@ -24,8 +24,26 @@ impl ContentStore {
     /// never writes; a malformed post becomes an errored `Entry` rather than
     /// aborting the whole scan or serving the wrong bytes. See `entry-model.md`.
     pub fn scan(content_dir: &Path, cache_dir: &Path) -> std::io::Result<Self> {
-        let entries = scan_entries(content_dir)?;
+        let mut entries = scan_entries(content_dir)?;
+
+        // Fail-closed visibility gate (post-model.md §6): a post is served only
+        // when its top level (the folder, or the bare file) is tagged `public`
+        // and not `private`. Dropping hidden posts here — before the timeline,
+        // name resolution, listings, and embeds ever see them — makes every
+        // downstream path fail-closed at once. Untagged content simply does not
+        // exist to the server.
+        let scanned = entries.len();
+        entries.retain(|e| e.is_visible());
+        let hidden = scanned - entries.len();
+        if hidden > 0 {
+            tracing::info!(
+                "Visibility gate: {} post(s) withheld (untagged or private), {} served",
+                hidden,
+                entries.len()
+            );
+        }
         tracing::info!("Scanned {} entries from {}", entries.len(), content_dir.display());
+
         Ok(ContentStore {
             entries,
             content_dir: content_dir.to_path_buf(),
@@ -915,6 +933,19 @@ mod tests {
         assert_eq!(extract_excerpt(&d.path().join("page.html"), "html"), None);
     }
 
+    /// Write Finder tags the way Finder stores them — a binary-plist array of
+    /// `"name\nN"` strings in the `_kMDItemUserTags` xattr — so `read_tags_colored`
+    /// (and the visibility gate) see them. Returns false when the filesystem
+    /// rejects xattrs, so a test can skip rather than fail on an unsupported FS.
+    #[must_use]
+    fn set_tags(path: &Path, tags: &[&str]) -> bool {
+        let arr: Vec<plist::Value> =
+            tags.iter().map(|t| plist::Value::String((*t).to_string())).collect();
+        let mut buf = Vec::new();
+        plist::to_writer_binary(&mut buf, &plist::Value::Array(arr)).unwrap();
+        xattr::set(path, "com.apple.metadata:_kMDItemUserTags", &buf).is_ok()
+    }
+
     /// Write a Finder comment the way Finder stores it — a binary-plist string in
     /// the `kMDItemFinderComment` xattr — so `read_finder_comment` sees it. Returns
     /// false when the filesystem rejects xattrs, so the test skips rather than
@@ -1278,6 +1309,57 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].label.as_deref(), Some("x"));
         assert_eq!(entries[0].extension, "link");
+    }
+
+    // ── visibility gate (fail-closed) ──
+
+    #[test]
+    fn visibility_untagged_and_private_are_withheld() {
+        let t = TmpDir::new();
+        touch(t.path(), "shown.md", "public body");
+        touch(t.path(), "untagged.md", "no tag → hidden");
+        touch(t.path(), "secret.md", "public + private → private wins");
+        if !set_tags(&t.path().join("shown.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        // `private` beats `public` (deny-wins), so `secret` is still withheld.
+        assert!(set_tags(&t.path().join("secret.md"), &["public", "private"]));
+        let store = ContentStore::scan(t.path(), &std::env::temp_dir()).unwrap();
+        let labels: Vec<&str> = store.entries.iter().filter_map(|e| e.label.as_deref()).collect();
+        assert_eq!(labels, vec!["shown"], "only the public, non-private post serves");
+    }
+
+    #[test]
+    fn private_folder_withholds_even_a_public_primary() {
+        let t = TmpDir::new();
+        touch(t.path(), "album/album.md", "body");
+        if !set_tags(&t.path().join("album"), &["private"]) {
+            return; // xattr unsupported — skip
+        }
+        // Tagging the inner primary public cannot rescue a private folder post.
+        let _ = set_tags(&t.path().join("album/album.md"), &["public"]);
+        let store = ContentStore::scan(t.path(), &std::env::temp_dir()).unwrap();
+        assert!(store.entries.is_empty(), "a private post is never served");
+    }
+
+    #[test]
+    fn path_visible_needs_every_component_public() {
+        let t = TmpDir::new();
+        touch(t.path(), "album/sub/pic.jpg", "bytes");
+        let root = t.path();
+        let pic = root.join("album/sub/pic.jpg");
+        if !set_tags(&root.join("album"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        // A gap anywhere on the chain (sub/ untagged) fails closed.
+        assert!(!crate::tags::path_visible(root, &pic));
+        assert!(set_tags(&root.join("album/sub"), &["public"]));
+        assert!(!crate::tags::path_visible(root, &pic), "the file itself still needs `public`");
+        assert!(set_tags(&pic, &["public"]));
+        assert!(crate::tags::path_visible(root, &pic), "every component public → served");
+        // `private` on the file wins even with a fully public chain.
+        assert!(set_tags(&pic, &["public", "private"]));
+        assert!(!crate::tags::path_visible(root, &pic));
     }
 
     #[test]

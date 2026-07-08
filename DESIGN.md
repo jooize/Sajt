@@ -102,6 +102,20 @@ state in which something private goes live without a deliberate tagging act.
   personal+public).
 - Unpublishing (tag removed after being live) answers **410 Gone**.
 
+**SHIPPED 2026-07-08 (`post-model.md` §6 + [review]) — the gate is now
+enforced, fail-closed at every level.** Enforced once in the scanner
+(`ContentStore::scan` drops any post whose top level isn't `public`, or is
+`private`) so the timeline, name resolution, listings, and embeds are all
+fail-closed at once. Deny-wins: `private` beats `public` on the same item and
+hides its whole subtree. Assets are gated per-file and per-path
+(`tags::path_visible` ANDs `public` down the whole chain, `private` anywhere
+denies): **every** file and subfolder needs its own `public` — strict, no
+inline-image exception, so an untagged inline `<img>` is a broken/404 image
+until its file is tagged (which also lists it, §6). A hidden path 404s
+identically to a missing one (the primary is covered by the post's own
+visibility and carries no separate tag). The tagline holds literally now: drop
+a file, **tag it `public`**, it's published.
+
 **Access to `private` entries — ideas (PROPOSED, for later):**
 - **Passkeys (WebAuthn)** — the native answer: no passwords, synced by
   iCloud Keychain, phishing-resistant. A tiny allowlist of enrolled passkeys

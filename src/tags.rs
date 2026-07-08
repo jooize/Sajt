@@ -13,6 +13,44 @@ pub struct Tag {
     pub color: u8,
 }
 
+impl Tag {
+    /// The `public` visibility tag — the allow half of the fail-closed gate.
+    pub fn is_public(&self) -> bool {
+        self.name.eq_ignore_ascii_case("public")
+    }
+    /// The `private` visibility tag — the deny half; it wins over `public`.
+    pub fn is_private(&self) -> bool {
+        self.name.eq_ignore_ascii_case("private")
+    }
+}
+
+/// Fail-closed visibility for a filesystem path: served **iff every path
+/// component** from `root` (exclusive) down to `path` (inclusive) is tagged
+/// `public` **and none** is tagged `private` (deny-wins AND up the whole chain).
+///
+/// This is the master gate (see `post-model.md` §6 / the [review] amendment):
+/// untagged is not served, `private` hides a subtree, and a mistagged ancestor
+/// hides everything beneath it. `path` must sit inside `root`; anything outside
+/// is not visible (fail closed). Reads tags per component via the same read-only
+/// accessor as everywhere else — the content tree is never written.
+pub fn path_visible(root: &Path, path: &Path) -> bool {
+    let rel = match path.strip_prefix(root) {
+        Ok(r) => r,
+        Err(_) => return false, // outside the content root — fail closed
+    };
+    let mut cur = root.to_path_buf();
+    for comp in rel.components() {
+        cur.push(comp);
+        let tags = read_tags_colored(&cur);
+        let public = tags.iter().any(Tag::is_public);
+        let private = tags.iter().any(Tag::is_private);
+        if private || !public {
+            return false;
+        }
+    }
+    true
+}
+
 /// Parse one raw `_kMDItemUserTags` entry (`"name\nN"`) into a `Tag`.
 fn parse_tag_entry(raw: &str) -> Tag {
     match raw.split_once('\n') {

@@ -110,6 +110,25 @@ impl Entry {
         self.tags.iter().any(|t| t.name.eq_ignore_ascii_case("favorite"))
     }
 
+    /// Whether the post carries the `public` tag at its own (post) level.
+    pub fn is_public(&self) -> bool {
+        self.tags.iter().any(Tag::is_public)
+    }
+
+    /// Whether the post carries the `private` tag (deny-wins over `public`).
+    pub fn is_private(&self) -> bool {
+        self.tags.iter().any(Tag::is_private)
+    }
+
+    /// The fail-closed post-level visibility gate: a post is served only when it
+    /// is tagged `public` and not `private`. Untagged is not served. This decides
+    /// whether the post exists in the served set at all (timeline, name
+    /// resolution, listings) — enforced once in the scanner, so every downstream
+    /// consumer is fail-closed for free. See `post-model.md` §6.
+    pub fn is_visible(&self) -> bool {
+        self.is_public() && !self.is_private()
+    }
+
     /// Tags shown to readers: everything that isn't machinery, in file order.
     pub fn topical_tags(&self) -> impl Iterator<Item = &Tag> {
         self.tags.iter().filter(|t| !is_reserved_tag(&t.name))

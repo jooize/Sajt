@@ -162,7 +162,7 @@ pub async fn catch_all(
 
     // Folder-post asset (`/{folder}/{asset…}`): resolved before the query parser,
     // which would otherwise misread the multi-segment path as a label.
-    if let Some(resp) = try_asset(&all_entries, &path) {
+    if let Some(resp) = try_asset(&all_entries, &path, &store.content_dir) {
         return resp;
     }
 
@@ -303,7 +303,7 @@ fn error_response(entry: &Entry, all_entries: &[&Entry]) -> Response {
 /// strictly inside that post's directory. Returns None when the path is not an
 /// asset (wrong shape, unknown folder, a missing or escaping file), so the
 /// caller falls through to normal resolution.
-fn try_asset(all_entries: &[&Entry], path: &str) -> Option<Response> {
+fn try_asset(all_entries: &[&Entry], path: &str, content_dir: &std::path::Path) -> Option<Response> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.len() < 2 {
         return None;
@@ -336,6 +336,8 @@ fn try_asset(all_entries: &[&Entry], path: &str) -> Option<Response> {
     }
 
     // The primary content is canonical at `/label(.ext)` — send duplicates there.
+    // The primary is covered by the post's own visibility, so this precedes the
+    // per-file gate below (the primary carries no separate `public` tag).
     if std::fs::canonicalize(&owner.path).ok().as_deref() == Some(canon_file.as_path()) {
         let label = owner.label.as_deref().unwrap_or(first);
         let decoded = if owner.extension.is_empty() {
@@ -344,6 +346,14 @@ fn try_asset(all_entries: &[&Entry], path: &str) -> Option<Response> {
             format!("/{}.{}", label, owner.extension)
         };
         return Some(redirect(&templates::encode_path(&decoded)));
+    }
+
+    // Per-file visibility gate (strict — post-model.md [review]): every asset
+    // needs its own `public` tag, and no component of its path may be `private`.
+    // A hidden or untagged asset is treated as absent (fall through to a normal
+    // 404), so it is indistinguishable from a missing one — no existence oracle.
+    if !crate::tags::path_visible(content_dir, &canon_file) {
+        return None;
     }
 
     let bytes = std::fs::read(&canon_file).ok()?;
