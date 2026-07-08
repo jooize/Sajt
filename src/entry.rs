@@ -170,6 +170,10 @@ pub struct Entry {
     /// list and the collision notice. `None` for a normal document post or a
     /// bare-file post. See `post-model.md` §6.
     pub listing: Option<Listing>,
+    /// A document post's `public` sibling files, in filename order — rendered as
+    /// an attachment file list below the body (`post-model.md` §6). Empty for a
+    /// bare file, a listing (its files are the listing), or a post with none.
+    pub attachments: Vec<ListItem>,
 }
 
 impl Entry {

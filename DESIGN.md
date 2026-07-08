@@ -200,6 +200,11 @@ where symlinks and xattrs do not.
   prose**. **Membership is a `public` allowlist** — a file lists (and serves)
   only if tagged `public`, so `.DS_Store`, drafts and markers never leak; the
   header shows "N of M files public" so a reader can tell something is withheld.
+  **Attachments** are the same rule with a primary present: a document post's
+  `public` sibling files render as a file list **below the body** (filename
+  order) — one idiom, drop-and-tag to add, untag to remove. Listing and post are
+  one gradient (primary + public files = post with attachments; no primary +
+  public files = pure listing).
 - The **only** remaining fail-closed *error* is **multiple date markers** — a
   genuinely no-right-answer case (an unknown publish date), shown as an errored
   row and an HTTP 500 page naming the conflict.

@@ -283,6 +283,7 @@ fn build_bare_post(item: &TopItem, claim: Option<&str>) -> Entry {
         revisions: Vec::new(),
         error: None,
         listing: None,
+        attachments: Vec::new(),
     }
 }
 
@@ -378,6 +379,7 @@ fn build_folder_post(item: &TopItem, claim: Option<&str>) -> Entry {
         revisions: scan.revisions,
         error: None,
         listing: None,
+        attachments: scan.attachments,
     }
 }
 
@@ -429,6 +431,7 @@ fn build_listing_post(
         revisions: Vec::new(),
         error: None,
         listing: Some(listing),
+        attachments: Vec::new(),
     }
 }
 
@@ -452,6 +455,7 @@ fn errored_folder(item: &TopItem, label: &str, tags: Vec<Tag>, error: PostError)
         revisions: Vec::new(),
         error: Some(error),
         listing: None,
+        attachments: Vec::new(),
     }
 }
 
@@ -715,6 +719,8 @@ struct FileChild {
 struct FolderScan {
     primary: Option<PrimaryFile>,
     listing: Option<Listing>,
+    /// A document post's public sibling files (empty for a listing or an error).
+    attachments: Vec<ListItem>,
     date_marker: Option<PostDate>,
     aliases: Vec<String>,
     revisions: Vec<Revision>,
@@ -771,6 +777,7 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         return Ok(FolderScan {
             primary: None,
             listing: None,
+            attachments: Vec::new(),
             date_marker: None,
             aliases,
             revisions: Vec::new(),
@@ -806,6 +813,7 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         return Ok(FolderScan {
             primary: None,
             listing: Some(listing),
+            attachments: Vec::new(),
             date_marker,
             aliases,
             revisions: Vec::new(),
@@ -830,6 +838,7 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
                 return Ok(FolderScan {
                     primary: None,
                     listing: None,
+                    attachments: Vec::new(),
                     date_marker,
                     aliases,
                     revisions: Vec::new(),
@@ -857,6 +866,7 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
             return Ok(FolderScan {
                 primary: None,
                 listing: Some(listing),
+                attachments: Vec::new(),
                 date_marker,
                 aliases,
                 revisions: Vec::new(),
@@ -880,7 +890,24 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         mtime: primary_child.mtime,
     };
 
-    Ok(FolderScan { primary: Some(primary), listing: None, date_marker, aliases, revisions, error: None })
+    // Attachments = the post's public sibling files (everything else public),
+    // in filename order — rendered below the body (post-model.md §6).
+    let mut attachments: Vec<ListItem> = plain
+        .iter()
+        .filter(|f| f.path != primary_child.path && file_is_public(&f.path))
+        .map(to_list_item)
+        .collect();
+    attachments.sort_by(|a, b| a.name.cmp(&b.name));
+
+    Ok(FolderScan {
+        primary: Some(primary),
+        listing: None,
+        attachments,
+        date_marker,
+        aliases,
+        revisions,
+        error: None,
+    })
 }
 
 /// Whether a file is `public` (and not `private`) at its own level — the listing
@@ -1589,6 +1616,29 @@ mod tests {
         let listing = e.listing.as_ref().expect("no primary -> listing");
         assert_eq!(listing.items.len(), 2);
         assert!(!listing.is_gallery(), "a non-image present -> file list");
+    }
+
+    #[test]
+    fn document_post_lists_public_sibling_attachments() {
+        // A doc post (primary `resume.md`) with public siblings gets them as
+        // attachments, filename-ordered; an untagged sibling is excluded.
+        let t = TmpDir::new();
+        touch(t.path(), "resume/resume.md", "# CV\n\nthe body");
+        touch(t.path(), "resume/cv.pdf", "pdf");
+        touch(t.path(), "resume/refs.pdf", "pdf");
+        touch(t.path(), "resume/draft.txt", "not public");
+        if !set_tags(&t.path().join("resume/cv.pdf"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        assert!(set_tags(&t.path().join("resume/refs.pdf"), &["public"]));
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "resume");
+        assert!(e.error.is_none() && e.listing.is_none(), "still a document post");
+        assert!(e.path.ends_with("resume.md"), "primary is the body");
+        let names: Vec<&str> = e.attachments.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["cv.pdf", "refs.pdf"], "public siblings, filename order");
+        assert!(!names.contains(&"resume.md"), "the primary is not an attachment");
+        assert!(!names.contains(&"draft.txt"), "untagged sibling excluded");
     }
 
     #[test]

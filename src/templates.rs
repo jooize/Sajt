@@ -1,4 +1,4 @@
-use crate::entry::{Entry, Listing, PostError, Revision};
+use crate::entry::{Entry, ListItem, Listing, PostError, Revision};
 use crate::slug::{is_reserved_slug, slug};
 use crate::stats::{compute_cloud, finder_color_var, CloudStats, TagStat, ViewFilter};
 
@@ -746,22 +746,24 @@ main > article + article { margin-top: 3.2rem; padding-top: 3.2rem; border-top: 
 #listing figcaption b { font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #listing figcaption b small { font-weight: inherit; color: var(--soft); }
 #listing figcaption span { font: 500 .68rem var(--mono); color: var(--faint); font-feature-settings: "tnum"; }
-/* file list */
-#listing section > ol { list-style: none; padding: 0; margin: 1rem 0 0; display: flex; flex-direction: column; gap: .4rem; }
-#listing section > ol > li { margin: 0; }
-#listing section > ol > li > a {
+/* file list — shared by pure listings and a post's attachments (#attachments) */
+#attachments { margin-top: 2.2rem; }
+#attachments > h2 { font-size: .95rem; font-weight: 600; margin: 0 0 .7rem; letter-spacing: -.01em; }
+:is(#listing section, #attachments) > ol { list-style: none; padding: 0; margin: 1rem 0 0; display: flex; flex-direction: column; gap: .4rem; }
+:is(#listing section, #attachments) > ol > li { margin: 0; }
+:is(#listing section, #attachments) > ol > li > a {
   display: grid; grid-template-columns: 2.4rem 1fr auto auto; align-items: center; column-gap: .8rem;
   padding: .55rem .7rem; border-radius: 12px;
   background: var(--glass); border: .5px solid var(--glass-edge); box-shadow: var(--glass-shadow); color: var(--ink);
 }
-#listing section > ol > li > a:hover { text-decoration: none; border-color: var(--violet); }
-#listing section > ol i {
+:is(#listing section, #attachments) > ol > li > a:hover { text-decoration: none; border-color: var(--violet); }
+:is(#listing section, #attachments) > ol i {
   font: 700 .58rem/1 var(--mono); font-style: normal; display: inline-flex; align-items: center; justify-content: center;
   width: 2.4rem; height: 1.55rem; border-radius: 5px; color: #fff; letter-spacing: .03em; background: var(--kind, var(--tag-gray));
 }
-#listing section > ol b { font-weight: 560; font-size: .875rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#listing section > ol b small { font-weight: inherit; color: var(--soft); }
-#listing section > ol span, #listing section > ol time { font: 500 .72rem var(--mono); color: var(--faint); font-feature-settings: "tnum"; white-space: nowrap; }
+:is(#listing section, #attachments) > ol b { font-weight: 560; font-size: .875rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(#listing section, #attachments) > ol b small { font-weight: inherit; color: var(--soft); }
+:is(#listing section, #attachments) > ol span, :is(#listing section, #attachments) > ol time { font: 500 .72rem var(--mono); color: var(--faint); font-feature-settings: "tnum"; white-space: nowrap; }
 
 /* compact: anchors go inline, sidenotes never float (no room) */
 @media (max-width: 56rem) {
@@ -2554,6 +2556,7 @@ pub fn entry_page(
 <article id="post" data-canonical="{canonical}" data-title="{data_title}">
 {post_header}
 <section>{content}</section>
+{attachments}
 {extras}
 <footer><a href="{raw_href}">source</a> <a href="/">timeline</a></footer>
 </article>
@@ -2565,6 +2568,7 @@ pub fn entry_page(
         data_title = html_escape(label),
         post_header = post_header(entry),
         content = rendered_html,
+        attachments = attachments_section(entry, all_entries),
         extras = post_extras(entry, all_entries),
         raw_href = html_escape(&raw_href),
         continue_nav = continue_nav(next, all_entries),
@@ -2680,44 +2684,71 @@ fn listing_grid(base_path: &str, listing: &Listing) -> String {
         return r#"<section><p class="empty">Nothing here is public yet &mdash; tag a file <code>public</code> to list it.</p></section>"#.to_string();
     }
     if listing.is_gallery() {
-        let tiles: String = listing
-            .items
-            .iter()
-            .map(|it| {
-                let href = encode_path(&format!("{}/{}", base_path, it.name));
-                format!(
-                    r#"<li><a href="{href}"><figure><div><img src="{href}" alt="{alt}" loading="lazy"></div><figcaption><b>{stem}<small>{ext}</small></b><span>{size}</span></figcaption></figure></a></li>"#,
-                    href = html_escape(&href),
-                    alt = html_escape(&it.stem),
-                    stem = html_escape(&it.stem),
-                    ext = html_escape(&dot_ext(&it.ext)),
-                    size = html_escape(&human_size(it.size)),
-                )
-            })
-            .collect();
-        format!("<section><ul>{}</ul></section>", tiles)
+        format!("<section>{}</section>", gallery_html(base_path, &listing.items))
     } else {
-        let rows: String = listing
-            .items
-            .iter()
-            .map(|it| {
-                let href = encode_path(&format!("{}/{}", base_path, it.name));
-                let (badge, color) = kind_badge(&it.ext);
-                format!(
-                    r#"<li><a href="{href}"><i style="--kind:{color}">{badge}</i><b>{stem}<small>{ext}</small></b><span>{size}</span><time datetime="{iso}">{date}</time></a></li>"#,
-                    href = html_escape(&href),
-                    color = color,
-                    badge = html_escape(&badge),
-                    stem = html_escape(&it.stem),
-                    ext = html_escape(&dot_ext(&it.ext)),
-                    size = html_escape(&human_size(it.size)),
-                    iso = html_escape(&it.mtime.format("%Y-%m-%dT%H:%M:%S").to_string()),
-                    date = html_escape(&it.mtime.format("%Y-%m-%d").to_string()),
-                )
-            })
-            .collect();
-        format!("<section><ol>{}</ol></section>", rows)
+        format!("<section>{}</section>", file_list_html(base_path, &listing.items))
     }
+}
+
+/// A gallery `<ul>` of image tiles (real asset as the thumbnail for now; dedicated
+/// thumbnails are a Commit 8 follow-up). Items link to their folder-relative asset.
+fn gallery_html(base_path: &str, items: &[ListItem]) -> String {
+    let tiles: String = items
+        .iter()
+        .map(|it| {
+            let href = encode_path(&format!("{}/{}", base_path, it.name));
+            format!(
+                r#"<li><a href="{href}"><figure><div><img src="{href}" alt="{alt}" loading="lazy"></div><figcaption><b>{stem}<small>{ext}</small></b><span>{size}</span></figcaption></figure></a></li>"#,
+                href = html_escape(&href),
+                alt = html_escape(&it.stem),
+                stem = html_escape(&it.stem),
+                ext = html_escape(&dot_ext(&it.ext)),
+                size = html_escape(&human_size(it.size)),
+            )
+        })
+        .collect();
+    format!("<ul>{}</ul>", tiles)
+}
+
+/// A file-list `<ol>` of typed rows (kind badge, name, size, date) — the one
+/// attachment/listing idiom (`post-model.md` §6). Items link to their asset.
+fn file_list_html(base_path: &str, items: &[ListItem]) -> String {
+    let rows: String = items
+        .iter()
+        .map(|it| {
+            let href = encode_path(&format!("{}/{}", base_path, it.name));
+            let (badge, color) = kind_badge(&it.ext);
+            format!(
+                r#"<li><a href="{href}"><i style="--kind:{color}">{badge}</i><b>{stem}<small>{ext}</small></b><span>{size}</span><time datetime="{iso}">{date}</time></a></li>"#,
+                href = html_escape(&href),
+                color = color,
+                badge = html_escape(&badge),
+                stem = html_escape(&it.stem),
+                ext = html_escape(&dot_ext(&it.ext)),
+                size = html_escape(&human_size(it.size)),
+                iso = html_escape(&it.mtime.format("%Y-%m-%dT%H:%M:%S").to_string()),
+                date = html_escape(&it.mtime.format("%Y-%m-%d").to_string()),
+            )
+        })
+        .collect();
+    format!("<ol>{}</ol>", rows)
+}
+
+/// The attachment list below a document post's body: its public sibling files as
+/// the shared file-list idiom (`post-model.md` §6). Empty when the post has none.
+/// Items resolve as folder-relative assets off the post's canonical path.
+fn attachments_section(entry: &Entry, all_entries: &[&Entry]) -> String {
+    if entry.attachments.is_empty() {
+        return String::new();
+    }
+    let base = canonical(entry, all_entries).path;
+    let n = entry.attachments.len();
+    format!(
+        r#"<section id="attachments"><h2>{n} {word}</h2>{list}</section>"#,
+        n = n,
+        word = if n == 1 { "attachment" } else { "attachments" },
+        list = file_list_html(&base, &entry.attachments),
+    )
 }
 
 /// `.ext` for display, empty for a dotless file.
@@ -2985,6 +3016,7 @@ mod tests {
             revisions: Vec::new(),
             error: None,
             listing: None,
+            attachments: Vec::new(),
         }
     }
 
