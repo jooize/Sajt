@@ -843,19 +843,17 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool) -> Response {
         .unwrap_or_else(|_| not_found())
 }
 
-/// Whether an extension names a document we must serve as a sandboxed standalone
-/// page: the deliberate `.html` drop-in feature plus every HTML/XHTML-family
-/// document that would otherwise render as a script-capable top-level document
-/// (`.htm`, `.shtml`, `.xhtml`, `.xht`, ...). Keyed on the resolved MIME so it
-/// tracks `mime_guess` rather than a hand-maintained extension list — the gap the
-/// old `html`/`htm`-only check left open (`.xhtml` ran script in our origin).
-/// Types that are not HTML/XHTML (`.xml`, `.mathml`, ...) are not served
-/// "functional-jailed" here; the header middleware still hard-jails them.
+/// Whether a served document must be jailed as a sandboxed standalone page: the
+/// deliberate `.html` drop-in feature plus every HTML/XHTML-family document that
+/// would otherwise render as a script-capable top-level document (`.htm`,
+/// `.shtml`, `.xhtml`, `.xht`, ...). Delegates to the one canonical predicate
+/// (`entry::is_html_document`, MIME-keyed) so the sandbox gate can never drift
+/// from the `kind()`/render classification — the drift the old `html`/`htm`-only
+/// check caused (`.xhtml` ran script in our origin). Non-HTML document types
+/// (`.xml`, `.mathml`, ...) are not served functional-jailed here; the header
+/// middleware still hard-jails them via the fail-closed default.
 fn is_sandboxed_document(ext: &str) -> bool {
-    matches!(
-        mime_guess::from_ext(ext).first_or_octet_stream().essence_str(),
-        "text/html" | "application/xhtml+xml"
-    )
+    crate::entry::is_html_document(ext)
 }
 
 /// The height reporter appended to the `?embed` copy of a standalone `.html`.

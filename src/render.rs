@@ -61,11 +61,11 @@ pub async fn render_entry(extension: &str, file_content: &[u8]) -> Result<Render
         // `<script>`/`on*`/`javascript:` survives into the trusted origin, while
         // pandoc's structural markup (highlight classes, footnote ids) is kept.
         Ok(RenderedContent::Html(crate::sanitize::body(&html)))
-    } else if ext == "html" || ext == "htm" {
-        // Every .html post is served as its own sandboxed document (the A/B/C
-        // model in routes.rs), never merged into the trusted shell -- so raw
-        // author HTML (which pandoc would pass through unsanitized, and which we
-        // deliberately do NOT sanitize here because running arbitrary HTML/JS
+    } else if crate::entry::is_html_document(ext) {
+        // Every HTML/XHTML post is served as its own sandboxed document (the
+        // A/B/C model in routes.rs), never merged into the trusted shell -- so
+        // raw author HTML (which pandoc would pass through unsanitized, and which
+        // we deliberately do NOT sanitize here because running arbitrary HTML/JS
         // jailed is the whole feature) can only ever execute in the jail.
         Ok(RenderedContent::Standalone(String::from_utf8_lossy(file_content).to_string()))
     } else if ext == "txt" {

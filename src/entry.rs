@@ -251,9 +251,9 @@ impl Entry {
         }
         match normalize_ext(&self.extension).as_str() {
             _ if is_image_ext(&self.extension) => "photo",
-            // `html` is the one format that can be a complete self-contained
-            // document served ~as-is (bypassing site chrome).
-            "html" | "htm" => "html",
+            // The HTML/XHTML family: complete self-contained documents served as
+            // their own sandboxed standalone page (bypassing site chrome).
+            _ if is_html_document(&self.extension) => "html",
             // md/txt and friends differ in *rendering* (formatted vs preformatted),
             // not medium — all poured into the site shell.
             "md" | "txt" | "rst" | "org" | "adoc" | "tex" => "text",
@@ -301,6 +301,21 @@ pub fn normalize_ext(ext: &str) -> String {
     }
 }
 
+/// The HTML/XHTML document family: complete self-contained documents served as
+/// sandboxed standalone pages (the drop-in `.html` feature). Keyed on the
+/// resolved MIME so every HTML/XHTML extension (`html`, `htm`, `xhtml`, `xht`,
+/// `shtml`, ...) is covered without a hand-maintained list. This is the single
+/// source of truth used by three consumers that MUST agree: `kind()` (medium
+/// classification), `render::render_entry` (the standalone render path), and the
+/// server's sandbox gate (`routes.rs`) — if they diverged, a document could be
+/// served jailed but misclassified, or classified as a page but not jailed.
+pub fn is_html_document(ext: &str) -> bool {
+    matches!(
+        mime_guess::from_ext(ext).first_or_octet_stream().essence_str(),
+        "text/html" | "application/xhtml+xml"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +329,15 @@ mod tests {
         assert_eq!(normalize_ext("JPG"), "jpg");
         assert_eq!(normalize_ext("md"), "md");
         assert_eq!(normalize_ext(""), "");
+    }
+
+    #[test]
+    fn html_document_family_covers_html_and_xhtml() {
+        for ext in ["html", "htm", "HTML", "xhtml", "xht", "shtml"] {
+            assert!(is_html_document(ext), "{ext} should be an HTML document");
+        }
+        for ext in ["md", "txt", "svg", "xml", "png", "pdf", ""] {
+            assert!(!is_html_document(ext), "{ext} should NOT be an HTML document");
+        }
     }
 }
