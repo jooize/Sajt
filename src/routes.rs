@@ -115,6 +115,18 @@ pub async fn saved(
 
 /// GET /static/{*path} — serve static assets with aggressive caching.
 pub async fn serve_static(Path(path): Path<String>) -> Response {
+    // Generated assets (site.css / site.js / boot.js) are built from the
+    // compile-time consts, not read from disk. Their URLs carry a content-hash
+    // `?v=` token, so they are safe to serve `immutable`.
+    if let Some(asset) = crate::assets::get(&path) {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, HeaderValue::from_static(asset.mime()))
+            .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+            .body(Body::from(asset.body().to_string()))
+            .unwrap_or_else(|_| not_found());
+    }
+
     // Restrict to known safe filenames (no path traversal)
     let safe: bool = path
         .chars()

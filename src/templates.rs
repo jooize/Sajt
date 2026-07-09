@@ -344,6 +344,8 @@ body:has(#grip.active) { -webkit-user-select: none; user-select: none; }
   box-shadow: 0 1px 3px light-dark(rgba(20, 24, 20, .16), rgba(0, 0, 0, .4));
   transition: left .18s ease;
 }
+/* notable segment selected: slide the thumb to the halfway mark */
+#site form p > span > u[data-notable] { left: calc(2px + (100% - 4px) / 2); }
 #site form p > span > a {
   position: relative;
   padding: .3em .9em;
@@ -1008,7 +1010,28 @@ article[data-error] code { font-family: var(--mono); background: light-dark(rgba
 // toggle, land-on-post, and inline Continue loading. No-JS stays fully usable.
 // ============================================================================
 
-const JS: &str = r##"
+/// Pre-paint bootstrap: applies the reader's saved width and typeface before the
+/// first paint, so there is no flash of default layout. It is a tiny, external,
+/// render-blocking `<script src>` in `<head>` (CSP `script-src 'self'` forbids
+/// inline script, and we take no nonce). Setting styles via the CSSOM `.style`
+/// property is script-driven, not an inline `style` attribute, so it is clean
+/// under `style-src 'self'`. Keep the `NS` prefix in sync with the JS below.
+pub(crate) const BOOT_JS: &str = r##"
+(function () {
+  try {
+    var NS = "site", d = document.documentElement, s = window.localStorage;
+    var w = parseFloat(s.getItem(NS + "-width"));
+    if (w > 0) {
+      var m = Math.min(1160, window.innerWidth - 64);
+      d.style.setProperty("--content-w", Math.max(480, Math.min(m, w)) + "px");
+    }
+    var t = s.getItem(NS + "-type");
+    if (t) d.dataset.type = t;
+  } catch (e) {}
+})();
+"##;
+
+pub(crate) const JS: &str = r##"
 (function () {
   var store = window.localStorage;
   /* Provisional key namespace: this is a generic site engine, so the client
@@ -1803,11 +1826,9 @@ fn render_site_header(ctx: &HeaderContext) -> String {
         )
     };
     // Two segments, so the thumb rests at the left edge or the halfway mark.
-    let thumb_pos = if view.notable {
-        "calc(2px + (100% - 4px) / 2)"
-    } else {
-        "2px"
-    };
+    // Its position rides a `data-notable` attribute (CSS-driven) rather than an
+    // inline `style`, so the control stays clean under `style-src 'self'`.
+    let thumb_attr = if view.notable { " data-notable" } else { "" };
     // The short bar is always lit ("everything"); the tall one lights at "notable".
     let bar_notable = if view.notable { " data-on" } else { "" };
     let grade_tip = if view.notable {
@@ -1859,7 +1880,7 @@ fn render_site_header(ctx: &HeaderContext) -> String {
 <a href="{saved_href}" id="navsaved" hidden aria-current="{saved_current}" aria-label="Saved for later">{bookmark}<i aria-hidden="true">&times;</i><output>0</output></a>
 <p aria-label="How much to show">
 <svg viewBox="0 0 24 24"><title>{tip}</title><rect x="5.5" y="12" width="5.5" height="10" rx="2.4" data-on/><rect x="13" y="4" width="5.5" height="18" rx="2.4"{b1}/></svg>
-<span><u style="left:{thumb}"></u>{everything}{notable}</span>
+<span><u{thumb_attr}></u>{everything}{notable}</span>
 <a href="{fav_href}" id="favonly" aria-current="{fav_cur}"><b>&#9733;</b> favorites</a>
 </p>
 <search>
@@ -1877,7 +1898,7 @@ fn render_site_header(ctx: &HeaderContext) -> String {
         bookmark = BOOKMARK_SVG,
         tip = grade_tip,
         b1 = bar_notable,
-        thumb = thumb_pos,
+        thumb_attr = thumb_attr,
         everything = grade_link(false, "everything"),
         notable = grade_link(true, "notable"),
         fav_href = fav_href,
@@ -1924,7 +1945,8 @@ fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> Str
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
-<style>{css}{embed_css}</style>
+<link rel="stylesheet" href="{css_href}">
+<script src="{boot_href}"></script>
 </head>
 <body data-page="{page_kind}"{view_attr}>
 <div id="grip" role="slider" tabindex="0" aria-label="Reading width" aria-orientation="horizontal" aria-valuemin="480" aria-valuemax="1160" aria-valuenow="736" title="Drag to set reading width. Double-click resets."></div>
@@ -1936,18 +1958,18 @@ fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> Str
 <dl>{shortcuts}</dl>
 <p><b>&#9733;</b> marks my favorites. Bookmarks are yours &mdash; they never leave this browser.</p>
 </dialog>
-<script>{js}</script>
+<script src="{site_href}"></script>
 </body>
 </html>"#,
         title = html_escape(title),
-        css = CSS,
-        embed_css = crate::embed::EMBED_CSS,
+        css_href = crate::assets::SITE_CSS.url(),
+        boot_href = crate::assets::BOOT_JS.url(),
+        site_href = crate::assets::SITE_JS.url(),
         page_kind = page_kind,
         view_attr = view_attr,
         body = body,
         typeface = typeface,
         shortcuts = shortcuts,
-        js = JS,
     )
 }
 

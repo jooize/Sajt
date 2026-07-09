@@ -1,3 +1,4 @@
+mod assets;
 mod content;
 mod embed;
 mod entry;

@@ -64,20 +64,22 @@ impl Platform {
         )
     }
 
-    /// CSS accent color for this platform.
-    pub fn accent_color(&self) -> &'static str {
+    /// Stable kebab-case slug identifying this platform. Emitted as the card's
+    /// `data-platform` attribute; the accent color lives in EMBED_CSS keyed on
+    /// it, so no per-card inline `style` is needed (CSP `style-src 'self'`).
+    pub fn slug(&self) -> &'static str {
         match self {
-            Platform::Twitter => "#1d9bf0",
-            Platform::Bluesky => "#0085ff",
-            Platform::Mastodon => "#6364ff",
-            Platform::Instagram => "#e1306c",
-            Platform::Threads => "var(--color-fg)",
-            Platform::AppleAppStore => "#0d84ff", // overridden by render for Mac apps
-            Platform::AppleMusic => "#fa2d48",
-            Platform::ApplePodcasts => "#9933cc",
-            Platform::AppleBooks => "#f5813f",
-            Platform::AppleTV => "#000000",
-            Platform::Generic => "var(--color-link)",
+            Platform::Twitter => "twitter",
+            Platform::Bluesky => "bluesky",
+            Platform::Mastodon => "mastodon",
+            Platform::Instagram => "instagram",
+            Platform::Threads => "threads",
+            Platform::AppleAppStore => "apple-app-store",
+            Platform::AppleMusic => "apple-music",
+            Platform::ApplePodcasts => "apple-podcasts",
+            Platform::AppleBooks => "apple-books",
+            Platform::AppleTV => "apple-tv",
+            Platform::Generic => "generic",
         }
     }
 
@@ -2114,8 +2116,6 @@ fn local_asset_url(cache_dir: &Path, asset_filename: &str) -> Option<String> {
 }
 
 fn render_generic_card(e: &GenericEmbed, cache_dir: &Path) -> String {
-    let accent = Platform::Generic.accent_color();
-
     let source_label = e
         .site_name
         .as_deref()
@@ -2157,7 +2157,7 @@ fn render_generic_card(e: &GenericEmbed, cache_dir: &Path) -> String {
     };
 
     format!(
-        r#"<a href="{url}" class="embed-card generic-card" style="--embed-accent: {accent}" rel="noopener noreferrer" target="_blank">
+        r#"<a href="{url}" class="embed-card generic-card" data-platform="generic" rel="noopener noreferrer" target="_blank">
 {image_html}
 <div class="generic-body">
 <div class="generic-source">{source}</div>
@@ -2166,7 +2166,6 @@ fn render_generic_card(e: &GenericEmbed, cache_dir: &Path) -> String {
 </div>
 </a>"#,
         url = html_escape(&e.url),
-        accent = accent,
         image_html = image_html,
         source = html_escape(source_label),
         title_html = title_html,
@@ -2182,7 +2181,6 @@ fn render_oembed_card(
     post_date: Option<&str>,
     original_url: &str,
 ) -> String {
-    let accent = platform.accent_color();
     let platform_name = platform.display_name();
 
     let date_html = match post_date {
@@ -2191,7 +2189,7 @@ fn render_oembed_card(
     };
 
     format!(
-        r#"<div class="embed-card" style="--embed-accent: {accent}">
+        r#"<div class="embed-card" data-platform="{slug}">
 <div class="embed-platform">{platform_name}</div>
 <div class="embed-author">
 <strong>{author_name}</strong> <span>{author_handle}</span>
@@ -2200,7 +2198,7 @@ fn render_oembed_card(
 {date_html}
 <a href="{url}" class="embed-link" rel="noopener noreferrer" target="_blank">View original</a>
 </div>"#,
-        accent = accent,
+        slug = platform.slug(),
         platform_name = html_escape(platform_name),
         author_name = html_escape(author_name),
         author_handle = html_escape(author_handle),
@@ -2219,7 +2217,6 @@ fn render_link_card(
     description: Option<&str>,
     original_url: &str,
 ) -> String {
-    let accent = platform.accent_color();
     let platform_name = platform.display_name();
 
     let desc_html = match description {
@@ -2228,14 +2225,14 @@ fn render_link_card(
     };
 
     format!(
-        r#"<a href="{url}" class="embed-card embed-link-only" style="--embed-accent: {accent}" rel="noopener noreferrer" target="_blank">
+        r#"<a href="{url}" class="embed-card embed-link-only" data-platform="{slug}" rel="noopener noreferrer" target="_blank">
 <div class="embed-platform">{platform_name}</div>
 <div class="embed-author"><strong>{author}</strong></div>
 {desc_html}
 <span class="embed-link">View on {platform_name}</span>
 </a>"#,
         url = html_escape(original_url),
-        accent = accent,
+        slug = platform.slug(),
         platform_name = html_escape(platform_name),
         author = html_escape(author),
         desc_html = desc_html,
@@ -2243,14 +2240,16 @@ fn render_link_card(
 }
 
 fn render_apple_card(platform: Platform, e: &AppleEmbed, cache_dir: &Path) -> String {
-    // For App Store, differentiate iOS vs Mac based on content_type from iTunes API
-    let (accent, platform_name) = if platform == Platform::AppleAppStore {
+    // For App Store, differentiate iOS vs Mac based on content_type from iTunes
+    // API. The Mac accent override rides a `data-variant` attribute (CSS-keyed),
+    // not an inline style, so the card stays clean under `style-src 'self'`.
+    let (variant_attr, platform_name) = if platform == Platform::AppleAppStore {
         match e.content_type.as_deref() {
-            Some("mac-software") => ("#1e88e5", "Mac App Store"),
-            _ => ("#0d84ff", "App Store"),
+            Some("mac-software") => (r#" data-variant="mac""#, "Mac App Store"),
+            _ => ("", "App Store"),
         }
     } else {
-        (platform.accent_color(), platform.display_name())
+        ("", platform.display_name())
     };
 
     // Prefer the locally cached artwork so visitors never hit Apple's CDN (preserves
@@ -2315,7 +2314,7 @@ fn render_apple_card(platform: Platform, e: &AppleEmbed, cache_dir: &Path) -> St
     };
 
     format!(
-        r#"<a href="{url}" class="embed-card apple-card" style="--embed-accent: {accent}" rel="noopener noreferrer" target="_blank">
+        r#"<a href="{url}" class="embed-card apple-card" data-platform="{slug}"{variant_attr} rel="noopener noreferrer" target="_blank">
 <div class="apple-content">
 {artwork_html}
 <div class="apple-info">
@@ -2328,7 +2327,8 @@ fn render_apple_card(platform: Platform, e: &AppleEmbed, cache_dir: &Path) -> St
 <span class="embed-link">{platform_name}</span>
 </a>"#,
         url = html_escape(&e.url),
-        accent = accent,
+        slug = platform.slug(),
+        variant_attr = variant_attr,
         platform_name = html_escape(platform_name),
         artwork_html = artwork_html,
         name = html_escape(&e.name),
@@ -2368,7 +2368,6 @@ fn format_count(count: u64) -> String {
 
 fn render_deleted_card(data: &EmbedData) -> String {
     let platform = data.platform();
-    let accent = platform.accent_color();
     let platform_name = platform.display_name();
 
     let removed_text = if platform.is_apple() {
@@ -2378,11 +2377,11 @@ fn render_deleted_card(data: &EmbedData) -> String {
     };
 
     format!(
-        r#"<div class="embed-card embed-deleted" style="--embed-accent: {accent}">
+        r#"<div class="embed-card embed-deleted" data-platform="{slug}">
 <div class="embed-platform">{platform_name}</div>
 <p>{removed_text}</p>
 </div>"#,
-        accent = accent,
+        slug = platform.slug(),
         platform_name = html_escape(platform_name),
         removed_text = removed_text,
     )
@@ -2452,6 +2451,21 @@ fn html_escape(s: &str) -> String {
 
 pub const EMBED_CSS: &str = r#"
 /* Embed cards */
+
+/* Per-platform accent, keyed on the card's data-platform attribute so no inline
+   `style` is needed (CSP style-src 'self'). The Mac App Store rides a variant. */
+.embed-card[data-platform="twitter"]        { --embed-accent: #1d9bf0; }
+.embed-card[data-platform="bluesky"]        { --embed-accent: #0085ff; }
+.embed-card[data-platform="mastodon"]       { --embed-accent: #6364ff; }
+.embed-card[data-platform="instagram"]      { --embed-accent: #e1306c; }
+.embed-card[data-platform="threads"]        { --embed-accent: var(--color-fg); }
+.embed-card[data-platform="apple-app-store"] { --embed-accent: #0d84ff; }
+.embed-card[data-platform="apple-app-store"][data-variant="mac"] { --embed-accent: #1e88e5; }
+.embed-card[data-platform="apple-music"]    { --embed-accent: #fa2d48; }
+.embed-card[data-platform="apple-podcasts"] { --embed-accent: #9933cc; }
+.embed-card[data-platform="apple-books"]    { --embed-accent: #f5813f; }
+.embed-card[data-platform="apple-tv"]       { --embed-accent: #000000; }
+.embed-card[data-platform="generic"]        { --embed-accent: var(--color-link); }
 
 .embed-card {
   border-left: 3px solid var(--embed-accent, var(--color-link));
