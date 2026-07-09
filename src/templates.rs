@@ -3149,16 +3149,17 @@ fn listing_grid(base_path: &str, listing: &Listing) -> String {
     }
 }
 
-/// A gallery `<ul>` of image tiles (real asset as the thumbnail for now; dedicated
-/// thumbnails are a Commit 8 follow-up). Items link to their folder-relative asset.
+/// A gallery `<ul>` of image tiles. The tile `<img>` loads a small `?thumb`
+/// rendition (a stripped, resized JPEG built by libvips — `post-model.md` §8,
+/// C8c) so a grid stays light; the surrounding link opens the full asset.
 fn gallery_html(base_path: &str, items: &[ListItem]) -> String {
     let tiles: String = items
         .iter()
         .map(|it| {
-            let href = encode_path(&format!("{}/{}", base_path, it.name));
+            let href = html_escape(&encode_path(&format!("{}/{}", base_path, it.name)));
             format!(
-                r#"<li><a href="{href}"><figure><div><img src="{href}" alt="{alt}" loading="lazy"></div><figcaption><b>{stem}<small>{ext}</small></b><span>{size}</span></figcaption></figure></a></li>"#,
-                href = html_escape(&href),
+                r#"<li><a href="{href}"><figure><div><img src="{href}?thumb" alt="{alt}" loading="lazy"></div><figcaption><b>{stem}<small>{ext}</small></b><span>{size}</span></figcaption></figure></a></li>"#,
+                href = href,
                 alt = html_escape(&it.stem),
                 stem = html_escape(&it.stem),
                 ext = html_escape(&dot_ext(&it.ext)),

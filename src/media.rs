@@ -215,13 +215,19 @@ static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// or hang is killed (`kill_on_drop`) rather than pinning a worker forever.
 const VIPS_TIMEOUT: Duration = Duration::from_secs(25);
 
-/// Longest edge of the transcoded JPEG. The clean view is capped for size/DoS;
-/// the exact full-resolution file is reachable only via the `original` opt-in.
+/// Longest edge of the transcoded full view. Capped for size/DoS; the exact
+/// full-resolution file is reachable only via the `original` opt-in.
 const TRANSCODE_MAX_EDGE: &str = "4096";
 
-/// Version tag folded into the cache key, so changing the transcode parameters
-/// (size/quality/pipeline) invalidates old cache entries without a manual purge.
+/// Longest edge of a gallery thumbnail — small enough to keep a grid light, large
+/// enough to stay crisp on a 2x display.
+const THUMB_MAX_EDGE: &str = "600";
+
+/// Version tags folded into the cache key, so changing a pipeline's parameters
+/// (size/quality) invalidates old cache entries without a manual purge. The tag
+/// also separates the full-view and thumbnail caches for the same source image.
 const TRANSCODE_TAG: &str = "v1-j4096q85";
+const THUMB_TAG: &str = "v1-t600q80";
 
 /// The prepared bytes to serve for an image request.
 pub enum Prepared {
@@ -244,24 +250,45 @@ pub async fn prepare(ext: &str, bytes: &[u8], cache_dir: &Path) -> Prepared {
     match strip(ext, bytes) {
         StripOutcome::Clean { bytes, content_type } => Prepared::Ready { bytes, content_type },
         StripOutcome::Failed => Prepared::Withheld,
-        StripOutcome::NeedsTranscode => match transcode_clean_jpeg(ext, bytes, cache_dir).await {
-            Some(bytes) => Prepared::Ready { bytes, content_type: "image/jpeg" },
-            None => Prepared::Withheld,
-        },
+        StripOutcome::NeedsTranscode => {
+            match vips_clean_jpeg(ext, bytes, cache_dir, TRANSCODE_MAX_EDGE, TRANSCODE_TAG).await {
+                Some(bytes) => Prepared::Ready { bytes, content_type: "image/jpeg" },
+                None => Prepared::Withheld,
+            }
+        }
     }
 }
 
-/// Transcode a format we cannot segment-strip (HEIC/HEIF/TIFF/AVIF/GIF/BMP) into
-/// a clean JPEG. libvips decodes and re-encodes, keeping the source ICC and
-/// baking in orientation; the resulting JPEG still carries the source EXIF/GPS,
-/// so we run it back through the JPEG segment strip to remove the metadata while
-/// keeping the color profile libvips preserved. Result is cached; returns the
-/// cleaned bytes, or `None` on any failure (fail closed).
-async fn transcode_clean_jpeg(ext: &str, bytes: &[u8], cache_dir: &Path) -> Option<Vec<u8>> {
+/// Produce a small, clean JPEG thumbnail for a gallery tile. Unlike [`prepare`],
+/// this always goes through libvips (every format, including JPEG/PNG, needs the
+/// resize), and it ignores the `original` opt-in — a tile is a derived preview,
+/// so it is stripped even when the full asset it links to is served exact. Cached
+/// separately from the full view via [`THUMB_TAG`].
+pub async fn thumbnail(ext: &str, bytes: &[u8], cache_dir: &Path) -> Prepared {
+    match vips_clean_jpeg(ext, bytes, cache_dir, THUMB_MAX_EDGE, THUMB_TAG).await {
+        Some(bytes) => Prepared::Ready { bytes, content_type: "image/jpeg" },
+        None => Prepared::Withheld,
+    }
+}
+
+/// Decode any raster with libvips and re-encode a clean JPEG capped at
+/// `max_edge`, keeping the source ICC and baking in orientation; the JPEG still
+/// carries the source EXIF/GPS, so it is run back through the segment strip to
+/// drop the metadata while keeping the color profile libvips preserved. Result is
+/// cached out-of-tree keyed by source hash + `tag`, so the subprocess runs at
+/// most once per (image, size). Returns the cleaned bytes, or `None` on any
+/// failure (fail closed).
+async fn vips_clean_jpeg(
+    ext: &str,
+    bytes: &[u8],
+    cache_dir: &Path,
+    max_edge: &str,
+    tag: &str,
+) -> Option<Vec<u8>> {
     let media = cache_dir.join("media");
     tokio::fs::create_dir_all(&media).await.ok()?;
 
-    let key = format!("{}-{}", content_hash(bytes), TRANSCODE_TAG);
+    let key = format!("{}-{}", content_hash(bytes), tag);
     let cached = media.join(format!("{key}.jpg"));
     if let Ok(b) = tokio::fs::read(&cached).await {
         return Some(b);
@@ -279,7 +306,7 @@ async fn transcode_clean_jpeg(ext: &str, bytes: &[u8], cache_dir: &Path) -> Opti
     let tin = media.join(format!(".{key}.{uniq}.in.{norm}"));
     let traw = media.join(format!(".{key}.{uniq}.raw.jpg"));
 
-    let ran = run_vips_transcode(bytes, &tin, &traw).await;
+    let ran = run_vips_transcode(bytes, &tin, &traw, max_edge).await;
     let _ = tokio::fs::remove_file(&tin).await; // never leave untrusted input around
     let raw = if ran { tokio::fs::read(&traw).await.ok() } else { None };
     let _ = tokio::fs::remove_file(&traw).await;
@@ -303,11 +330,12 @@ async fn transcode_clean_jpeg(ext: &str, bytes: &[u8], cache_dir: &Path) -> Opti
 
 /// Run one libvips transcode as an isolated subprocess. Untrusted bytes go to a
 /// temp file we name (libvips sniffs the real format from content, not the
-/// extension); the output is a JPEG. Hardening: only a local file path is ever
-/// passed (libvips makes no network request), a single internal thread, a
-/// wall-clock timeout with kill-on-drop, and — on Unix — an RLIMIT_CPU backstop.
-/// Returns whether it succeeded.
-async fn run_vips_transcode(bytes: &[u8], tin: &Path, tout: &Path) -> bool {
+/// extension); the output is a JPEG capped at `max_edge`. Hardening: only a local
+/// file path is ever passed (libvips makes no network request), a single internal
+/// thread, the ImageMagick/untrusted loaders blocked, a wall-clock timeout with
+/// kill-on-drop, and — on Unix — an RLIMIT_CPU backstop. Returns whether it
+/// succeeded.
+async fn run_vips_transcode(bytes: &[u8], tin: &Path, tout: &Path, max_edge: &str) -> bool {
     if tokio::fs::write(tin, bytes).await.is_err() {
         return false;
     }
@@ -317,7 +345,7 @@ async fn run_vips_transcode(bytes: &[u8], tin: &Path, tout: &Path) -> bool {
         .arg("thumbnail")
         .arg(tin)
         .arg(format!("{}[Q=85]", tout.display()))
-        .arg(TRANSCODE_MAX_EDGE)
+        .arg(max_edge)
         .arg("--size")
         .arg("down")
         // One worker thread: predictable memory, no thread-count amplification.

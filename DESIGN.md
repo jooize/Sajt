@@ -277,9 +277,16 @@ ImageMagick-only tail (BMP) is therefore withheld, fail-closed, not decoded by
 untrusted code. Verified: HEIC/TIFF with GPS → served as a clean JPEG (GPS gone,
 valid image, cache hit on re-request); BMP → 415.
 
-**Still to build:** C8c — real resized thumbnails for galleries (currently the
-full-size stripped/transcoded asset is the tile). Video (QuickTime/MP4 location
-atoms) remains a future format, not yet handled.
+**SHIPPED — C8c (2026-07-09), gallery thumbnails.** A gallery tile's `<img>`
+loads a small `?thumb` rendition: libvips resizes to a 600 px long edge and the
+result is run through the same clean-JPEG pipeline (strip the EXIF, keep the ICC)
+and cached out-of-tree under its own key (`THUMB_TAG`). Thumbnails always strip,
+even for an `original`-tagged file — a tile is a derived preview, and the exact
+bytes stay at the asset's non-`?thumb` URL. Verified: a 1600x1200 gallery photo
+serves as a clean 600x450 tile (~6x smaller) with GPS gone.
+
+The image work (C8) is complete for stills. **Still to build:** video
+(QuickTime/MP4 location atoms) remains a future format, not yet handled.
 
 ## URL scheme
 

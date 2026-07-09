@@ -174,13 +174,16 @@ pub async fn catch_all(
     // post the whole viewport. Both are presence flags, like `?favorites`.
     let embed = params.contains_key("embed");
     let fullscreen = params.contains_key("fullscreen");
+    // `?thumb` requests a small gallery-tile rendition of an image asset
+    // (post-model.md §8, C8c) instead of the full stripped/transcoded view.
+    let thumb = params.contains_key("thumb");
 
     let store = store.read().await;
     let all_entries: Vec<&Entry> = store.entries.iter().collect();
 
     // Folder-post asset (`/{folder}/{asset…}`): resolved before the query parser,
     // which would otherwise misread the multi-segment path as a label.
-    if let Some(resp) = try_asset(&all_entries, &path, &store.content_dir, &store.cache_dir, embed).await {
+    if let Some(resp) = try_asset(&all_entries, &path, &store.content_dir, &store.cache_dir, embed, thumb).await {
         return resp;
     }
 
@@ -344,6 +347,7 @@ async fn try_asset(
     content_dir: &std::path::Path,
     cache_dir: &std::path::Path,
     embed: bool,
+    thumb: bool,
 ) -> Option<Response> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.len() < 2 {
@@ -412,7 +416,7 @@ async fn try_asset(
         let is_original = crate::tags::read_tags_colored(&canon_file)
             .iter()
             .any(|t| t.name.eq_ignore_ascii_case("original"));
-        return Some(serve_image(bytes, ext, is_original, cache_dir).await);
+        return Some(serve_image(bytes, ext, is_original, thumb, cache_dir).await);
     }
     let mime = raw_content_type(ext);
     Some(
@@ -847,7 +851,7 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool, cache_dir: &std::path::Path
     // EXIF; its risk is script, already jailed by the CSP middleware) — its
     // extension is not in `is_image_ext`.
     if crate::entry::is_image_ext(&entry.extension) {
-        return serve_image(content, &entry.extension, entry.is_original(), cache_dir).await;
+        return serve_image(content, &entry.extension, entry.is_original(), false, cache_dir).await;
     }
 
     let mime = raw_content_type(&entry.extension);
@@ -876,12 +880,20 @@ async fn serve_image(
     bytes: Vec<u8>,
     ext: &str,
     is_original: bool,
+    thumb: bool,
     cache_dir: &std::path::Path,
 ) -> Response {
-    if is_original {
+    // A gallery-tile thumbnail is a derived preview: always stripped/resized,
+    // even for an `original`-tagged file (the exact bytes stay at its non-thumb
+    // URL). So the `original` bypass only applies to the full view.
+    let prepared = if thumb {
+        crate::media::thumbnail(ext, &bytes, cache_dir).await
+    } else if is_original {
         return image_bytes_response(bytes, &raw_content_type(ext));
-    }
-    match crate::media::prepare(ext, &bytes, cache_dir).await {
+    } else {
+        crate::media::prepare(ext, &bytes, cache_dir).await
+    };
+    match prepared {
         crate::media::Prepared::Ready { bytes, content_type } => {
             image_bytes_response(bytes, content_type)
         }
