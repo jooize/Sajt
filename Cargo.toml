@@ -1,6 +1,6 @@
 [package]
 name = "esko-bar"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2024"
 
 [dependencies]
@@ -30,3 +30,7 @@ unicode-normalization = "0.1"
 # a parser that never panics) before we drop the EXIF that carried it.
 img-parts = "0.4"
 kamadak-exif = "0.6"
+# Set RLIMIT_CPU on the libvips transcode subprocess (a pre-exec backstop against
+# a runaway decode of an attacker-controlled image, on top of the wall-clock
+# timeout). Unix only; the code is `#[cfg(unix)]`-gated.
+libc = "0.2"

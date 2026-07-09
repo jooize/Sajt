@@ -20,6 +20,11 @@
           buildInputs = [
             rust
             pkgs.pandoc
+            # libvips: transcodes formats we cannot segment-strip in pure Rust
+            # (HEIC/HEIF/TIFF/AVIF/GIF/BMP) into a clean JPEG, and generates
+            # gallery thumbnails. Runs as a sandboxed subprocess (post-model.md
+            # §8, C8b/C8c). Pulls libheif for HEIC decode.
+            pkgs.vips
             pkgs.cargo-watch
             pkgs.caddy
           ];

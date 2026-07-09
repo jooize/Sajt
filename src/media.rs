@@ -30,6 +30,11 @@ use img_parts::png::Png;
 use img_parts::webp::WebP;
 use img_parts::{Bytes, ImageEXIF};
 use sha2::{Digest, Sha256};
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+use tokio::process::Command;
+use tokio::sync::Semaphore;
 
 /// The result of trying to strip an image's metadata for serving.
 pub enum StripOutcome {
@@ -196,6 +201,189 @@ pub fn content_hash(bytes: &[u8]) -> String {
     out
 }
 
+// --- transcode (libvips subprocess) -----------------------------------------
+
+/// Cap on concurrent libvips subprocesses. Decoding a large HEIC/HEIF is memory-
+/// and CPU-heavy, so only a few run at once (mirrors the pandoc limiter).
+static VIPS_SEMAPHORE: Semaphore = Semaphore::const_new(2);
+
+/// Per-process counter that makes each transcode's temp filenames unique, so two
+/// concurrent requests for the *same* image never write the same scratch files.
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Wall-clock ceiling for one transcode. A hostile image that makes libvips spin
+/// or hang is killed (`kill_on_drop`) rather than pinning a worker forever.
+const VIPS_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// Longest edge of the transcoded JPEG. The clean view is capped for size/DoS;
+/// the exact full-resolution file is reachable only via the `original` opt-in.
+const TRANSCODE_MAX_EDGE: &str = "4096";
+
+/// Version tag folded into the cache key, so changing the transcode parameters
+/// (size/quality/pipeline) invalidates old cache entries without a manual purge.
+const TRANSCODE_TAG: &str = "v1-j4096q85";
+
+/// The prepared bytes to serve for an image request.
+pub enum Prepared {
+    /// Serve these bytes with this content type (stripped or transcoded-clean).
+    Ready {
+        bytes: Vec<u8>,
+        content_type: &'static str,
+    },
+    /// Fail closed: the image could not be cleaned (corrupt, or the transcode
+    /// failed / timed out). The caller withholds the bytes.
+    Withheld,
+}
+
+/// Clean an image for serving: a pure-Rust segment strip when we can ([`strip`]),
+/// else a libvips transcode to a metadata-free JPEG. The transcode output is
+/// disk-cached out-of-tree under `<cache_dir>/media`, keyed by the source content
+/// hash, so the subprocess runs at most once per unique image. `original` files
+/// never reach here — the caller serves their exact bytes directly.
+pub async fn prepare(ext: &str, bytes: &[u8], cache_dir: &Path) -> Prepared {
+    match strip(ext, bytes) {
+        StripOutcome::Clean { bytes, content_type } => Prepared::Ready { bytes, content_type },
+        StripOutcome::Failed => Prepared::Withheld,
+        StripOutcome::NeedsTranscode => match transcode_clean_jpeg(ext, bytes, cache_dir).await {
+            Some(bytes) => Prepared::Ready { bytes, content_type: "image/jpeg" },
+            None => Prepared::Withheld,
+        },
+    }
+}
+
+/// Transcode a format we cannot segment-strip (HEIC/HEIF/TIFF/AVIF/GIF/BMP) into
+/// a clean JPEG. libvips decodes and re-encodes, keeping the source ICC and
+/// baking in orientation; the resulting JPEG still carries the source EXIF/GPS,
+/// so we run it back through the JPEG segment strip to remove the metadata while
+/// keeping the color profile libvips preserved. Result is cached; returns the
+/// cleaned bytes, or `None` on any failure (fail closed).
+async fn transcode_clean_jpeg(ext: &str, bytes: &[u8], cache_dir: &Path) -> Option<Vec<u8>> {
+    let media = cache_dir.join("media");
+    tokio::fs::create_dir_all(&media).await.ok()?;
+
+    let key = format!("{}-{}", content_hash(bytes), TRANSCODE_TAG);
+    let cached = media.join(format!("{key}.jpg"));
+    if let Ok(b) = tokio::fs::read(&cached).await {
+        return Some(b);
+    }
+
+    // Serialize heavy work behind the limiter, then re-check the cache: a
+    // concurrent request for the same image may have produced it while we waited.
+    let _permit = VIPS_SEMAPHORE.acquire().await.ok()?;
+    if let Ok(b) = tokio::fs::read(&cached).await {
+        return Some(b);
+    }
+
+    let uniq = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let norm = crate::entry::normalize_ext(ext);
+    let tin = media.join(format!(".{key}.{uniq}.in.{norm}"));
+    let traw = media.join(format!(".{key}.{uniq}.raw.jpg"));
+
+    let ran = run_vips_transcode(bytes, &tin, &traw).await;
+    let _ = tokio::fs::remove_file(&tin).await; // never leave untrusted input around
+    let raw = if ran { tokio::fs::read(&traw).await.ok() } else { None };
+    let _ = tokio::fs::remove_file(&traw).await;
+    let raw = raw?;
+
+    // libvips carried the source EXIF/GPS into the JPEG (confirmed) — strip it,
+    // keeping the ICC/orientation the transcode preserved.
+    let cleaned = match strip_jpeg(&raw) {
+        StripOutcome::Clean { bytes, .. } => bytes,
+        _ => return None,
+    };
+
+    // Publish to the cache atomically so a concurrent reader never sees a partial
+    // file (write a sibling temp, then rename).
+    let wip = media.join(format!(".{key}.{uniq}.wip.jpg"));
+    if tokio::fs::write(&wip, &cleaned).await.is_ok() {
+        let _ = tokio::fs::rename(&wip, &cached).await;
+    }
+    Some(cleaned)
+}
+
+/// Run one libvips transcode as an isolated subprocess. Untrusted bytes go to a
+/// temp file we name (libvips sniffs the real format from content, not the
+/// extension); the output is a JPEG. Hardening: only a local file path is ever
+/// passed (libvips makes no network request), a single internal thread, a
+/// wall-clock timeout with kill-on-drop, and — on Unix — an RLIMIT_CPU backstop.
+/// Returns whether it succeeded.
+async fn run_vips_transcode(bytes: &[u8], tin: &Path, tout: &Path) -> bool {
+    if tokio::fs::write(tin, bytes).await.is_err() {
+        return false;
+    }
+
+    let mut std_cmd = std::process::Command::new("vips");
+    std_cmd
+        .arg("thumbnail")
+        .arg(tin)
+        .arg(format!("{}[Q=85]", tout.display()))
+        .arg(TRANSCODE_MAX_EDGE)
+        .arg("--size")
+        .arg("down")
+        // One worker thread: predictable memory, no thread-count amplification.
+        .env("VIPS_CONCURRENCY", "1")
+        // Refuse every loader libvips flags "untrusted" -- crucially its bundled
+        // ImageMagick fallback (`magickload`), whose long RCE history on hostile
+        // images is exactly why we did not shell out to ImageMagick directly. Our
+        // formats decode via vetted native loaders (heifload/tiffload/gifload/...),
+        // so this only fail-closes the ImageMagick-only tail (BMP, JXL, JP2K):
+        // those are withheld rather than decoded by untrusted code. Verified: a
+        // BMP is refused with the flag set, HEIC still transcodes.
+        .env("VIPS_BLOCK_UNTRUSTED", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+    apply_rlimits(&mut std_cmd);
+
+    let mut cmd = Command::from(std_cmd);
+    cmd.kill_on_drop(true);
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("could not spawn vips (is it on PATH?): {e}");
+            return false;
+        }
+    };
+    match tokio::time::timeout(VIPS_TIMEOUT, child.wait_with_output()).await {
+        Ok(Ok(out)) if out.status.success() => true,
+        Ok(Ok(out)) => {
+            tracing::warn!("vips transcode failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+            false
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("vips process error: {e}");
+            false
+        }
+        Err(_) => {
+            tracing::warn!("vips transcode timed out after {}s", VIPS_TIMEOUT.as_secs());
+            false
+        }
+    }
+}
+
+/// Apply an RLIMIT_CPU backstop to the child before exec (Unix only): a hostile
+/// image that makes libvips burn CPU is capped even if the async timeout is
+/// somehow missed. RLIMIT_AS is deliberately not set — virtual-address limits are
+/// blunt and can break legitimate large decodes; container memory limits
+/// (cgroups) are the right deployment control.
+#[cfg(unix)]
+fn apply_rlimits(cmd: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: `pre_exec` runs in the forked child before `exec`. `setrlimit` is
+    // async-signal-safe and the closure allocates nothing.
+    unsafe {
+        cmd.pre_exec(|| {
+            let secs: libc::rlim_t = 30;
+            let rl = libc::rlimit { rlim_cur: secs, rlim_max: secs };
+            libc::setrlimit(libc::RLIMIT_CPU, &rl);
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn apply_rlimits(_cmd: &mut std::process::Command) {}
+
 /// Read the EXIF orientation tag (1–8) from a raw TIFF/EXIF block. Uses the
 /// kamadak-exif parser, which returns an error (never panics) on malformed input —
 /// important because the block is attacker-controlled. Returns `None` when EXIF is
@@ -263,6 +451,14 @@ mod tests {
                 "{ext} should route to transcode"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn prepare_fails_closed_on_corrupt_supported_format() {
+        // A corrupt JPEG fails the segment strip and never reaches the
+        // transcoder, so `prepare` withholds it (the cache dir is untouched).
+        let out = prepare("jpg", b"not a jpeg", std::path::Path::new("/nonexistent")).await;
+        assert!(matches!(out, Prepared::Withheld));
     }
 
     #[test]

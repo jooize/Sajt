@@ -180,7 +180,7 @@ pub async fn catch_all(
 
     // Folder-post asset (`/{folder}/{asset…}`): resolved before the query parser,
     // which would otherwise misread the multi-segment path as a label.
-    if let Some(resp) = try_asset(&all_entries, &path, &store.content_dir, embed) {
+    if let Some(resp) = try_asset(&all_entries, &path, &store.content_dir, &store.cache_dir, embed).await {
         return resp;
     }
 
@@ -214,7 +214,7 @@ pub async fn catch_all(
 
     // Raw file request (URL has extension like sunset.jpg)
     if let Some(ref raw_ext) = query.raw_extension {
-        return serve_raw_file(&matching, raw_ext, embed).await;
+        return serve_raw_file(&matching, raw_ext, &store.cache_dir, embed).await;
     }
 
     // Listing: a trailing slash, or a date-only / tag-only filter with no label
@@ -338,7 +338,13 @@ fn error_response(entry: &Entry, all_entries: &[&Entry]) -> Response {
 /// strictly inside that post's directory. Returns None when the path is not an
 /// asset (wrong shape, unknown folder, a missing or escaping file), so the
 /// caller falls through to normal resolution.
-fn try_asset(all_entries: &[&Entry], path: &str, content_dir: &std::path::Path, embed: bool) -> Option<Response> {
+async fn try_asset(
+    all_entries: &[&Entry],
+    path: &str,
+    content_dir: &std::path::Path,
+    cache_dir: &std::path::Path,
+    embed: bool,
+) -> Option<Response> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.len() < 2 {
         return None;
@@ -406,7 +412,7 @@ fn try_asset(all_entries: &[&Entry], path: &str, content_dir: &std::path::Path, 
         let is_original = crate::tags::read_tags_colored(&canon_file)
             .iter()
             .any(|t| t.name.eq_ignore_ascii_case("original"));
-        return Some(serve_image(bytes, ext, is_original));
+        return Some(serve_image(bytes, ext, is_original, cache_dir).await);
     }
     let mime = raw_content_type(ext);
     Some(
@@ -793,7 +799,7 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
             Html(templates::image_page(entry, &mime, &all, next)).into_response()
         }
         Ok(RenderedContent::Download { .. }) => {
-            serve_raw_bytes(entry, false).await
+            serve_raw_bytes(entry, false, &store.cache_dir).await
         }
         Err(e) => {
             tracing::error!("Render error for {}: {}", entry.path.display(), e);
@@ -806,19 +812,24 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
 /// Serve raw file bytes with correct MIME type and Content-Disposition.
 /// With duplicate labels, the oldest entry carrying the extension wins,
 /// mirroring the page URL's oldest-claim-wins rule.
-async fn serve_raw_file(matching: &[&Entry], requested_ext: &str, embed: bool) -> Response {
+async fn serve_raw_file(
+    matching: &[&Entry],
+    requested_ext: &str,
+    cache_dir: &std::path::Path,
+    embed: bool,
+) -> Response {
     let entry = matching
         .iter()
         .filter(|e| e.extension.eq_ignore_ascii_case(requested_ext))
         .min_by_key(|e| e.timestamp);
 
     match entry {
-        Some(entry) => serve_raw_bytes(entry, embed).await,
+        Some(entry) => serve_raw_bytes(entry, embed, cache_dir).await,
         None => not_found(),
     }
 }
 
-async fn serve_raw_bytes(entry: &Entry, embed: bool) -> Response {
+async fn serve_raw_bytes(entry: &Entry, embed: bool, cache_dir: &std::path::Path) -> Response {
     let content = match std::fs::read(&entry.path) {
         Ok(c) => c,
         Err(_) => return not_found(),
@@ -836,7 +847,7 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool) -> Response {
     // EXIF; its risk is script, already jailed by the CSP middleware) — its
     // extension is not in `is_image_ext`.
     if crate::entry::is_image_ext(&entry.extension) {
-        return serve_image(content, &entry.extension, entry.is_original());
+        return serve_image(content, &entry.extension, entry.is_original(), cache_dir).await;
     }
 
     let mime = raw_content_type(&entry.extension);
@@ -861,17 +872,20 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool) -> Response {
 /// bypasses the strip and serves the exact source bytes. A format we cannot yet
 /// clean, or one that fails to parse, is withheld — fail closed, never a silent
 /// raw fallback that would leak the metadata we mean to remove.
-fn serve_image(bytes: Vec<u8>, ext: &str, is_original: bool) -> Response {
+async fn serve_image(
+    bytes: Vec<u8>,
+    ext: &str,
+    is_original: bool,
+    cache_dir: &std::path::Path,
+) -> Response {
     if is_original {
         return image_bytes_response(bytes, &raw_content_type(ext));
     }
-    match crate::media::strip(ext, &bytes) {
-        crate::media::StripOutcome::Clean { bytes, content_type } => {
+    match crate::media::prepare(ext, &bytes, cache_dir).await {
+        crate::media::Prepared::Ready { bytes, content_type } => {
             image_bytes_response(bytes, content_type)
         }
-        crate::media::StripOutcome::NeedsTranscode | crate::media::StripOutcome::Failed => {
-            metadata_withheld()
-        }
+        crate::media::Prepared::Withheld => metadata_withheld(),
     }
 }
 

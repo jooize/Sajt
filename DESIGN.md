@@ -260,11 +260,26 @@ stripped URL, not raw revision bytes). Out of scope here: `serve_embed_asset`
 (the out-of-tree remote-media embed cache, a separate subsystem) and
 `serve_static` (operator-owned `static/` assets).
 
-**Still to build:** C8b — transcode HEIC/HEIF/TIFF/AVIF (and the GIF/BMP tail)
-to a clean JPEG via libvips in a sandboxed subprocess (until then those formats
-are withheld, fail-closed). C8c — real resized thumbnails for galleries
-(currently the full-size stripped asset is the tile). Video (QuickTime/MP4
-location atoms) remains a future format, not yet handled.
+**SHIPPED — C8b (2026-07-09), the transcode path.** Formats we cannot
+segment-strip (HEIC/HEIF/AVIF via libheif, TIFF, GIF) are transcoded to a clean
+JPEG by **libvips run as a subprocess** — decode + re-encode keeping the source
+ICC and baking in orientation, then the resulting JPEG is run back through the
+C8a segment strip to drop the EXIF/GPS libvips carried through (so color is
+preserved but location is not). Output is disk-cached out-of-tree under
+`<cache_dir>/media`, keyed by source content hash, so the subprocess runs once
+per unique image. Isolation: local file input only (no network), one worker
+thread, a 25 s wall-clock timeout with kill-on-drop, a concurrency limiter, and
+an RLIMIT_CPU backstop. **libvips bundles an ImageMagick fallback loader; we set
+`VIPS_BLOCK_UNTRUSTED=1` to refuse it** (and the other loaders libvips flags
+untrusted, JXL/JP2K) — untrusted images decode only through vetted native
+loaders, so ImageMagick's hostile-image RCE history never applies. The
+ImageMagick-only tail (BMP) is therefore withheld, fail-closed, not decoded by
+untrusted code. Verified: HEIC/TIFF with GPS → served as a clean JPEG (GPS gone,
+valid image, cache hit on re-request); BMP → 415.
+
+**Still to build:** C8c — real resized thumbnails for galleries (currently the
+full-size stripped/transcoded asset is the tile). Video (QuickTime/MP4 location
+atoms) remains a future format, not yet handled.
 
 ## URL scheme
 
