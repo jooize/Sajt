@@ -18,11 +18,16 @@ pub const PAGE_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'se
 img-src 'self' data:; frame-src 'self'; object-src 'none'; base-uri 'none'; \
 form-action 'self'; frame-ancestors 'self'";
 
-/// Jail for a raw SVG served as a top-level `image/svg+xml` document — a script
-/// vector otherwise. `sandbox` (no allow-* tokens) is the most restrictive
-/// sandbox; `default-src 'none'` blocks any subresource it might pull. A browser
-/// ignores this on an SVG loaded via `<img>`; it bites only on direct navigation.
-pub const SVG_CSP: &str = "sandbox; default-src 'none'";
+/// Fail-closed jail for any response whose content type we do not explicitly
+/// recognize, and for a raw SVG served as a top-level `image/svg+xml` document (a
+/// script vector otherwise). `sandbox` (no allow-* tokens) is the most
+/// restrictive sandbox; `default-src 'none'` blocks any subresource. This is
+/// harmless where it does not apply: a browser ignores a *subresource's* own CSP
+/// (so `/static/site.js`/`.css` and `<img>`-loaded SVGs are unaffected), and it
+/// only bites when the response is rendered as a top-level document — which is
+/// exactly the case we must fail closed on (a stray `.xhtml`/`.xml`/`.mathml`
+/// that would otherwise run script in our origin).
+pub const JAIL_CSP: &str = "sandbox; default-src 'none'";
 
 /// Policy for a dropped-in standalone `.html` document (the A/B/C model). It is
 /// the one place inline script/style are *allowed* — that is the feature — but
@@ -57,16 +62,15 @@ pub async fn headers(req: Request, next: Next) -> Response {
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
+        // Fail closed: anything not recognized as one of our own HTML pages gets
+        // the hard jail, so an unforeseen script-capable document type (e.g.
+        // `application/xhtml+xml`) can never execute in our origin by default.
         let csp = if ct.starts_with("text/html") {
-            Some(PAGE_CSP)
-        } else if ct.starts_with("image/svg+xml") {
-            Some(SVG_CSP)
+            PAGE_CSP
         } else {
-            None
+            JAIL_CSP
         };
-        if let Some(csp) = csp {
-            h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(csp));
-        }
+        h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(csp));
     }
 
     resp

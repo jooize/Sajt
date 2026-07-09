@@ -391,29 +391,35 @@ security-critical:
   timeout. This closes the prior hole where reqwest's default auto-redirect could
   follow a `Location:` into an internal address unchecked.
 
-### Content security — CSP, raw-HTML, standalone-`.html` sandboxing (DECIDED 2026-07-08, REVISED 2026-07-09, NOT yet built)
+### Content security — CSP, raw-HTML, standalone-`.html` sandboxing (DECIDED 2026-07-08, REVISED 2026-07-09, SHIPPED v0.12.0 2026-07-09)
 
-The outbound scheme guard above covers `<a href>` navigation only. Pandoc/
-Asciidoctor still pass **raw HTML verbatim** (`<script>`, `on*` handlers,
-`<iframe>`), and there is **no Content-Security-Policy** yet, so a content author
-— or anything upstream of the content tree (a stray/synced file, a pasted quote,
-the third-party oEmbed HTML the embed system already injects) — can execute
-stored script in our origin without touching a link. Single-author + no-cookies
-makes the blast radius "deface / phish the visitor" today, not account theft;
-but the stated bar (a hospital or law firm, hence future auth + multiple
-contributors) means this must be closed durably, cheap-to-reverse-proofed.
+The outbound scheme guard above covers `<a href>` navigation only. Before
+v0.12.0, Pandoc passed **raw HTML verbatim** (`<script>`, `on*` handlers,
+`<iframe>`) and there was **no Content-Security-Policy**, so a content author —
+or anything upstream of the content tree (a stray/synced file, a pasted quote,
+the third-party oEmbed HTML the embed system injects) — could execute stored
+script in our origin without touching a link. Single-author + no-cookies made the
+blast radius "deface / phish the visitor", not account theft; but the stated bar
+(a hospital or law firm, hence future auth + multiple contributors) meant closing
+it durably. v0.12.0 does, in five commits (S2.1–S2.4 + tiers).
 
 **The one invariant: author-supplied HTML never executes in the esko.bar
 origin.** Every serving mode below jails it in an opaque origin, so choosing a
-mode is never a security decision. The plan (its own commit(s), sequenced after
-the `link_url` axis; the detailed build sequence lives in the resume memory):
+mode is never a security decision. What shipped:
 
-- **Raw HTML off in every format except `.html`/`.htm`.** Disable the reader's
-  raw-HTML hatch for markdown/rst/adoc/org/tex (per-format where possible; the
-  CSP below is the format-agnostic backstop for any hatch that can't be switched
-  off, and for Asciidoctor's passthrough). `.html`/`.htm` is the **one**
-  deliberate raw surface — and it is jailed (next point). So raw HTML lives in
-  exactly one place, and that place is jailed.
+- **Author HTML sanitized at the source with `ammonia`, NOT a pandoc flag.**
+  Pandoc 3.7's `-raw_html` reader extension is a **no-op** — `commonmark-raw_html`
+  (and `gfm`/`commonmark_x` variants) still emit `<script>`/`on*`/`javascript:`
+  verbatim (verified). So instead of trusting a reader flag, every pandoc *output*
+  (markdown/rst/adoc/org/tex → `RenderedContent::Html`) is run through
+  `sanitize::body` (`src/sanitize.rs`, ammonia/html5ever): scripts, event
+  handlers, `<iframe>`, `<style>`, inline `style=`, and unsafe-scheme URLs are
+  stripped, while the structural markup pandoc relies on (syntax-highlight
+  classes, footnote/heading ids) is kept. Table alignment — pandoc's one inline
+  style — is rewritten to a `data-align` attribute first. This is strictly better
+  than a per-format flag (parser-based, no denylist gaps, format-agnostic) and
+  the strict CSP below is still the backstop. `.html`/`.htm` is the **one**
+  deliberate raw surface — and it is jailed (next point).
 - **Standalone `.html` — three modes, one URL each (no srcdoc, no sniffing, no
   author tag).** NOTE: the 2026-07-08 `srcdoc` plan was WRONG — an
   `about:srcdoc` document has no HTTP response and *always* inherits the parent
@@ -449,10 +455,17 @@ the `link_url` axis; the detailed build sequence lives in the resume memory):
   data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action
   'self'; frame-ancestors 'self'`. Companion headers everywhere:
   `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
-  `Cross-Origin-Opener-Policy: same-origin`; HSTS at the Caddy layer. Raw asset
-  responses get a jail CSP too — **an uploaded SVG is a same-origin script
-  vector when navigated to directly**, so raw SVG/HTML serve with
-  `CSP: sandbox` / `script-src 'none'`. External JS/CSS is cached across pages;
+  `Cross-Origin-Opener-Policy: same-origin`; HSTS at the Caddy layer. The CSP
+  selector **fails closed**: only our own `text/html` pages get the page policy;
+  every *other* content type gets `sandbox; default-src 'none'` (harmless on
+  images/JS/CSS subresources, whose own CSP a browser ignores, but a hard jail on
+  any script-capable document — **an uploaded SVG, or a `.xhtml`, is a same-origin
+  script vector when navigated to directly**). HTML/XHTML-family documents served
+  raw (the drop-in feature) instead get the functional sandbox CSP (below), keyed
+  on the resolved MIME (`text/html`/`application/xhtml+xml`) so no extension slips
+  the jail. (An earlier fail-*open* default let `.xhtml` run script in our origin;
+  caught in the S2 adversarial review and fixed before release.) External JS/CSS
+  is cached across pages;
   the no-FOUC prefs bootstrap (typeface, reading width) is a tiny **external**
   render-blocking `<script src>` in `<head>` — equally render-blocking,
   CSP-clean, cacheable, so no nonce exists anywhere. (The light/dark *theme* is
@@ -465,11 +478,21 @@ the `link_url` axis; the detailed build sequence lives in the resume memory):
   This also resolves the oEmbed-vs-`style-src 'self'` tension: embed cards are
   styled by our own `EMBED_CSS` (Twitter fetched `omit_script=true`), so
   stripping foreign inline styles costs nothing and no embed iframes are needed.
-- **Kill the last inline style attribute.** Embed cards currently emit
-  `style="--embed-accent: …"`; move the per-platform accent to a
-  `data-platform="…"` attribute + a rule in our stylesheet
-  (`[data-platform="twitter"] { --embed-accent: #1d9bf0 }`), matching the
-  no-classes/attribute-selector convention, so `style-src 'self'` stays strict.
+- **Every inline `style=` removed so `style-src 'self'` stays strict.** More
+  survived than the embed accents: the tag cloud (font-size weighted by
+  frequency, recency ink/weight, Finder color), grade meters (fill width), row
+  tag pills, and listing badges all emitted inline styles. All converted to
+  CSS-driven `data-*` attributes (matching the no-classes/attribute-selector
+  convention): embed accent → `data-platform` (+ `data-variant="mac"`); cloud
+  size → `data-size` (8 tiers), recency → `data-recency`, Finder color →
+  `data-tag-color`; meter fill → `data-fill` (5% steps); badges → `data-kind`.
+  The repetitive numeric tiers are generated in `assets::numeric_tiers`. Pandoc's
+  table-alignment and image inline styles are handled by `sanitize::body` (align
+  → `data-align`; percentage image widths dropped → responsive). Result: served
+  pages carry **zero** inline `style=`. (The strict `style-src 'self'` was
+  weighed against `'unsafe-inline'` — chosen strict for the hospital/law-firm
+  bar, since script-src stays locked and default/img/font-src 'self' already
+  close CSS-based exfiltration.)
 - **CSP delivers the "zero third-party requests" reader-privacy goal** (below):
   the browser refuses any request to a non-esko.bar host, so a reader's IP/UA/
   Referer never leak to an outside server; the jailed `.html` responses carry

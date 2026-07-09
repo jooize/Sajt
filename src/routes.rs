@@ -393,10 +393,10 @@ fn try_asset(all_entries: &[&Entry], path: &str, content_dir: &std::path::Path, 
 
     let bytes = std::fs::read(&canon_file).ok()?;
     let ext = canon_file.extension().and_then(|e| e.to_str()).unwrap_or("");
-    // An in-folder `.html` asset is a standalone document too (model C): jail it
-    // with the sandbox CSP, honoring `?embed` so a folder-hosted page can be
+    // An in-folder HTML/XHTML asset is a standalone document too (model C): jail
+    // it with the sandbox CSP, honoring `?embed` so a folder-hosted page can be
     // framed the same way a bare-file one is.
-    if is_html_ext(ext) {
+    if is_sandboxed_document(ext) {
         return Some(sandbox_html_response(bytes, embed));
     }
     let mime = mime_guess::from_ext(ext).first_or_octet_stream().to_string();
@@ -646,6 +646,12 @@ pub async fn serve_embed_asset(
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
+    // `download_media` names a cached asset from the remote URL and does not vet
+    // its content type, so a hostile `og:image` could land an HTML/XHTML document
+    // here. Serve any such document jailed rather than as a trusted-origin page.
+    if is_sandboxed_document(ext) {
+        return sandbox_html_response(bytes, false);
+    }
     let mime = mime_guess::from_ext(ext)
         .first_or_octet_stream()
         .to_string();
@@ -721,7 +727,7 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
     // shell: the post address embeds it in the shell (A) or, with `?fullscreen`,
     // hands it the whole viewport (B). Both wrap the same-origin asset URL in a
     // sandboxed iframe; the raw bytes (C) come from that URL (serve_raw_bytes).
-    if is_html_ext(&entry.extension) {
+    if is_sandboxed_document(&entry.extension) {
         return if fullscreen {
             Html(templates::standalone_fullscreen_page(entry, &all)).into_response()
         } else {
@@ -811,10 +817,10 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool) -> Response {
         Err(_) => return not_found(),
     };
 
-    // A standalone `.html` post's bytes are the byte-exact asset (model C): served
-    // jailed by the sandbox CSP, with the height reporter appended only on the
-    // `?embed` copy. Never the trusted origin, never a download prompt.
-    if is_html_ext(&entry.extension) {
+    // A standalone HTML/XHTML post's bytes are the byte-exact asset (model C):
+    // served jailed by the sandbox CSP, with the height reporter appended only on
+    // the `?embed` copy. Never the trusted origin, never a download prompt.
+    if is_sandboxed_document(&entry.extension) {
         return sandbox_html_response(content, embed);
     }
 
@@ -837,9 +843,19 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool) -> Response {
         .unwrap_or_else(|_| not_found())
 }
 
-/// Whether an extension names a standalone HTML document.
-fn is_html_ext(ext: &str) -> bool {
-    matches!(ext.to_ascii_lowercase().as_str(), "html" | "htm")
+/// Whether an extension names a document we must serve as a sandboxed standalone
+/// page: the deliberate `.html` drop-in feature plus every HTML/XHTML-family
+/// document that would otherwise render as a script-capable top-level document
+/// (`.htm`, `.shtml`, `.xhtml`, `.xht`, ...). Keyed on the resolved MIME so it
+/// tracks `mime_guess` rather than a hand-maintained extension list — the gap the
+/// old `html`/`htm`-only check left open (`.xhtml` ran script in our origin).
+/// Types that are not HTML/XHTML (`.xml`, `.mathml`, ...) are not served
+/// "functional-jailed" here; the header middleware still hard-jails them.
+fn is_sandboxed_document(ext: &str) -> bool {
+    matches!(
+        mime_guess::from_ext(ext).first_or_octet_stream().essence_str(),
+        "text/html" | "application/xhtml+xml"
+    )
 }
 
 /// The height reporter appended to the `?embed` copy of a standalone `.html`.
