@@ -4,6 +4,7 @@ mod embed;
 mod entry;
 mod grade;
 mod grader;
+mod media;
 mod migrate;
 mod outbound;
 mod postdate;

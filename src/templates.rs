@@ -911,6 +911,20 @@ figure { margin-top: 1.5rem; text-align: center; }
 figure > img { max-width: 100%; max-height: 85vh; border-radius: .5em; }
 figure > figcaption { margin-top: .5rem; font-size: .85rem; color: var(--faint); }
 
+/* Privacy notice under a stripped image: quiet but always present (never
+   auto-dismissed). A left accent rule and the violet code chip keep it legible
+   in light and dark without shouting. */
+main > article > aside[data-notice] {
+  margin: 1.1rem auto 0; max-width: 46rem; text-align: left;
+  padding: .55rem .8rem; font-size: .82rem; line-height: 1.5; color: var(--soft);
+  background: var(--violet-soft); border-left: 2px solid var(--violet);
+  border-radius: .3rem;
+}
+main > article > aside[data-notice] > code {
+  font-size: .95em; padding: .05em .35em; border-radius: .25rem;
+  background: color-mix(in oklab, var(--violet) 16%, transparent); color: var(--ink);
+}
+
 /* ---------- Pandoc Skylighting: kate (light) + breezedark (dark) ---------- */
 :root {
   --hl-keyword: #1f1c1b; --hl-keyword-weight: 700; --hl-datatype: #0057ae;
@@ -3285,6 +3299,13 @@ fn kind_badge(ext: &str) -> (String, &'static str) {
 }
 
 /// Render an image viewer page.
+/// The non-dismissing "metadata removed" note shown under a stripped image
+/// (`post-model.md` §8, and the project rule that privacy notices stay visible
+/// until the author acts). Explains what was removed and how to opt out.
+fn metadata_notice() -> String {
+    r#"<aside data-notice="privacy">Location and camera metadata were removed for privacy. Add the <code>original</code> tag to the file to publish it unchanged.</aside>"#.to_string()
+}
+
 pub fn image_page(
     entry: &Entry,
     _mime: &str,
@@ -3303,6 +3324,16 @@ pub fn image_page(
     let canon_href = canonical_href(entry, all_entries);
     let src = canonical_raw_href(entry, all_entries);
 
+    // Unless the author opted into the exact file (`original` tag), the served
+    // bytes have had their location/camera metadata stripped (post-model.md §8) —
+    // say so prominently and never auto-dismiss. The footer link then offers the
+    // "full size" stripped image rather than an "original" (which it no longer is).
+    let (notice, raw_label) = if entry.is_original() {
+        (String::new(), "original")
+    } else {
+        (metadata_notice(), "full size")
+    };
+
     let body = format!(
         r#"{header}
 {crumbs}
@@ -3310,8 +3341,9 @@ pub fn image_page(
 <article id="post" data-canonical="{canonical}" data-title="{data_title}">
 {post_header}
 <figure><img src="{src}" alt="{alt}"></figure>
+{notice}
 {extras}
-<footer><a href="{src}">original</a> <a href="/">timeline</a></footer>
+<footer><a href="{src}">{raw_label}</a> <a href="/">timeline</a></footer>
 </article>
 {continue_nav}
 </main>"#,
@@ -3322,6 +3354,8 @@ pub fn image_page(
         post_header = post_header(entry),
         src = html_escape(&src),
         alt = html_escape(label),
+        notice = notice,
+        raw_label = raw_label,
         extras = post_extras(entry, all_entries),
         continue_nav = continue_nav(next, all_entries),
     );

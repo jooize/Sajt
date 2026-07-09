@@ -399,6 +399,15 @@ fn try_asset(all_entries: &[&Entry], path: &str, content_dir: &std::path::Path, 
     if is_sandboxed_document(ext) {
         return Some(sandbox_html_response(bytes, embed, document_content_type(ext)));
     }
+    // In-folder images (gallery tiles, attachments) are stripped just like a
+    // primary photo (post-model.md §8). The `original` opt-in is per file here,
+    // read from the asset's own Finder tags rather than the post's.
+    if crate::entry::is_image_ext(ext) {
+        let is_original = crate::tags::read_tags_colored(&canon_file)
+            .iter()
+            .any(|t| t.name.eq_ignore_ascii_case("original"));
+        return Some(serve_image(bytes, ext, is_original));
+    }
     let mime = raw_content_type(ext);
     Some(
         Response::builder()
@@ -822,6 +831,14 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool) -> Response {
         return sandbox_html_response(content, embed, document_content_type(&entry.extension));
     }
 
+    // Images are stripped of location/camera metadata before serving unless the
+    // author tagged the file `original` (post-model.md §8). SVG is excluded (no
+    // EXIF; its risk is script, already jailed by the CSP middleware) — its
+    // extension is not in `is_image_ext`.
+    if crate::entry::is_image_ext(&entry.extension) {
+        return serve_image(content, &entry.extension, entry.is_original());
+    }
+
     let mime = raw_content_type(&entry.extension);
 
     let filename = match &entry.label {
@@ -836,6 +853,56 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool) -> Response {
         .header(header::CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap_or(HeaderValue::from_static("application/octet-stream")))
         .header(header::CONTENT_DISPOSITION, HeaderValue::from_str(&disposition).unwrap_or(HeaderValue::from_static("inline")))
         .body(Body::from(content))
+        .unwrap_or_else(|_| not_found())
+}
+
+/// Serve image bytes with location/camera metadata stripped for privacy
+/// (`post-model.md` §8). `is_original` (the author's per-file `original` tag)
+/// bypasses the strip and serves the exact source bytes. A format we cannot yet
+/// clean, or one that fails to parse, is withheld — fail closed, never a silent
+/// raw fallback that would leak the metadata we mean to remove.
+fn serve_image(bytes: Vec<u8>, ext: &str, is_original: bool) -> Response {
+    if is_original {
+        return image_bytes_response(bytes, &raw_content_type(ext));
+    }
+    match crate::media::strip(ext, &bytes) {
+        crate::media::StripOutcome::Clean { bytes, content_type } => {
+            image_bytes_response(bytes, content_type)
+        }
+        crate::media::StripOutcome::NeedsTranscode | crate::media::StripOutcome::Failed => {
+            metadata_withheld()
+        }
+    }
+}
+
+/// Build the HTTP response for prepared image bytes: a strong ETag derived from
+/// the *served* bytes (so it changes iff the served image changes) and a
+/// revalidatable cache window. The strip is deterministic, so identical source
+/// bytes always yield the same ETag.
+fn image_bytes_response(bytes: Vec<u8>, content_type: &str) -> Response {
+    let etag = format!("\"{}\"", crate::media::content_hash(&bytes));
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            header::CONTENT_TYPE,
+            HeaderValue::from_str(content_type)
+                .unwrap_or(HeaderValue::from_static("application/octet-stream")),
+        )
+        .header(header::ETAG, HeaderValue::from_str(&etag).unwrap_or(HeaderValue::from_static("\"0\"")))
+        .header(header::CACHE_CONTROL, "public, max-age=3600")
+        .body(Body::from(bytes))
+        .unwrap_or_else(|_| not_found())
+}
+
+/// Fail-closed response when an image's metadata cannot be removed (an
+/// unsupported format still awaiting the transcode path, or corrupt bytes). The
+/// image page still renders with its "metadata removed" notice; only the pixels
+/// are withheld, so nothing unstripped is ever served.
+fn metadata_withheld() -> Response {
+    Response::builder()
+        .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
+        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(Body::from("Image withheld: metadata could not be removed for privacy.\n"))
         .unwrap_or_else(|_| not_found())
 }
 

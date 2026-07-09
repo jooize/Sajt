@@ -223,24 +223,48 @@ unpublishing can answer **410 Gone** vs **404** after deletion.
 ### Media privacy — metadata stripping
 
 **DECIDED 2026-07-03: strip on the fly, never touch originals.** Served
-images are cleaned at request time and the cleaned bytes are cached (keyed by
-content hash, alongside the existing embed cache); the files on disk keep
-their EXIF forever. What gets removed: EXIF (GPS, serial numbers, owner
-name), IPTC, XMP, thumbnails in metadata, for JPEG/PNG/WebP/AVIF/HEIC; for
-video, QuickTime/MP4 location atoms (`com.apple.quicktime.location.*`).
-Color profiles and orientation are preserved (orientation is applied or kept,
-never lost). **Fail closed: a format the stripper cannot confidently clean is
-not served raw** — it renders through the viewer or is refused, never leaked
-with metadata intact.
+images are cleaned at request time; the files on disk keep their EXIF forever.
+What gets removed: EXIF (GPS, serial numbers, owner name), IPTC, XMP, JPEG
+comments, PNG text chunks, and the embedded EXIF thumbnail (which can hold the
+un-cropped original). Color profiles (ICC) and orientation are preserved
+(orientation is re-emitted as a canonical tag, never lost). **Fail closed: a
+format the stripper cannot confidently clean is not served raw** — it renders
+through the viewer or is refused (HTTP 415), never leaked with metadata intact.
 
-**Architectural guarantee (DECIDED 2026-07-04): the unstripped original is
-unreachable by construction.** The HTTP layer for media has exactly one byte
-source — the cleaned cache. There is no code path from a request to an
-original file handle; a bug or human error in a handler can therefore serve
-the wrong *cleaned* bytes at worst, never raw ones. Cache miss = strip first,
-then serve from cache; strip failure = no cache entry = nothing to serve.
-Enforced with a test that greps/route-audits the media handlers for direct
-content-dir reads.
+**SHIPPED — C8a (2026-07-09), the surgical segment strip.** For JPEG/PNG/WebP
+the clean is a *container-level segment strip*, not a re-encode: `img-parts`
+drops the metadata-bearing segments while the compressed pixel data stays
+byte-identical and the ICC `APP2`/`iCCP` survives (verified: served pixels
+hash-equal to source, GPS/camera/comment gone, ICC + orientation kept). The
+orientation tag is read with `kamadak-exif` (a parser that returns errors,
+never panics, on the attacker-controlled EXIF) and re-emitted as a fixed
+26-byte orientation-only EXIF — so the output is **deterministic** and the
+strong ETag / content hash over the stripped bytes stays stable. The cheap,
+deterministic strip is recomputed per request (the client caches via that
+content-hash ETag); the expensive **transcode and thumbnail** paths (C8b/C8c)
+disk-cache their output out-of-tree, keyed by source content hash.
+
+**`original` opt-in (post-model.md §8, supersedes the 2026-07-04 "unreachable
+by construction" absolute).** An author may tag a file `original` to publish
+the exact bytes, EXIF and all — the "host an exact image file" case. So the
+guarantee is now: *every served content-tree image is stripped unless the
+author explicitly tagged it `original`.* A prominent, non-dismissing "metadata
+removed for privacy" notice on every stripped image page names the opt-out.
+
+**Route guarantee.** Content-tree image bytes leave the server through exactly
+two functions — `serve_raw_bytes` (a bare-file / folder primary) and
+`try_asset` (an in-folder gallery/attachment asset). Both gate every image
+extension through `serve_image`, which strips-or-withholds (except `original`);
+there is no third path (archived revisions render the current entry's already
+stripped URL, not raw revision bytes). Out of scope here: `serve_embed_asset`
+(the out-of-tree remote-media embed cache, a separate subsystem) and
+`serve_static` (operator-owned `static/` assets).
+
+**Still to build:** C8b — transcode HEIC/HEIF/TIFF/AVIF (and the GIF/BMP tail)
+to a clean JPEG via libvips in a sandboxed subprocess (until then those formats
+are withheld, fail-closed). C8c — real resized thumbnails for galleries
+(currently the full-size stripped asset is the tile). Video (QuickTime/MP4
+location atoms) remains a future format, not yet handled.
 
 ## URL scheme
 

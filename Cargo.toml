@@ -1,6 +1,6 @@
 [package]
 name = "esko-bar"
-version = "0.12.3"
+version = "0.13.0"
 edition = "2024"
 
 [dependencies]
@@ -24,3 +24,9 @@ notify = { version = "8", default-features = false, features = ["macos_fsevent"]
 directories = "6"
 sha2 = "0.10"
 unicode-normalization = "0.1"
+# Image metadata stripping (post-model.md §8): container-level surgery that drops
+# EXIF/XMP/IPTC/comment segments while keeping pixels byte-exact and the ICC
+# profile. `kamadak-exif` reads the orientation tag robustly (untrusted input, so
+# a parser that never panics) before we drop the EXIF that carried it.
+img-parts = "0.4"
+kamadak-exif = "0.6"
