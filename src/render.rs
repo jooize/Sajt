@@ -62,12 +62,12 @@ pub async fn render_entry(extension: &str, file_content: &[u8]) -> Result<Render
         // pandoc's structural markup (highlight classes, footnote ids) is kept.
         Ok(RenderedContent::Html(crate::sanitize::body(&html)))
     } else if ext == "html" || ext == "htm" {
-        let html = String::from_utf8_lossy(file_content).to_string();
-        if is_complete_html(&html) {
-            Ok(RenderedContent::Standalone(html))
-        } else {
-            Ok(RenderedContent::Html(html))
-        }
+        // Every .html post is served as its own sandboxed document (the A/B/C
+        // model in routes.rs), never merged into the trusted shell -- so raw
+        // author HTML (which pandoc would pass through unsanitized, and which we
+        // deliberately do NOT sanitize here because running arbitrary HTML/JS
+        // jailed is the whole feature) can only ever execute in the jail.
+        Ok(RenderedContent::Standalone(String::from_utf8_lossy(file_content).to_string()))
     } else if ext == "txt" {
         let text = String::from_utf8_lossy(file_content).to_string();
         Ok(RenderedContent::PreformattedText(text))
@@ -90,12 +90,6 @@ pub async fn render_entry(extension: &str, file_content: &[u8]) -> Result<Render
             .to_string();
         Ok(RenderedContent::Download { mime })
     }
-}
-
-/// Check if HTML content is a complete document (has <!DOCTYPE or <html>).
-fn is_complete_html(html: &str) -> bool {
-    let prefix = &html[..html.len().min(500)].to_lowercase();
-    prefix.contains("<!doctype") || prefix.contains("<html")
 }
 
 /// Shell out to pandoc for rendering.

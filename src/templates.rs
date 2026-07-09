@@ -798,6 +798,34 @@ main > article > footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px
 main > article > footer a { color: var(--faint); margin-right: 1rem; }
 main > article > footer a:hover { color: var(--ink); text-decoration: none; }
 
+/* ---------- standalone .html post: embedded (A) + fullscreen (B) ---------- */
+/* A: the dropped-in HTML runs in a sandboxed iframe. Its height is set by the
+   site JS from the frame's own reporter; a floor keeps a blank frame from
+   collapsing before the first measurement lands. */
+#stage { margin: .5rem 0 .5rem; }
+#stage > iframe {
+  display: block; width: 100%; border: 1px solid var(--hair); border-radius: 12px;
+  min-height: 8rem; height: 24rem; background: var(--bg); color-scheme: light;
+}
+#se-controls { margin: .2rem 0 0; font: .8rem var(--sans); }
+#se-controls a { color: var(--faint); margin-right: 1rem; }
+#se-controls a:hover { color: var(--violet); text-decoration: none; }
+/* B: fullscreen chrome -- a slim fixed bar over a viewport-filling frame. */
+body[data-page="fullscreen"] { margin: 0; }
+#sebar {
+  position: fixed; inset: 0 0 auto 0; z-index: 2; height: 2.9rem;
+  display: flex; align-items: center; gap: 1rem; padding: 0 1rem;
+  background: var(--glass); -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%); border-bottom: .5px solid var(--glass-edge);
+  font: 550 .84rem var(--sans);
+}
+#sebar-mark { color: var(--violet); font-weight: 650; }
+#sebar-title { color: var(--soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sebar-actions { margin-left: auto; display: flex; gap: 1rem; white-space: nowrap; }
+#sebar a { color: var(--faint); }
+#sebar a:hover, #sebar-mark:hover { color: var(--violet); text-decoration: none; }
+#se-full { position: fixed; inset: 2.9rem 0 0 0; width: 100%; height: calc(100vh - 2.9rem); border: 0; background: var(--bg); }
+
 /* ---------- continue reading: post navigation as content ---------- */
 main > article + article { margin-top: 3.2rem; padding-top: 3.2rem; border-top: 1px solid var(--hair); }
 #continue { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--hair); }
@@ -1102,6 +1130,22 @@ pub(crate) const JS: &str = r##"
       .replace(/['‘’‛ʼ`´"“”‟]/g, "")
       .replace(/[^\p{L}\p{N}]+/gu, "-")
       .replace(/^-+|-+$/g, "") || "section";
+  }
+
+  /* ---------- standalone .html embed: size the sandboxed frame to its content ----------
+     The jailed iframe (opaque origin) posts its measured height; we trust the
+     message only from that exact frame's window, clamp it (floor so a blank
+     frame keeps a sensible height, ceiling against a pathological value), and
+     set the height via the CSSOM (script-driven, so CSP style-src is untouched). */
+  var seFrame = document.getElementById("se-frame");
+  if (seFrame) {
+    window.addEventListener("message", function (e) {
+      if (e.source !== seFrame.contentWindow) return;
+      var hgt = e.data && e.data.eskoEmbedHeight;
+      if (typeof hgt !== "number" || !isFinite(hgt)) return;
+      hgt = Math.max(128, Math.min(200000, Math.round(hgt)));
+      seFrame.style.height = hgt + "px";
+    });
   }
 
   /* ---------- help dialog (both pages) ---------- */
@@ -2829,6 +2873,96 @@ pub fn entry_page(
     );
 
     page_shell(&format!("esko.bar — {}", label), &body, "entry", false)
+}
+
+/// The label to title a standalone `.html` post with.
+fn standalone_label(entry: &Entry) -> &str {
+    entry
+        .display_label
+        .as_deref()
+        .or(entry.label.as_deref())
+        .unwrap_or("Untitled")
+}
+
+/// Model A (default): a standalone `.html` post embedded in the normal blog
+/// shell. Its body is a sandboxed iframe over the `?embed` copy of the asset
+/// (which carries the height reporter); the site JS sizes the frame to fit. An
+/// "Expand" link opens the fullscreen view (B). The iframe is `allow-scripts
+/// allow-popups` only -- never `allow-same-origin` -- so the document stays in an
+/// opaque origin, unable to reach this page or its storage.
+pub fn standalone_embed_page(entry: &Entry, all_entries: &[&Entry], next: Option<&Entry>) -> String {
+    let cloud = compute_cloud(all_entries);
+    let view = ViewFilter::default();
+    let ctx = HeaderContext::plain(&cloud, &view);
+
+    let label = standalone_label(entry);
+    let canon_href = canonical_href(entry, all_entries);
+    let raw_href = canonical_raw_href(entry, all_entries);
+    let embed_src = format!("{}?embed", raw_href);
+    let full_href = format!("{}?fullscreen", canon_href);
+
+    let body = format!(
+        r#"{header}
+{crumbs}
+<main>
+<article id="post" data-canonical="{canonical}" data-title="{data_title}">
+{post_header}
+<div id="stage"><iframe id="se-frame" src="{embed_src}" sandbox="allow-scripts allow-popups" title="{data_title}" loading="lazy"></iframe></div>
+<p id="se-controls"><a href="{full_href}">Expand</a> <a href="{raw_href}">view source</a></p>
+{extras}
+<footer><a href="{raw_href}">source</a> <a href="/">timeline</a></footer>
+</article>
+{continue_nav}
+</main>"#,
+        header = render_site_header(&ctx),
+        crumbs = crumbs(),
+        canonical = html_escape(&canon_href),
+        data_title = html_escape(label),
+        post_header = post_header(entry),
+        embed_src = html_escape(&embed_src),
+        full_href = html_escape(&full_href),
+        raw_href = html_escape(&raw_href),
+        extras = post_extras(entry, all_entries),
+        continue_nav = continue_nav(next, all_entries),
+    );
+
+    page_shell(&format!("esko.bar — {}", label), &body, "entry", false)
+}
+
+/// Model B (`?fullscreen`): a standalone `.html` post given the whole viewport
+/// under a slim top bar (site mark, back to the post, and "show only the HTML"
+/// -> the byte-exact asset C). The frame scrolls itself, so no reporter is used.
+/// A bespoke minimal chrome rather than the blog shell; it still links the shared
+/// stylesheet and inherits the strict page CSP (which admits the same-origin
+/// iframe via `frame-src 'self'`).
+pub fn standalone_fullscreen_page(entry: &Entry, all_entries: &[&Entry]) -> String {
+    let label = standalone_label(entry);
+    let canon_href = canonical_href(entry, all_entries);
+    let raw_href = canonical_raw_href(entry, all_entries);
+
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>esko.bar &mdash; {title}</title>
+<link rel="stylesheet" href="{css_href}">
+</head>
+<body data-page="fullscreen">
+<header id="sebar">
+<a href="/" id="sebar-mark">esko.bar</a>
+<span id="sebar-title">{title}</span>
+<span id="sebar-actions"><a href="{canon}">&larr; back</a><a href="{raw}">show only the HTML</a></span>
+</header>
+<iframe id="se-full" src="{raw}" sandbox="allow-scripts allow-popups" title="{title}"></iframe>
+</body>
+</html>"#,
+        title = html_escape(label),
+        css_href = crate::assets::SITE_CSS.url(),
+        canon = html_escape(&canon_href),
+        raw = html_escape(&raw_href),
+    )
 }
 
 /// Wrap an already-rendered body fragment in the exact entry-page article

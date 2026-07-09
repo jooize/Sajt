@@ -169,12 +169,18 @@ pub async fn catch_all(
         return not_found();
     }
 
+    // Standalone-HTML view selectors (post-model.md §4 / the A/B/C model): `?embed`
+    // appends the height reporter to the raw asset; `?fullscreen` hands a standalone
+    // post the whole viewport. Both are presence flags, like `?favorites`.
+    let embed = params.contains_key("embed");
+    let fullscreen = params.contains_key("fullscreen");
+
     let store = store.read().await;
     let all_entries: Vec<&Entry> = store.entries.iter().collect();
 
     // Folder-post asset (`/{folder}/{asset…}`): resolved before the query parser,
     // which would otherwise misread the multi-segment path as a label.
-    if let Some(resp) = try_asset(&all_entries, &path, &store.content_dir) {
+    if let Some(resp) = try_asset(&all_entries, &path, &store.content_dir, embed) {
         return resp;
     }
 
@@ -195,7 +201,7 @@ pub async fn catch_all(
     // `alias <name>/` marker) owns it, so a URL's meaning never changes.
     if is_bare_label(&query) {
         if let Some(owner) = templates::name_owner(query.label.as_deref().unwrap(), &all_entries) {
-            return serve_resolved(owner, &all_entries, &store, &requested, &view).await;
+            return serve_resolved(owner, &all_entries, &store, &requested, &view, fullscreen).await;
         }
     }
 
@@ -208,7 +214,7 @@ pub async fn catch_all(
 
     // Raw file request (URL has extension like sunset.jpg)
     if let Some(ref raw_ext) = query.raw_extension {
-        return serve_raw_file(&matching, raw_ext).await;
+        return serve_raw_file(&matching, raw_ext, embed).await;
     }
 
     // Listing: a trailing slash, or a date-only / tag-only filter with no label
@@ -234,7 +240,7 @@ pub async fn catch_all(
     };
 
     if let Some(entry) = target {
-        return serve_resolved(entry, &all_entries, &store, &requested, &view).await;
+        return serve_resolved(entry, &all_entries, &store, &requested, &view, fullscreen).await;
     }
 
     // An archived revision addressed at its date path (+ time segment).
@@ -307,6 +313,7 @@ async fn serve_resolved(
     store: &ContentStore,
     requested: &str,
     view: &ViewFilter,
+    fullscreen: bool,
 ) -> Response {
     let canon = templates::canonical(entry, all_entries);
     if requested != canon.path {
@@ -315,7 +322,7 @@ async fn serve_resolved(
     if entry.error.is_some() {
         return error_response(entry, all_entries);
     }
-    serve_entry(entry, store).await
+    serve_entry(entry, store, fullscreen).await
 }
 
 /// Render a post's fail-closed error page with HTTP 500 (loud, never hidden).
@@ -331,7 +338,7 @@ fn error_response(entry: &Entry, all_entries: &[&Entry]) -> Response {
 /// strictly inside that post's directory. Returns None when the path is not an
 /// asset (wrong shape, unknown folder, a missing or escaping file), so the
 /// caller falls through to normal resolution.
-fn try_asset(all_entries: &[&Entry], path: &str, content_dir: &std::path::Path) -> Option<Response> {
+fn try_asset(all_entries: &[&Entry], path: &str, content_dir: &std::path::Path, embed: bool) -> Option<Response> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.len() < 2 {
         return None;
@@ -386,6 +393,12 @@ fn try_asset(all_entries: &[&Entry], path: &str, content_dir: &std::path::Path) 
 
     let bytes = std::fs::read(&canon_file).ok()?;
     let ext = canon_file.extension().and_then(|e| e.to_str()).unwrap_or("");
+    // An in-folder `.html` asset is a standalone document too (model C): jail it
+    // with the sandbox CSP, honoring `?embed` so a folder-hosted page can be
+    // framed the same way a bare-file one is.
+    if is_html_ext(ext) {
+        return Some(sandbox_html_response(bytes, embed));
+    }
     let mime = mime_guess::from_ext(ext).first_or_octet_stream().to_string();
     Some(
         Response::builder()
@@ -518,7 +531,7 @@ async fn serve_revision(parent: &Entry, rev: &Revision, store: &ContentStore) ->
         .and_then(|x| x.to_str())
         .unwrap_or("")
         .to_string();
-    serve_entry(&e, store).await
+    serve_entry(&e, store, false).await
 }
 
 /// Render a filtered timeline listing: apply the view filter, build the shared
@@ -669,8 +682,9 @@ pub async fn rescan(State(store): State<AppState>) -> impl IntoResponse {
     }
 }
 
-/// Serve a single entry as a rendered HTML page.
-async fn serve_entry(entry: &Entry, store: &ContentStore) -> Response {
+/// Serve a single entry as a rendered HTML page. `fullscreen` selects the
+/// fullscreen variant (B) for a standalone `.html` post; it is ignored otherwise.
+async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> Response {
     let all: Vec<&Entry> = store.entries.iter().collect();
 
     // A listing folder renders as a browsable index, not a document. Its optional
@@ -702,6 +716,18 @@ async fn serve_entry(entry: &Entry, store: &ContentStore) -> Response {
         .copied()
         .filter(|e| e.timestamp < entry.timestamp)
         .max_by_key(|e| e.timestamp);
+
+    // A standalone `.html` post is shown jailed, never merged into the trusted
+    // shell: the post address embeds it in the shell (A) or, with `?fullscreen`,
+    // hands it the whole viewport (B). Both wrap the same-origin asset URL in a
+    // sandboxed iframe; the raw bytes (C) come from that URL (serve_raw_bytes).
+    if is_html_ext(&entry.extension) {
+        return if fullscreen {
+            Html(templates::standalone_fullscreen_page(entry, &all)).into_response()
+        } else {
+            Html(templates::standalone_embed_page(entry, &all, next)).into_response()
+        };
+    }
 
     // A link post *is* its destination (post-model.md §4): its body is the rich
     // embed card. A content post that merely *cites* a destination keeps its own
@@ -754,7 +780,7 @@ async fn serve_entry(entry: &Entry, store: &ContentStore) -> Response {
             Html(templates::image_page(entry, &mime, &all, next)).into_response()
         }
         Ok(RenderedContent::Download { .. }) => {
-            serve_raw_bytes(entry).await
+            serve_raw_bytes(entry, false).await
         }
         Err(e) => {
             tracing::error!("Render error for {}: {}", entry.path.display(), e);
@@ -767,23 +793,30 @@ async fn serve_entry(entry: &Entry, store: &ContentStore) -> Response {
 /// Serve raw file bytes with correct MIME type and Content-Disposition.
 /// With duplicate labels, the oldest entry carrying the extension wins,
 /// mirroring the page URL's oldest-claim-wins rule.
-async fn serve_raw_file(matching: &[&Entry], requested_ext: &str) -> Response {
+async fn serve_raw_file(matching: &[&Entry], requested_ext: &str, embed: bool) -> Response {
     let entry = matching
         .iter()
         .filter(|e| e.extension.eq_ignore_ascii_case(requested_ext))
         .min_by_key(|e| e.timestamp);
 
     match entry {
-        Some(entry) => serve_raw_bytes(entry).await,
+        Some(entry) => serve_raw_bytes(entry, embed).await,
         None => not_found(),
     }
 }
 
-async fn serve_raw_bytes(entry: &Entry) -> Response {
+async fn serve_raw_bytes(entry: &Entry, embed: bool) -> Response {
     let content = match std::fs::read(&entry.path) {
         Ok(c) => c,
         Err(_) => return not_found(),
     };
+
+    // A standalone `.html` post's bytes are the byte-exact asset (model C): served
+    // jailed by the sandbox CSP, with the height reporter appended only on the
+    // `?embed` copy. Never the trusted origin, never a download prompt.
+    if is_html_ext(&entry.extension) {
+        return sandbox_html_response(content, embed);
+    }
 
     let mime = mime_guess::from_ext(&entry.extension)
         .first_or_octet_stream()
@@ -801,6 +834,41 @@ async fn serve_raw_bytes(entry: &Entry) -> Response {
         .header(header::CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap_or(HeaderValue::from_static("application/octet-stream")))
         .header(header::CONTENT_DISPOSITION, HeaderValue::from_str(&disposition).unwrap_or(HeaderValue::from_static("inline")))
         .body(Body::from(content))
+        .unwrap_or_else(|_| not_found())
+}
+
+/// Whether an extension names a standalone HTML document.
+fn is_html_ext(ext: &str) -> bool {
+    matches!(ext.to_ascii_lowercase().as_str(), "html" | "htm")
+}
+
+/// The height reporter appended to the `?embed` copy of a standalone `.html`.
+/// It runs inside the jailed iframe (whose CSP permits inline script) and posts
+/// its measured height to the parent, which sizes the frame (see the site JS).
+/// Only the `?embed` copy carries it; the bare asset URL stays byte-exact.
+const EMBED_REPORTER: &str = r#"
+<script>(function(){
+  function h(){var d=document;return Math.max(d.documentElement.scrollHeight, d.body?d.body.scrollHeight:0);}
+  function send(){try{parent.postMessage({eskoEmbedHeight:h()},"*");}catch(e){}}
+  if(window.ResizeObserver){new ResizeObserver(send).observe(document.documentElement);}
+  window.addEventListener("load",send);send();
+})();</script>"#;
+
+/// Serve a standalone `.html` document's bytes, jailed by the sandbox CSP. The
+/// `?embed` copy gets the reporter appended; the bare copy is byte-exact. The
+/// CSP is set here so the header middleware leaves it alone; nosniff is still
+/// added by the middleware.
+fn sandbox_html_response(bytes: Vec<u8>, embed: bool) -> Response {
+    let mut body = bytes;
+    if embed {
+        body.extend_from_slice(EMBED_REPORTER.as_bytes());
+    }
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::CONTENT_SECURITY_POLICY, crate::security::STANDALONE_CSP)
+        .header(header::CACHE_CONTROL, "public, max-age=3600")
+        .body(Body::from(body))
         .unwrap_or_else(|_| not_found())
 }
 

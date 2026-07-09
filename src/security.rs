@@ -24,6 +24,18 @@ form-action 'self'; frame-ancestors 'self'";
 /// ignores this on an SVG loaded via `<img>`; it bites only on direct navigation.
 pub const SVG_CSP: &str = "sandbox; default-src 'none'";
 
+/// Policy for a dropped-in standalone `.html` document (the A/B/C model). It is
+/// the one place inline script/style are *allowed* — that is the feature — but
+/// `sandbox` puts the document in an opaque origin (no `allow-same-origin`), so
+/// it cannot touch cookies, storage, or the parent DOM, and `default-src 'none'`
+/// + `img-src 'self' data:` deny every third-party fetch (authors inline their
+/// assets). The `sandbox` directive jails a direct top-level navigation too, so
+/// the byte-exact asset is safe even outside an iframe. Set by the handler, so
+/// the header middleware leaves it untouched.
+pub const STANDALONE_CSP: &str = "sandbox allow-scripts allow-popups; \
+default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; \
+img-src 'self' data:";
+
 /// Cross-Origin-Opener-Policy — no typed const exists in `http`.
 const COOP: HeaderName = HeaderName::from_static("cross-origin-opener-policy");
 
