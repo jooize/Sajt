@@ -1,4 +1,15 @@
+# HSTS belongs at the TLS terminator (Caddy), not the app behind it: the app
+# can't tell whether the client used HTTPS. Sent only on the HTTPS sites below.
+# Note (dev): this pins HTTPS for `localhost` in your browser for max-age. If you
+# ever need plain http://localhost for another project, clear it via the browser
+# (Chrome: chrome://net-internals/#hsts -> delete "localhost"). `preload` is
+# deliberately omitted — it is for the public domain, never localhost.
+(hsts) {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+}
+
 https://localhost {
+	import hsts
 	reverse_proxy localhost:1234
 }
 
@@ -8,6 +19,7 @@ http://localhost {
 
 https://[LAN-IP] {
 	tls internal
+	import hsts
 	reverse_proxy localhost:1234
 }
 

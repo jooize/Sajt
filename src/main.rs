@@ -10,6 +10,7 @@ mod postdate;
 mod render;
 mod routes;
 mod sanitize;
+mod security;
 mod slug;
 mod stats;
 mod tags;
@@ -258,6 +259,7 @@ async fn main() {
         )
         .route("/static/{*path}", axum::routing::get(routes::serve_static))
         .route("/{*path}", axum::routing::get(routes::catch_all))
+        .layer(axum::middleware::from_fn(security::headers))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state);
 
