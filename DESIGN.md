@@ -294,8 +294,9 @@ and `parse_filename` — which used to mint `None` labels — is gone.
 transient view state rides in composable query params — `?grade=notable`
 (**SHIPPED 2026-07-06**: renamed from `?level=`, with the scale collapsed to a
 two-state everything/notable — the `best` segment and its threshold are gone;
-with no grading ledger present the notable bucket is simply empty), `?fav`, and search on
-the universal `?q=…` — layering onto any path (`/+design?grade=notable&fav`). Every header control is a real `<a>` / GET-form
+with no grading ledger present the notable bucket is simply empty), `?favorites`
+(renamed from `?fav` — params are human words; URLs are the shareable UI), and search on
+the universal `?q=…` — layering onto any path (`/+design?grade=notable&favorites`). Every header control is a real `<a>` / GET-form
 (no JS required), so the address bar always reflects the current view and
 right-click → Copy Link shares the exact filtered timeline; no separate "link
 these filters" affordance is needed. `/saved` is the reader's bookmarks, a
@@ -390,7 +391,7 @@ security-critical:
   timeout. This closes the prior hole where reqwest's default auto-redirect could
   follow a `Location:` into an internal address unchecked.
 
-### Content security — CSP, raw-HTML, standalone-`.html` sandboxing (DECIDED 2026-07-08, NOT yet built)
+### Content security — CSP, raw-HTML, standalone-`.html` sandboxing (DECIDED 2026-07-08, REVISED 2026-07-09, NOT yet built)
 
 The outbound scheme guard above covers `<a href>` navigation only. Pandoc/
 Asciidoctor still pass **raw HTML verbatim** (`<script>`, `on*` handlers,
@@ -400,48 +401,80 @@ the third-party oEmbed HTML the embed system already injects) — can execute
 stored script in our origin without touching a link. Single-author + no-cookies
 makes the blast radius "deface / phish the visitor" today, not account theft;
 but the stated bar (a hospital or law firm, hence future auth + multiple
-contributors) means this must be closed durably, cheap-to-reverse-proofed. The
-decided plan (its own commit, sequenced **after** the `link_url` axis):
+contributors) means this must be closed durably, cheap-to-reverse-proofed.
+
+**The one invariant: author-supplied HTML never executes in the esko.bar
+origin.** Every serving mode below jails it in an opaque origin, so choosing a
+mode is never a security decision. The plan (its own commit(s), sequenced after
+the `link_url` axis; the detailed build sequence lives in the resume memory):
 
 - **Raw HTML off in every format except `.html`/`.htm`.** Disable the reader's
   raw-HTML hatch for markdown/rst/adoc/org/tex (per-format where possible; the
   CSP below is the format-agnostic backstop for any hatch that can't be switched
   off, and for Asciidoctor's passthrough). `.html`/`.htm` is the **one**
-  deliberate raw surface — and it is sandboxed (next point). So raw HTML lives in
+  deliberate raw surface — and it is jailed (next point). So raw HTML lives in
   exactly one place, and that place is jailed.
-- **Standalone `.html` → fullscreen sandboxed iframe.** A self-contained document
-  (`kind = html`, `is_complete_html`) renders in a full-viewport
-  `<iframe srcdoc="…" sandbox="allow-scripts allow-popups">` — **not**
-  `allow-same-origin`. **JS still runs** (canvas, widgets, games); the opaque
-  origin just can't read our cookies/DOM/storage or act as the user. Never pair
-  `allow-scripts` with `allow-same-origin` (that lets the frame remove its own
-  sandbox). Fullscreen means **no resize JS is needed** — the frame is
-  `100vw×100vh` and the doc scrolls itself (the sizing-JS problem only afflicts
-  *inline* iframes). Browser Back returns to the timeline (normal navigation), so
-  an in-page back-link is optional polish (TBD — maybe a slim top bar), not a
-  safety need. The timeline already flags these via the `kind=html` badge.
+- **Standalone `.html` — three modes, one URL each (no srcdoc, no sniffing, no
+  author tag).** NOTE: the 2026-07-08 `srcdoc` plan was WRONG — an
+  `about:srcdoc` document has no HTTP response and *always* inherits the parent
+  CSP (a `<meta>` CSP can only tighten), so the parent's `script-src 'self'`
+  would block every inline `<script>` in the dropped-in document and kill the
+  feature. Instead the iframe loads a real URL that carries its own headers:
+  - `/slug` — **embedded (default)**: the normal blog shell; the body is
+    `<iframe src="{asset-URL}?embed" sandbox="allow-scripts allow-popups">`
+    (never `allow-same-origin`, which would let the frame unsandbox itself).
+    Auto-height via a ~15-line reporter (`ResizeObserver` → `postMessage`)
+    injected into the `?embed` copy only; the parent treats the number as
+    untrusted — a min floor (~8rem) and a sanity ceiling against pathological
+    values, but otherwise **uncapped**: the post is as tall as it wants, like
+    any `.md` post. Reading-width grabber works (width is the parent's
+    property; the inner document reflows and re-reports).
+  - `/slug?fullscreen` — full-viewport frame + slim top bar (site mark, back,
+    "show only the HTML" link). No injection; the frame scrolls itself. The
+    expand link on every embedded frame targets this — a stateless real-link
+    control like `?grade`.
+  - `/{slug}/{file}.html` — the **exact bytes** at the folder-post asset path
+    that already exists (bare-file `.html` posts gain an asset-style address).
+    No iframe needed: the response's own `Content-Security-Policy: sandbox
+    allow-scripts allow-popups; default-src 'none'; script-src 'unsafe-inline';
+    style-src 'unsafe-inline'; img-src 'self' data:` jails even a top-level
+    navigation (fail-closed: the jailed doc cannot fetch third-party — authors
+    inline assets). Byte-exact: content hash and ETag hold; this is the floor
+    every unrecognized client gets. **JS runs in all three modes** (canvas,
+    widgets, games); the opaque origin just can't read our cookies/DOM/storage
+    or act as the user.
 - **Strict CSP, no `unsafe-inline`, no nonces — via externalized JS/CSS.** Move
-  our inline `<script>`/`<style>` to files served from esko.bar so the policy is
-  `default-src 'self'; script-src 'self'; style-src 'self'`. External JS is
-  cached across pages (faster than per-page inline); external CSS is cacheable and
-  CSP-clean (HTTP/2+ makes "one more file" cheap — caching/strictness win). The
-  **one** exception: a tiny render-blocking inline bootstrap that applies persisted
-  UI prefs (typeface, reading width) before first paint to kill FOUC — nonce it,
-  or use a no-flash attribute trick. (The light/dark *theme* is already flash-free:
-  pure CSS `light-dark()`, OS-driven, no JS.)
+  our inline `<script>`/`<style>` to files served from esko.bar. Page policy:
+  `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'
+  data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action
+  'self'; frame-ancestors 'self'`. Companion headers everywhere:
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  `Cross-Origin-Opener-Policy: same-origin`; HSTS at the Caddy layer. Raw asset
+  responses get a jail CSP too — **an uploaded SVG is a same-origin script
+  vector when navigated to directly**, so raw SVG/HTML serve with
+  `CSP: sandbox` / `script-src 'none'`. External JS/CSS is cached across pages;
+  the no-FOUC prefs bootstrap (typeface, reading width) is a tiny **external**
+  render-blocking `<script src>` in `<head>` — equally render-blocking,
+  CSP-clean, cacheable, so no nonce exists anywhere. (The light/dark *theme* is
+  already flash-free: pure CSS `light-dark()`, OS-driven, no JS.)
+- **Replace the hand-rolled oEmbed sanitizer with `ammonia`** (allowlist on
+  html5ever, strips `<style>`/`style=`/`javascript:`/`<iframe>` by default).
+  The current denylist code has real bugs (mixed-case `</Script>` terminator
+  miss; UTF-8 mangled byte-by-byte in `remove_event_handlers`; unquoted `on*=`
+  values leak). Re-sanitize on cache read so already-cached embeds are covered.
+  This also resolves the oEmbed-vs-`style-src 'self'` tension: embed cards are
+  styled by our own `EMBED_CSS` (Twitter fetched `omit_script=true`), so
+  stripping foreign inline styles costs nothing and no embed iframes are needed.
 - **Kill the last inline style attribute.** Embed cards currently emit
   `style="--embed-accent: …"`; move the per-platform accent to a
   `data-platform="…"` attribute + a rule in our stylesheet
   (`[data-platform="twitter"] { --embed-accent: #1d9bf0 }`), matching the
   no-classes/attribute-selector convention, so `style-src 'self'` stays strict.
-  All card styling is ours (`EMBED_CSS`); we never import a third-party stylesheet
-  — only the embedded post *markup* is foreign, and it is sanitized.
 - **CSP delivers the "zero third-party requests" reader-privacy goal** (below):
   the browser refuses any request to a non-esko.bar host, so a reader's IP/UA/
-  Referer never leak to an outside server. The sandboxed frame inherits this via
-  `srcdoc` CSP inheritance (or gets its own CSP header — verify the mechanism at
-  build; both are safe). **Safety verdict:** the sandbox makes standalone `.html`
-  XSS-safe unconditionally; the CSP makes it privacy-safe (no third-party leak).
+  Referer never leak to an outside server; the jailed `.html` responses carry
+  their own third-party-blocking policy. **Safety verdict:** the jail makes
+  `.html` XSS-safe unconditionally; the CSP makes every page privacy-safe.
 
 ## Presentation
 

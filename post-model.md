@@ -76,7 +76,8 @@ compares labels case-insensitively). Then the existing rule applies unchanged:
 
 - The **oldest** claim owns the bare `/fog-over-the-bay`.
 - Younger claimants carry the shortest date that distinguishes them
-  (`/2026/07/04/fog-over-the-bay`, plus `?time=HHMMSS` for a same-day tie).
+  (`/2026/07/04/fog-over-the-bay`, plus a time path segment
+  `/2026/07/04/191430/fog-over-the-bay` for a same-day tie).
 - **Both always appear on the timeline** — the timeline never hides a post; a
   collision only decides the canonical URL. The two rows are distinguishable by
   their *natural* display titles and their dates.
@@ -174,7 +175,7 @@ rendering) and not the genre (that's an author-set tag, e.g. "essay" vs "note").
 | kind | what | why its own bucket |
 |------|------|--------------------|
 | `photo` | images | distinct rendering (viewer) |
-| `html` | raw HTML | can be a self-contained document served ~as-is (`is_complete_html` → standalone, escapes the site chrome) |
+| `html` | raw HTML | a self-contained document (`is_complete_html`) serves jailed in an opaque origin — embedded in the chrome by default, `?fullscreen`, or byte-exact at its asset URL (see DESIGN.md "Content security") |
 | `text` | md, markdown, txt, text, rst, org, adoc, asciidoc, tex | poured into the site shell |
 | `link` | resolves to a single URL (see §4) | primary affordance points *out* |
 | `folder` | a listing (see §6) | a browsable directory index |

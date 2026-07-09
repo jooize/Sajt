@@ -163,8 +163,9 @@ edits). One family shares the label `bacon-stuff`.
 - **Timeline shows only the current revision**, with a subtle "3 revisions"
   note on rows that have them, expandable in place (`<details>`-style, no
   JS required) to list the archived revisions with their dates, each
-  linking to its date-path URL (`/2026/03/12/bacon-stuff`, `?time=`
-  same-day) — NOT `/bacon-stuff/2`, which would squat the `/name/asset`
+  linking to its date-path URL (`/2026/03/12/bacon-stuff`; a time path
+  segment `/2026/03/12/191430/bacon-stuff` for a same-day tie) — NOT
+  `/bacon-stuff/2`, which would squat the `/name/asset`
   namespace. The current revision's entry page carries the same list as a
   small revision nav.
 - **Localization caveat**: Finder writes "copy" only in English ("kopia",
@@ -189,7 +190,8 @@ rule).
   — dropping a new post named `IMG_4392` can never silently retarget an old
   `/IMG_4392` link, and unlike erroring, the old link keeps working.
 - Every non-winning claimant remains fully reachable at its date path
-  (+ `?time=` same-day) and appears normally on the timeline.
+  (+ a time path segment for a same-day tie) and appears normally on the
+  timeline.
 - **Visible, never silent**: the winning page carries a notice linking the
   other claimants ("this name is also used by ..."), and the server logs the
   share loudly. Nothing hidden, nothing broken.
@@ -221,7 +223,8 @@ rule).
 
 The slash-hierarchy grammar is live (`src/url.rs`): `/2026/03/25`, `/+tag`,
 newest owns `/label`, older same-label versions at `/2026/03/25/label`,
-`?time=HHMMSS` for same-day collisions, `?grade=` / `&fav` / `&q` for view
+a time path segment (`/2026/03/25/191430`) for same-day collisions,
+`?grade=` / `&favorites` / `&q` for view
 state. Only `Entry.timestamp` sourcing changes (date marker or mtime instead
 of filename); addressing is unchanged.
 
