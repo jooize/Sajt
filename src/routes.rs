@@ -397,7 +397,7 @@ fn try_asset(all_entries: &[&Entry], path: &str, content_dir: &std::path::Path, 
     // it with the sandbox CSP, honoring `?embed` so a folder-hosted page can be
     // framed the same way a bare-file one is.
     if is_sandboxed_document(ext) {
-        return Some(sandbox_html_response(bytes, embed));
+        return Some(sandbox_html_response(bytes, embed, document_content_type(ext)));
     }
     let mime = mime_guess::from_ext(ext).first_or_octet_stream().to_string();
     Some(
@@ -650,7 +650,7 @@ pub async fn serve_embed_asset(
     // its content type, so a hostile `og:image` could land an HTML/XHTML document
     // here. Serve any such document jailed rather than as a trusted-origin page.
     if is_sandboxed_document(ext) {
-        return sandbox_html_response(bytes, false);
+        return sandbox_html_response(bytes, false, document_content_type(ext));
     }
     let mime = mime_guess::from_ext(ext)
         .first_or_octet_stream()
@@ -821,7 +821,7 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool) -> Response {
     // served jailed by the sandbox CSP, with the height reporter appended only on
     // the `?embed` copy. Never the trusted origin, never a download prompt.
     if is_sandboxed_document(&entry.extension) {
-        return sandbox_html_response(content, embed);
+        return sandbox_html_response(content, embed, document_content_type(&entry.extension));
     }
 
     let mime = mime_guess::from_ext(&entry.extension)
@@ -856,30 +856,73 @@ fn is_sandboxed_document(ext: &str) -> bool {
     crate::entry::is_html_document(ext)
 }
 
-/// The height reporter appended to the `?embed` copy of a standalone `.html`.
+/// The height reporter injected into the `?embed` copy of a standalone document.
 /// It runs inside the jailed iframe (whose CSP permits inline script) and posts
 /// its measured height to the parent, which sizes the frame (see the site JS).
 /// Only the `?embed` copy carries it; the bare asset URL stays byte-exact.
-const EMBED_REPORTER: &str = r#"
-<script>(function(){
+///
+/// The `<script>` *content* is kept free of `<`, `>`, and `&`, so the element is
+/// well-formed when the document is served as XML (XHTML) — no CDATA needed.
+const EMBED_REPORTER: &str = r#"<script>(function(){
   function h(){var d=document;return Math.max(d.documentElement.scrollHeight, d.body?d.body.scrollHeight:0);}
   function send(){try{parent.postMessage({eskoEmbedHeight:h()},"*");}catch(e){}}
   if(window.ResizeObserver){new ResizeObserver(send).observe(document.documentElement);}
   window.addEventListener("load",send);send();
-})();</script>"#;
+})();</script>
+"#;
 
-/// Serve a standalone `.html` document's bytes, jailed by the sandbox CSP. The
-/// `?embed` copy gets the reporter appended; the bare copy is byte-exact. The
-/// CSP is set here so the header middleware leaves it alone; nosniff is still
-/// added by the middleware.
-fn sandbox_html_response(bytes: Vec<u8>, embed: bool) -> Response {
-    let mut body = bytes;
-    if embed {
-        body.extend_from_slice(EMBED_REPORTER.as_bytes());
+/// Insert the reporter *before* the document's closing `</body>` (or `</html>`),
+/// so it stays valid even in XML mode (XHTML), where any content after the root
+/// element is a fatal parse error — appending after `</html>` would break strict
+/// XHTML. Falls back to appending only when neither tag is present (a well-formed
+/// XHTML always has them; a malformed one is the author's responsibility).
+fn inject_reporter(bytes: Vec<u8>) -> Vec<u8> {
+    // Locate the splice point (byte index of the closing tag) while borrowing,
+    // then release the borrow before taking ownership of `bytes`.
+    let insert_at = match std::str::from_utf8(&bytes) {
+        Ok(s) => {
+            let lower = s.to_ascii_lowercase();
+            lower.rfind("</body>").or_else(|| lower.rfind("</html>"))
+        }
+        Err(_) => None,
+    };
+    match insert_at {
+        Some(idx) => {
+            let mut out = Vec::with_capacity(bytes.len() + EMBED_REPORTER.len());
+            out.extend_from_slice(&bytes[..idx]);
+            out.extend_from_slice(EMBED_REPORTER.as_bytes());
+            out.extend_from_slice(&bytes[idx..]);
+            out
+        }
+        None => {
+            let mut b = bytes;
+            b.extend_from_slice(EMBED_REPORTER.as_bytes());
+            b
+        }
     }
+}
+
+/// The content type for a sandboxed standalone document: XHTML is served as the
+/// strict XML type it asks for (`application/xhtml+xml`, so the browser XML-parses
+/// it exactly as the author intended — choosing `.xhtml` is the opt-in), while
+/// HTML and SHTML get the lenient `text/html`. The file extension is the switch.
+fn document_content_type(ext: &str) -> &'static str {
+    match mime_guess::from_ext(ext).first_or_octet_stream().essence_str() {
+        "application/xhtml+xml" => "application/xhtml+xml; charset=utf-8",
+        _ => "text/html; charset=utf-8",
+    }
+}
+
+/// Serve a standalone HTML/XHTML document's bytes, jailed by the sandbox CSP and
+/// served with its intended content type (`content_type`). The `?embed` copy gets
+/// the reporter injected well-formed; the bare copy is byte-exact. The CSP is set
+/// here so the header middleware leaves it alone; nosniff is added by the
+/// middleware (and, on the strict XML type, keeps the browser XML-parsing it).
+fn sandbox_html_response(bytes: Vec<u8>, embed: bool, content_type: &'static str) -> Response {
+    let body = if embed { inject_reporter(bytes) } else { bytes };
     Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::CONTENT_TYPE, content_type)
         .header(header::CONTENT_SECURITY_POLICY, crate::security::STANDALONE_CSP)
         .header(header::CACHE_CONTROL, "public, max-age=3600")
         .body(Body::from(body))
