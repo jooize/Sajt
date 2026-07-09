@@ -1179,7 +1179,7 @@ async fn fetch_oembed(social: &ParsedUrl) -> Result<EmbedData, String> {
     let oembed: OEmbedResponse =
         serde_json::from_slice(&body).map_err(|e| format!("Failed to parse oEmbed JSON: {}", e))?;
 
-    let content_html = sanitize_oembed_html(oembed.html.as_deref().unwrap_or(""));
+    let content_html = crate::sanitize::oembed(oembed.html.as_deref().unwrap_or(""));
     let author_name = oembed.author_name.unwrap_or_default();
 
     // Try to extract handle from author_url or author_name
@@ -1678,98 +1678,6 @@ fn strip_html_tags(html: &str) -> String {
 }
 
 // ─── HTML helpers ───────────────────────────────────────────────
-
-/// Strip `<script>` tags and event handlers from oEmbed HTML.
-fn sanitize_oembed_html(html: &str) -> String {
-    // Remove script tags and their content
-    let mut result = String::with_capacity(html.len());
-    let mut chars = html.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '<' {
-            // Peek ahead for <script or </script
-            let mut tag = String::new();
-            while let Some(&nc) = chars.peek() {
-                if nc == '>' {
-                    tag.push(chars.next().unwrap());
-                    break;
-                }
-                tag.push(chars.next().unwrap());
-            }
-            let lower = tag.to_lowercase();
-            if lower.starts_with("script") || lower.starts_with("/script") {
-                // Skip: don't output this tag
-                // For opening <script...>, also skip until </script>
-                if lower.starts_with("script") {
-                    // Skip everything until </script>
-                    let mut buf = String::new();
-                    for c2 in chars.by_ref() {
-                        buf.push(c2);
-                        if buf.ends_with("</script>") || buf.ends_with("</SCRIPT>") {
-                            break;
-                        }
-                    }
-                }
-            } else {
-                // Remove on* event handlers from the tag
-                let cleaned = remove_event_handlers(&tag);
-                result.push('<');
-                result.push_str(&cleaned);
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
-/// Remove on* event handler attributes from an HTML tag body.
-fn remove_event_handlers(tag_body: &str) -> String {
-    // Simple approach: remove attributes starting with "on"
-    let mut result = String::with_capacity(tag_body.len());
-    let mut i = 0;
-    let bytes = tag_body.as_bytes();
-    while i < bytes.len() {
-        // Look for whitespace + "on" pattern
-        if i > 0
-            && bytes[i - 1].is_ascii_whitespace()
-            && i + 2 < bytes.len()
-            && bytes[i] == b'o'
-            && bytes[i + 1] == b'n'
-        {
-            // Skip this attribute (find the = and then the quoted value)
-            let start = i;
-            let mut j = i + 2;
-            // Find =
-            while j < bytes.len() && bytes[j] != b'=' && bytes[j] != b'>' {
-                j += 1;
-            }
-            if j < bytes.len() && bytes[j] == b'=' {
-                j += 1;
-                // Skip whitespace
-                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
-                    j += 1;
-                }
-                // Skip quoted value
-                if j < bytes.len() && (bytes[j] == b'"' || bytes[j] == b'\'') {
-                    let quote = bytes[j];
-                    j += 1;
-                    while j < bytes.len() && bytes[j] != quote {
-                        j += 1;
-                    }
-                    if j < bytes.len() {
-                        j += 1; // skip closing quote
-                    }
-                }
-                i = j;
-                let _ = start; // attribute skipped
-                continue;
-            }
-        }
-        result.push(bytes[i] as char);
-        i += 1;
-    }
-    result
-}
 
 /// Parse OG meta tags from HTML.
 ///
@@ -2296,7 +2204,10 @@ fn render_oembed_card(
         platform_name = html_escape(platform_name),
         author_name = html_escape(author_name),
         author_handle = html_escape(author_handle),
-        content_html = content_html,
+        // Re-sanitize on read: a cache written by an older, buggier sanitizer
+        // may hold unsafe markup, so the trust boundary is re-asserted here at
+        // render time rather than trusted from whenever the embed was fetched.
+        content_html = crate::sanitize::oembed(content_html),
         date_html = date_html,
         url = html_escape(original_url),
     )
@@ -3056,14 +2967,6 @@ mod tests {
         assert!(local_asset_url(Path::new(""), "x.png").is_none());
         // Empty asset -> no URL.
         assert!(local_asset_url(&dir, "").is_none());
-    }
-
-    #[test]
-    fn sanitize_removes_scripts() {
-        let input = r#"<blockquote>hello</blockquote><script>alert("xss")</script>"#;
-        let output = sanitize_oembed_html(input);
-        assert!(!output.contains("script"));
-        assert!(output.contains("<blockquote>hello</blockquote>"));
     }
 
     #[test]

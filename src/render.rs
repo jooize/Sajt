@@ -55,7 +55,12 @@ pub async fn render_entry(extension: &str, file_content: &[u8]) -> Result<Render
     let ext = ext.as_str();
     if let Some(format) = pandoc_format(ext) {
         let html = render_pandoc(format, file_content).await?;
-        Ok(RenderedContent::Html(html))
+        // pandoc passes raw embedded HTML straight through (its `-raw_html`
+        // reader extension is a no-op in 3.7), so the body is untrusted until
+        // sanitized. This is the fail-closed boundary for author Markdown: no
+        // `<script>`/`on*`/`javascript:` survives into the trusted origin, while
+        // pandoc's structural markup (highlight classes, footnote ids) is kept.
+        Ok(RenderedContent::Html(crate::sanitize::body(&html)))
     } else if ext == "html" || ext == "htm" {
         let html = String::from_utf8_lossy(file_content).to_string();
         if is_complete_html(&html) {

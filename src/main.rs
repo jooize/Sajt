@@ -8,6 +8,7 @@ mod outbound;
 mod postdate;
 mod render;
 mod routes;
+mod sanitize;
 mod slug;
 mod stats;
 mod tags;

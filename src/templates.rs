@@ -652,6 +652,16 @@ main > article > section hr { border: 0; border-top: 1px solid var(--hair); marg
 main > article > section a { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--violet), transparent 55%); text-underline-offset: .15em; }
 main > article > section a:hover { text-decoration-color: currentColor; }
 
+/* tables (pandoc pipe tables). Cell alignment arrives as a data-align attribute
+   -- the sanitizer rewrites pandoc's inline `text-align` style out, so nothing
+   inline is left for a strict `style-src 'self'` to refuse. */
+main > article > section table { width: 100%; border-collapse: collapse; margin: 0 0 1.4rem; font-size: .95em; display: block; overflow-x: auto; }
+main > article > section th, main > article > section td { padding: .4em .7em; border-bottom: 1px solid var(--hair); text-align: left; }
+main > article > section thead th { border-bottom: 2px solid var(--faint); font-weight: 600; }
+main > article > section :is(th, td)[data-align="left"] { text-align: left; }
+main > article > section :is(th, td)[data-align="center"] { text-align: center; }
+main > article > section :is(th, td)[data-align="right"] { text-align: right; }
+
 /* Outbound-scheme guard (post-model.md §7). Plaintext http links are allowed but
    flagged; unsafe schemes never reach here as anchors -- the server neutralizes
    them into a [data-unsafe-link] span before the body is served. */
