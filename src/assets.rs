@@ -44,15 +44,42 @@ impl Asset {
     }
 }
 
-/// Site stylesheet: the shared page CSS followed by the embed-card CSS, exactly
-/// as the shell used to inline them.
+/// Site stylesheet: the shared page CSS, the embed-card CSS, and the generated
+/// numeric-tier rules — everything the shell used to inline, now one file.
 pub static SITE_CSS: LazyLock<Asset> = LazyLock::new(|| {
     Asset::new(
         "site.css",
         "text/css; charset=utf-8",
-        format!("{}{}", crate::templates::CSS, crate::embed::EMBED_CSS),
+        format!(
+            "{}{}{}",
+            crate::templates::CSS,
+            crate::embed::EMBED_CSS,
+            numeric_tiers()
+        ),
     )
 });
+
+/// CSS rules for the values that used to be inline `style` and vary numerically:
+/// the tag-cloud font-size tiers and the grade-meter fill widths. Generating
+/// them keeps the repetitive rules DRY and out of any inline `style` (CSP
+/// `style-src 'self'`). The tag-color/recency/kind rules (small, fixed sets)
+/// stay hand-written in the CSS const.
+fn numeric_tiers() -> String {
+    let mut css = String::from("\n/* generated numeric tiers (see assets::numeric_tiers) */\n");
+    // Cloud font-size tiers: quantized `0.82 + share * 0.43`rem.
+    let n = crate::stats::CLOUD_SIZE_TIERS;
+    for t in 0..n {
+        let rem = 0.82 + (t as f32 / (n - 1) as f32) * 0.43;
+        css.push_str(&format!("#cloud a[data-size=\"{t}\"] {{ font-size: {rem:.3}rem; }}\n"));
+    }
+    // Grade-meter fill, in 5% steps (the render side buckets to the same grid).
+    let mut fill = 0;
+    while fill <= 100 {
+        css.push_str(&format!(".meter > i[data-fill=\"{fill}\"] {{ width: {fill}%; }}\n"));
+        fill += 5;
+    }
+    css
+}
 
 /// Main progressive-enhancement script, run at end of body.
 pub static SITE_JS: LazyLock<Asset> = LazyLock::new(|| {

@@ -1,6 +1,6 @@
 use crate::entry::{Entry, ListItem, Listing, PostError, Revision};
 use crate::slug::{is_reserved_slug, slug};
-use crate::stats::{compute_cloud, finder_color_var, CloudStats, TagStat, ViewFilter};
+use crate::stats::{compute_cloud, CloudStats, TagStat, ViewFilter};
 
 // ============================================================================
 // Stylesheet — ported from the mockups (timeline-glass-mockup.html, the "rows"
@@ -220,6 +220,19 @@ body:has(#grip.active) { -webkit-user-select: none; user-select: none; }
   border-radius: 50%;
   background: var(--tag, var(--tag-gray));
 }
+/* Finder color index -> the --tag custom property the dots read. Generic: shared
+   by the cloud, the post-header rail, and row tag pills. Index 0 (none) and 1
+   (gray) carry no rule and fall through to the neutral --tag-gray fallback. */
+[data-tag-color="2"] { --tag: var(--tag-green); }
+[data-tag-color="3"] { --tag: var(--tag-purple); }
+[data-tag-color="4"] { --tag: var(--tag-blue); }
+[data-tag-color="5"] { --tag: var(--tag-yellow); }
+[data-tag-color="6"] { --tag: var(--tag-red); }
+[data-tag-color="7"] { --tag: var(--tag-orange); }
+/* cloud recency: fresh topics render dark + bold, dormant ones fade. */
+#cloud a[data-recency="fresh"] { color: var(--ink); font-weight: 650; }
+#cloud a[data-recency="mid"] { color: var(--soft); font-weight: 550; }
+#cloud a[data-recency="dormant"] { color: var(--faint); font-weight: 500; }
 #cloud a > small {
   font-size: .68em;
   font-weight: 500;
@@ -845,6 +858,13 @@ main > article + article { margin-top: 3.2rem; padding-top: 3.2rem; border-top: 
   font: 700 .58rem/1 var(--mono); font-style: normal; display: inline-flex; align-items: center; justify-content: center;
   width: 2.4rem; height: 1.55rem; border-radius: 5px; color: #fff; letter-spacing: .03em; background: var(--kind, var(--tag-gray));
 }
+/* file-type category -> the --kind badge tint (was an inline style; kept off
+   inline for CSP). `file` carries no rule and falls to the neutral gray. */
+:is(#listing section, #attachments) > ol i[data-kind="folder"]  { --kind: var(--violet); }
+:is(#listing section, #attachments) > ol i[data-kind="pdf"]     { --kind: var(--tag-red); }
+:is(#listing section, #attachments) > ol i[data-kind="doc"]     { --kind: var(--tag-blue); }
+:is(#listing section, #attachments) > ol i[data-kind="archive"] { --kind: var(--tag-green); }
+:is(#listing section, #attachments) > ol i[data-kind="media"]   { --kind: var(--tag-yellow); }
 :is(#listing section, #attachments) > ol b { font-weight: 560; font-size: .875rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :is(#listing section, #attachments) > ol b small { font-weight: inherit; color: var(--soft); }
 :is(#listing section, #attachments) > ol span, :is(#listing section, #attachments) > ol time { font: 500 .72rem var(--mono); color: var(--faint); font-feature-settings: "tnum"; white-space: nowrap; }
@@ -1790,18 +1810,19 @@ fn render_cloud(ctx: &HeaderContext) -> String {
         } else {
             make_url(&format!("/+{}", tag.name), ctx.view)
         };
-        let size = ctx.cloud.size_rem(tag.count);
-        let (ink, weight) = ctx.cloud.ink(tag.last_active);
+        let size = ctx.cloud.size_tier(tag.count);
+        let recency = ctx.cloud.recency(tag.last_active);
         let entries_word = if tag.count == 1 { "entry" } else { "entries" };
+        // Size (tier), recency (color+weight), and Finder color all ride data-*
+        // attributes the stylesheet targets -- no inline `style` (CSP).
         out.push_str(&format!(
-            r#"<a href="{href}" data-tag="{tag}" aria-current="{cur}" style="--tag:{color};font-size:{size:.2}rem;color:{ink};font-weight:{weight}" title="{count} {word}, last active {last}">{tag} <small>{count}</small></a>"#,
+            r#"<a href="{href}" data-tag="{tag}" data-tag-color="{color}" data-size="{size}" data-recency="{recency}" aria-current="{cur}" title="{count} {word}, last active {last}">{tag} <small>{count}</small></a>"#,
             href = html_escape(&href),
             tag = html_escape(&tag.name),
             cur = if is_active { "true" } else { "false" },
-            color = finder_color_var(tag.color),
+            color = tag.color,
             size = size,
-            ink = ink,
-            weight = weight,
+            recency = recency,
             count = tag.count,
             word = entries_word,
             last = tag.last_active.format("%Y-%m-%d"),
@@ -2176,9 +2197,9 @@ fn rail_tags(entry: &Entry) -> String {
         .topical_tags()
         .map(|t| {
             format!(
-                r#"<a href="/+{tag}" data-tag="{tag}" style="--tag:{color}">{tag}</a>"#,
+                r#"<a href="/+{tag}" data-tag="{tag}" data-tag-color="{color}">{tag}</a>"#,
                 tag = html_escape(&t.name),
-                color = finder_color_var(t.color),
+                color = t.color,
             )
         })
         .collect::<Vec<_>>()
@@ -2202,10 +2223,13 @@ fn render_meter(grade: Option<f32>) -> String {
     match grade {
         Some(q) => {
             let pct = ((1.0 - q) * 100.0).round().max(1.0) as i32;
+            // Fill width rides a data-fill bucket (nearest 5%) the stylesheet
+            // targets, so no inline `style` is needed (CSP `style-src 'self'`).
+            let fill = ((q * 20.0).round() as i32 * 5).clamp(0, 100);
             format!(
-                r#"<span class="meter" title="Graded top {pct}%" aria-label="Graded top {pct}%"><i style="width:{fill}%"></i></span>"#,
+                r#"<span class="meter" title="Graded top {pct}%" aria-label="Graded top {pct}%"><i data-fill="{fill}"></i></span>"#,
                 pct = pct,
-                fill = (q * 100.0).round() as i32,
+                fill = fill,
             )
         }
         None => String::new(),
@@ -3010,7 +3034,7 @@ fn file_list_html(base_path: &str, items: &[ListItem]) -> String {
                 // slash). The path IS the canonical URL, mirroring the filesystem.
                 let href = format!("{}/", encode_path(&format!("{}/{}", base_path, it.name)));
                 return format!(
-                    r#"<li><a href="{href}"><i style="--kind:var(--violet)">&#9656;</i><b>{stem}<small>/</small></b><span>folder</span><time datetime="{iso}">{date}</time></a></li>"#,
+                    r#"<li><a href="{href}"><i data-kind="folder">&#9656;</i><b>{stem}<small>/</small></b><span>folder</span><time datetime="{iso}">{date}</time></a></li>"#,
                     href = html_escape(&href),
                     stem = html_escape(&it.stem),
                     iso = iso,
@@ -3018,11 +3042,11 @@ fn file_list_html(base_path: &str, items: &[ListItem]) -> String {
                 );
             }
             let href = encode_path(&format!("{}/{}", base_path, it.name));
-            let (badge, color) = kind_badge(&it.ext);
+            let (badge, category) = kind_badge(&it.ext);
             format!(
-                r#"<li><a href="{href}"><i style="--kind:{color}">{badge}</i><b>{stem}<small>{ext}</small></b><span>{size}</span><time datetime="{iso}">{date}</time></a></li>"#,
+                r#"<li><a href="{href}"><i data-kind="{category}">{badge}</i><b>{stem}<small>{ext}</small></b><span>{size}</span><time datetime="{iso}">{date}</time></a></li>"#,
                 href = html_escape(&href),
-                color = color,
+                category = category,
                 badge = html_escape(&badge),
                 stem = html_escape(&it.stem),
                 ext = html_escape(&dot_ext(&it.ext)),
@@ -3106,22 +3130,24 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
-/// The type badge (uppercase label + a color var) for a file-list row.
+/// The type badge for a file-list row: an uppercase label plus a `data-kind`
+/// category. The category drives the badge tint from the stylesheet (see the
+/// `[data-kind=…]` rules), so no inline `style` is needed (CSP `style-src 'self'`).
 fn kind_badge(ext: &str) -> (String, &'static str) {
     let e = ext.to_ascii_lowercase();
-    let color = match e.as_str() {
-        "pdf" => "var(--tag-red)",
-        "txt" | "md" | "markdown" | "rtf" | "doc" | "docx" | "pages" => "var(--tag-blue)",
-        "zip" | "gz" | "tar" | "7z" | "dmg" | "pkg" => "var(--tag-green)",
-        "mp3" | "wav" | "m4a" | "mp4" | "mov" | "aif" | "aiff" => "var(--tag-yellow)",
-        _ => "var(--tag-gray)",
+    let category = match e.as_str() {
+        "pdf" => "pdf",
+        "txt" | "md" | "markdown" | "rtf" | "doc" | "docx" | "pages" => "doc",
+        "zip" | "gz" | "tar" | "7z" | "dmg" | "pkg" => "archive",
+        "mp3" | "wav" | "m4a" | "mp4" | "mov" | "aif" | "aiff" => "media",
+        _ => "file",
     };
     let label = if e.is_empty() {
         "FILE".to_string()
     } else {
         e.to_ascii_uppercase().chars().take(4).collect()
     };
-    (label, color)
+    (label, category)
 }
 
 /// Render an image viewer page.
@@ -3175,9 +3201,9 @@ fn post_tags(entry: &Entry) -> String {
         .topical_tags()
         .map(|t| {
             format!(
-                r#"<a href="/+{tag}" style="--tag:{color}">{tag}</a>"#,
+                r#"<a href="/+{tag}" data-tag-color="{color}">{tag}</a>"#,
                 tag = html_escape(&t.name),
-                color = finder_color_var(t.color),
+                color = t.color,
             )
         })
         .collect::<Vec<_>>()

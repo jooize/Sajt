@@ -6,7 +6,7 @@ use std::path::Path;
 /// `N` is the color index the user picked in Finder. The index maps to the seven
 /// Finder colors: 0 none, 1 gray, 2 green, 3 purple, 4 blue, 5 yellow, 6 red,
 /// 7 orange. We keep the index so the site can render each tag in its Finder
-/// color (see `stats::finder_color_var`).
+/// color: it is emitted as a `data-tag-color` attribute the stylesheet paints.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tag {
     pub name: String,

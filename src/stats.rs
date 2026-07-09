@@ -20,19 +20,10 @@ pub fn is_notable(grade: Option<f32>) -> bool {
     matches!(grade, Some(q) if q >= NOTABLE)
 }
 
-/// Map a Finder color index (0-7) to the CSS custom property that paints it.
-/// 0 none and 1 gray both fall through to the neutral dot.
-pub fn finder_color_var(color: u8) -> &'static str {
-    match color {
-        2 => "var(--tag-green)",
-        3 => "var(--tag-purple)",
-        4 => "var(--tag-blue)",
-        5 => "var(--tag-yellow)",
-        6 => "var(--tag-red)",
-        7 => "var(--tag-orange)",
-        _ => "var(--tag-gray)",
-    }
-}
+// The Finder color index (0-7) -> CSS color mapping now lives in the stylesheet
+// as `[data-tag-color="N"]` rules; entries emit the raw index as a data
+// attribute (see `render_cloud`/`rail_tags`), so no Rust-side color helper is
+// needed. 0 (none) and 1 (gray) both paint the neutral dot.
 
 /// One row of the tag cloud: a topic, how many entries carry it, when it was
 /// last active, and the Finder color of its freshest use.
@@ -83,31 +74,38 @@ pub fn compute_cloud(entries: &[&Entry]) -> CloudStats {
     CloudStats { tags, max_count, newest }
 }
 
+/// Number of discrete cloud font-size tiers (`data-size="0".."NUM-1"`). The tier
+/// index drives an external CSS rule (see `assets::numeric_tiers`), so the size
+/// stays out of any inline `style` (CSP `style-src 'self'`). Eight tiers track
+/// the old smooth `0.82 + share * 0.43` curve closely enough to be invisible.
+pub const CLOUD_SIZE_TIERS: u8 = 8;
+
 impl CloudStats {
-    /// Cloud font-size in rem: bigger for busier topics. Matches the mockup's
-    /// `0.82 + share * 0.43` curve.
-    pub fn size_rem(&self, count: usize) -> f32 {
+    /// Cloud font-size tier (`0..CLOUD_SIZE_TIERS-1`): bigger for busier topics,
+    /// quantized from the mockup's `0.82 + share * 0.43` curve.
+    pub fn size_tier(&self, count: usize) -> u8 {
         let share = if self.max_count > 1 {
             (count as f32 - 1.0) / (self.max_count as f32 - 1.0)
         } else {
             0.0
         };
-        0.82 + share * 0.43
+        (share * (CLOUD_SIZE_TIERS - 1) as f32).round() as u8
     }
 
-    /// Recency ink for a topic: fresh topics are dark and bold, dormant ones
-    /// fade. Returns `(css-color, font-weight)`, judged against `newest`.
-    pub fn ink(&self, last_active: NaiveDate) -> (&'static str, u16) {
+    /// Recency class for a topic (`fresh`/`mid`/`dormant`), judged against
+    /// `newest`: fresh topics render dark and bold, dormant ones fade. The class
+    /// drives color + weight from the stylesheet, off any inline `style`.
+    pub fn recency(&self, last_active: NaiveDate) -> &'static str {
         let days = self
             .newest
             .map(|n| (n - last_active).num_days())
             .unwrap_or(0);
         if days <= 14 {
-            ("var(--ink)", 650)
+            "fresh"
         } else if days <= 60 {
-            ("var(--soft)", 550)
+            "mid"
         } else {
-            ("var(--faint)", 500)
+            "dormant"
         }
     }
 }
@@ -213,13 +211,5 @@ mod tests {
             ViewFilter::from_params(None, false, Some(" hi ")).q,
             Some("hi".to_string())
         );
-    }
-
-    #[test]
-    fn color_mapping() {
-        assert_eq!(finder_color_var(0), "var(--tag-gray)");
-        assert_eq!(finder_color_var(3), "var(--tag-purple)");
-        assert_eq!(finder_color_var(7), "var(--tag-orange)");
-        assert_eq!(finder_color_var(99), "var(--tag-gray)");
     }
 }
