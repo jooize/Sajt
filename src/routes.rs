@@ -399,7 +399,7 @@ fn try_asset(all_entries: &[&Entry], path: &str, content_dir: &std::path::Path, 
     if is_sandboxed_document(ext) {
         return Some(sandbox_html_response(bytes, embed, document_content_type(ext)));
     }
-    let mime = mime_guess::from_ext(ext).first_or_octet_stream().to_string();
+    let mime = raw_content_type(ext);
     Some(
         Response::builder()
             .status(StatusCode::OK)
@@ -652,9 +652,7 @@ pub async fn serve_embed_asset(
     if is_sandboxed_document(ext) {
         return sandbox_html_response(bytes, false, document_content_type(ext));
     }
-    let mime = mime_guess::from_ext(ext)
-        .first_or_octet_stream()
-        .to_string();
+    let mime = raw_content_type(ext);
 
     Response::builder()
         .status(StatusCode::OK)
@@ -824,9 +822,7 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool) -> Response {
         return sandbox_html_response(content, embed, document_content_type(&entry.extension));
     }
 
-    let mime = mime_guess::from_ext(&entry.extension)
-        .first_or_octet_stream()
-        .to_string();
+    let mime = raw_content_type(&entry.extension);
 
     let filename = match &entry.label {
         Some(label) => format!("{}.{}", sanitize_filename(label), entry.extension),
@@ -905,11 +901,26 @@ fn inject_reporter(bytes: Vec<u8>) -> Vec<u8> {
 /// The content type for a sandboxed standalone document: XHTML is served as the
 /// strict XML type it asks for (`application/xhtml+xml`, so the browser XML-parses
 /// it exactly as the author intended — choosing `.xhtml` is the opt-in), while
-/// HTML and SHTML get the lenient `text/html`. The file extension is the switch.
+/// HTML gets the lenient `text/html`. The file extension is the switch.
 fn document_content_type(ext: &str) -> &'static str {
     match mime_guess::from_ext(ext).first_or_octet_stream().essence_str() {
         "application/xhtml+xml" => "application/xhtml+xml; charset=utf-8",
         _ => "text/html; charset=utf-8",
+    }
+}
+
+/// The content type for a raw file that is NOT served as a sandboxed standalone
+/// document. Any type `mime_guess` would render as HTML/XHTML but that we do not
+/// treat as a document (`.shtml` and other SSI/HTML-help extensions — we do not
+/// process Server-Side Includes) is downgraded to `text/plain`, so it shows as
+/// source rather than rendering un-jailed in our origin. Everything else keeps
+/// its guessed type (non-HTML documents like SVG/XML are still hard-jailed by the
+/// header middleware's fail-closed default).
+fn raw_content_type(ext: &str) -> String {
+    let mime = mime_guess::from_ext(ext).first_or_octet_stream();
+    match mime.essence_str() {
+        "text/html" | "application/xhtml+xml" => "text/plain; charset=utf-8".to_string(),
+        _ => mime.to_string(),
     }
 }
 

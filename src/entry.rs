@@ -301,18 +301,23 @@ pub fn normalize_ext(ext: &str) -> String {
     }
 }
 
-/// The HTML/XHTML document family: complete self-contained documents served as
-/// sandboxed standalone pages (the drop-in `.html` feature). Keyed on the
-/// resolved MIME so every HTML/XHTML extension (`html`, `htm`, `xhtml`, `xht`,
-/// `shtml`, ...) is covered without a hand-maintained list. This is the single
-/// source of truth used by three consumers that MUST agree: `kind()` (medium
-/// classification), `render::render_entry` (the standalone render path), and the
-/// server's sandbox gate (`routes.rs`) — if they diverged, a document could be
-/// served jailed but misclassified, or classified as a page but not jailed.
+/// The HTML/XHTML document formats we render as sandboxed standalone pages (the
+/// drop-in feature). An explicit allowlist, deliberately *narrower* than "every
+/// extension `mime_guess` calls `text/html`": `.shtml`/`.shtm`/`.stm` (Server-Side
+/// Includes) and the like are excluded, because we do not process SSI and serving
+/// them as HTML would falsely imply we do. Those still serve safely — as plain
+/// source text, never rendered un-jailed (see `routes::raw_content_type`).
+///
+/// This is the single source of truth used by three consumers that MUST agree:
+/// `kind()` (medium classification), `render::render_entry` (the standalone
+/// render path), and the server's sandbox gate (`routes.rs`) — if they diverged,
+/// a document could be served jailed but misclassified, or classified as a page
+/// but not jailed. `.xhtml`/`.xht` are included (a past `html`/`htm`-only check
+/// let `.xhtml` run script in our origin — the S2 review finding).
 pub fn is_html_document(ext: &str) -> bool {
     matches!(
-        mime_guess::from_ext(ext).first_or_octet_stream().essence_str(),
-        "text/html" | "application/xhtml+xml"
+        ext.to_ascii_lowercase().as_str(),
+        "html" | "htm" | "xhtml" | "xht"
     )
 }
 
@@ -332,11 +337,13 @@ mod tests {
     }
 
     #[test]
-    fn html_document_family_covers_html_and_xhtml() {
-        for ext in ["html", "htm", "HTML", "xhtml", "xht", "shtml"] {
+    fn html_document_family_is_html_and_xhtml_only() {
+        for ext in ["html", "htm", "HTML", "xhtml", "xht", "XHTML"] {
             assert!(is_html_document(ext), "{ext} should be an HTML document");
         }
-        for ext in ["md", "txt", "svg", "xml", "png", "pdf", ""] {
+        // SSI (.shtml) and other text/html-mapped types are deliberately excluded
+        // — we do not process them, so they must not render as HTML.
+        for ext in ["shtml", "shtm", "stm", "hxt", "htt", "md", "txt", "svg", "xml", "png", ""] {
             assert!(!is_html_document(ext), "{ext} should NOT be an HTML document");
         }
     }
