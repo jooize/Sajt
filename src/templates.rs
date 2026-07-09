@@ -938,6 +938,7 @@ dialog dl { display: grid; grid-template-columns: auto 1fr; gap: .4rem 1rem; fon
 dialog dt { text-align: right; }
 dialog p { margin-top: 1rem; padding-top: .8rem; border-top: 1px solid var(--hair); font-size: .8rem; color: var(--soft); }
 dialog p b { color: var(--violet); font-weight: 500; }
+dialog p b svg { width: .82em; height: .82em; fill: currentColor; vertical-align: -.08em; }
 kbd { font: 500 .95em var(--mono); }
 
 body > footer {
@@ -1956,7 +1957,7 @@ fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> Str
 <dialog id="help" aria-label="Keyboard shortcuts">
 <h2>Keyboard</h2>
 <dl>{shortcuts}</dl>
-<p><b>&#9733;</b> marks my favorites. Bookmarks are yours &mdash; they never leave this browser.</p>
+<p><b>&#9733;</b> marks my favorites. <b>{bookmark}</b> Bookmarks are yours &mdash; they never leave this browser.</p>
 </dialog>
 <script src="{site_href}"></script>
 </body>
@@ -1970,6 +1971,7 @@ fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> Str
         body = body,
         typeface = typeface,
         shortcuts = shortcuts,
+        bookmark = BOOKMARK_SVG,
     )
 }
 
