@@ -1,12 +1,12 @@
 [package]
 name = "esko-bar"
-version = "0.15.0"
+version = "0.15.1"
 edition = "2024"
 
 [dependencies]
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["set-header", "trace"] }
+tower-http = { version = "0.6", features = ["set-header", "trace", "catch-panic"] }
 chrono = "0.4"
 xattr = "1"
 plist = "1"

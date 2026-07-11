@@ -262,6 +262,11 @@ async fn main() {
         .route("/{*path}", axum::routing::get(routes::catch_all))
         .layer(axum::middleware::from_fn(security::headers))
         .layer(tower_http::trace::TraceLayer::new_for_http())
+        // Outermost: a panic in any handler on untrusted input becomes a clean
+        // 500 instead of a reset connection or a downed worker — defense in depth
+        // behind the fail-closed handlers (a panic leaks nothing, but this keeps
+        // the server serving).
+        .layer(tower_http::catch_panic::CatchPanicLayer::new())
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], args.port));

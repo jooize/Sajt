@@ -305,6 +305,11 @@ pub fn normalize_ext(ext: &str) -> String {
         "markdown" => "md".to_string(),
         "text" => "txt".to_string(),
         "asciidoc" => "adoc".to_string(),
+        // Image-format aliases fold to their canonical extension so the metadata
+        // strip gate (`is_image_ext`) and the strip dispatch agree — otherwise a
+        // `.tif`/`.jpe`/`.jfif` slips past both and serves raw with full EXIF/GPS.
+        "tif" => "tiff".to_string(),
+        "jpe" | "jfif" | "jif" => "jpg".to_string(),
         other => other.to_string(),
     }
 }

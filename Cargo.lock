@@ -438,7 +438,7 @@ dependencies = [
 
 [[package]]
 name = "esko-bar"
-version = "0.15.0"
+version = "0.15.1"
 dependencies = [
  "ammonia",
  "axum",
@@ -2155,6 +2155,7 @@ dependencies = [
  "futures-util",
  "http",
  "http-body",
+ "http-body-util",
  "iri-string",
  "pin-project-lite",
  "tower",

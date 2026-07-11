@@ -105,12 +105,32 @@ const JPEG_DROP_MARKERS: &[u8] = &[
 fn keep_jpeg_segment(seg: &img_parts::jpeg::JpegSegment) -> bool {
     let m = seg.marker();
     if m == markers::APP2 {
+        // ICC lives in APP2; an MPF/FlashPix APP2 (which can index an embedded
+        // second image) is dropped.
         return seg.contents().starts_with(b"ICC_PROFILE\0");
+    }
+    if m == markers::APP0 {
+        // Base JFIF density info is kept; a `JFXX` APP0 embeds a preview
+        // thumbnail — the same un-cropped-preview leak class as the EXIF
+        // thumbnail — so only a plain JFIF APP0 survives.
+        return seg.contents().starts_with(b"JFIF\0");
     }
     !JPEG_DROP_MARKERS.contains(&m)
 }
 
 fn strip_jpeg(bytes: &[u8]) -> StripOutcome {
+    // A JPEG carrying data after its primary EOI cannot be safely segment-stripped:
+    // img-parts re-emits everything after the scan verbatim, so an appended trailer
+    // — and its own metadata — would survive. This is exactly how phones ship a
+    // Multi-Picture-Format second full-resolution image (Samsung/Google HDR, dual
+    // lens) and a Motion Photo (an appended MP4), each with its own GPS. Route any
+    // such file to the transcode, which re-encodes a single clean frame with no
+    // trailer. A file we cannot even parse to an EOI is likewise not stripped.
+    match primary_jpeg_end(bytes) {
+        Some(end) if end == bytes.len() => {}
+        _ => return StripOutcome::NeedsTranscode,
+    }
+
     let mut jpeg = match Jpeg::from_bytes(Bytes::copy_from_slice(bytes)) {
         Ok(j) => j,
         Err(_) => return StripOutcome::Failed,
@@ -122,10 +142,13 @@ fn strip_jpeg(bytes: &[u8]) -> StripOutcome {
     jpeg.segments_mut().retain(keep_jpeg_segment);
 
     // Re-attach a canonical, orientation-only EXIF so portrait photos are not
-    // rendered sideways. Only when non-default (2..=8) — orientation 1 (or none)
-    // needs no tag, keeping the output minimal.
+    // rendered sideways — but only when there is room for img-parts to insert the
+    // segment (it inserts at a fixed index and panics on a too-short segment list),
+    // and only when orientation is non-default (2..=8; 1 or none needs no tag). A
+    // pathological JPEG that strips to a near-empty segment list loses orientation
+    // rather than panicking the request handler.
     if let Some(o) = orientation {
-        if (2..=8).contains(&o) {
+        if (2..=8).contains(&o) && jpeg.segments().len() >= 3 {
             jpeg.set_exif(Some(Bytes::from(minimal_orientation_exif(o))));
         }
     }
@@ -135,6 +158,61 @@ fn strip_jpeg(bytes: &[u8]) -> StripOutcome {
         Ok(_) => StripOutcome::Clean { bytes: out, content_type: "image/jpeg" },
         Err(_) => StripOutcome::Failed,
     }
+}
+
+/// Byte offset just past the first complete JPEG image's EOI marker, or `None` if
+/// the bytes are not a parseable JPEG. Bytes after this offset are a trailer (a
+/// Motion-Photo video, an MPF second image, any appended data) that a segment
+/// strip would preserve verbatim. Walks the marker structure, so a `FF D9` pair
+/// inside entropy-coded data or a segment body is never mistaken for the EOI.
+fn primary_jpeg_end(bytes: &[u8]) -> Option<usize> {
+    if bytes.len() < 2 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
+        return None; // no SOI
+    }
+    let mut i = 2;
+    loop {
+        // A marker is 0xFF then a non-0xFF id, allowing 0xFF fill bytes between.
+        if i + 1 >= bytes.len() || bytes[i] != 0xFF {
+            return None;
+        }
+        let mut id = bytes[i + 1];
+        i += 2;
+        while id == 0xFF {
+            id = *bytes.get(i)?;
+            i += 1;
+        }
+        match id {
+            0xD9 => return Some(i), // EOI — end of the primary image
+            0x01 | 0xD0..=0xD7 => {} // standalone markers, no payload
+            0xDA => {
+                // Start of scan: skip the header, then walk entropy to the next
+                // real marker (0xFF + a non-stuffing, non-restart, non-fill byte).
+                i += jpeg_seg_len(bytes, i)?;
+                loop {
+                    if bytes.get(i)? == &0xFF {
+                        match bytes.get(i + 1)? {
+                            0x00 | 0xD0..=0xD7 => i += 2, // byte-stuffing / restart
+                            0xFF => i += 1,               // fill byte
+                            _ => break,                   // a real marker
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            _ => i += jpeg_seg_len(bytes, i)?, // length-bearing marker: skip it
+        }
+    }
+}
+
+/// Big-endian 2-byte JPEG segment length at `pos` (the length counts its own 2
+/// bytes). `None` if it is degenerate or runs past the buffer.
+fn jpeg_seg_len(bytes: &[u8], pos: usize) -> Option<usize> {
+    let len = ((*bytes.get(pos)? as usize) << 8) | (*bytes.get(pos + 1)? as usize);
+    if len < 2 || pos + len > bytes.len() {
+        return None;
+    }
+    Some(len)
 }
 
 // --- PNG --------------------------------------------------------------------
@@ -490,14 +568,77 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_supported_formats_fail_closed() {
-        // Not valid JPEG/PNG/WebP bytes -> Failed, never a Clean passthrough.
+    fn corrupt_supported_formats_never_pass_through_clean() {
+        // Garbage must never be served as a clean strip. An unparseable JPEG
+        // routes to the transcode (it fails closed there); PNG/WebP fail directly.
+        // Either way: never Clean.
         for ext in ["jpg", "png", "webp"] {
             assert!(
-                matches!(strip(ext, b"definitely not an image"), StripOutcome::Failed),
-                "{ext} garbage should fail closed"
+                !matches!(strip(ext, b"definitely not an image"), StripOutcome::Clean { .. }),
+                "{ext} garbage must not strip clean"
             );
         }
+    }
+
+    /// A minimal but structurally valid baseline JPEG: SOI, an empty APP0, a SOS
+    /// with a short header, three entropy bytes, then EOI.
+    fn tiny_jpeg() -> Vec<u8> {
+        vec![
+            0xFF, 0xD8, // SOI
+            0xFF, 0xE0, 0x00, 0x02, // APP0, length 2 (no payload)
+            0xFF, 0xDA, 0x00, 0x02, // SOS, header length 2 (no payload)
+            0x11, 0x22, 0x33, // entropy
+            0xFF, 0xD9, // EOI
+        ]
+    }
+
+    #[test]
+    fn primary_jpeg_end_finds_the_eoi_and_detects_trailers() {
+        let jpeg = tiny_jpeg();
+        // A clean single-frame JPEG ends exactly at its length.
+        assert_eq!(primary_jpeg_end(&jpeg), Some(jpeg.len()));
+
+        // An appended trailer (MPF second image / Motion-Photo MP4) is detected:
+        // the primary EOI is before the end of the buffer.
+        let mut with_trailer = jpeg.clone();
+        with_trailer.extend_from_slice(b"TRAILER_WITH_GPS");
+        assert_eq!(primary_jpeg_end(&with_trailer), Some(jpeg.len()));
+        assert!(primary_jpeg_end(&with_trailer).unwrap() < with_trailer.len());
+
+        // A `FF D9` byte pair *inside* entropy is byte-stuffed (`FF 00`) or a
+        // restart marker in real files, never a bare EOI; a stray pair in the
+        // scan must not be read as the end. Here entropy contains `FF 00`
+        // (stuffing) then the real EOI.
+        let stuffed = vec![
+            0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0xFF, 0x00, 0x44, 0xFF, 0xD9,
+        ];
+        assert_eq!(primary_jpeg_end(&stuffed), Some(stuffed.len()));
+
+        // Not a JPEG.
+        assert_eq!(primary_jpeg_end(b"not a jpeg"), None);
+        assert_eq!(primary_jpeg_end(&[0xFF, 0xD8]), None); // SOI only, no EOI
+    }
+
+    #[test]
+    fn trailered_jpeg_routes_to_transcode_not_a_raw_leak() {
+        let mut jpeg = tiny_jpeg();
+        jpeg.extend_from_slice(b"SECRET_TRAILER");
+        // A trailered JPEG must never be segment-stripped (which would re-serve
+        // the trailer) — it routes to the transcode path instead.
+        assert!(matches!(strip("jpg", &jpeg), StripOutcome::NeedsTranscode));
+    }
+
+    #[test]
+    fn image_extension_aliases_are_gated() {
+        // The strip gate and dispatch must recognize the alias spellings, or a
+        // `.tif`/`.jpe`/`.jfif` would slip past and serve raw with EXIF.
+        for ext in ["tif", "jpe", "jfif", "jif"] {
+            assert!(crate::entry::is_image_ext(ext), "{ext} should be an image");
+        }
+        // `.tif` -> tiff -> transcode; `.jpe` -> jpeg, and an unparseable stream
+        // routes to the transcode (which fails closed there), never a clean pass.
+        assert!(matches!(strip("tif", b"x"), StripOutcome::NeedsTranscode));
+        assert!(matches!(strip("jpe", b"x"), StripOutcome::NeedsTranscode));
     }
 
     #[test]

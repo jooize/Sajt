@@ -285,6 +285,20 @@ even for an `original`-tagged file — a tile is a derived preview, and the exac
 bytes stay at the asset's non-`?thumb` URL. Verified: a 1600x1200 gallery photo
 serves as a clean 600x450 tile (~6x smaller) with GPS gone.
 
+**Adversarial-review hardening (2026-07-11).** A second-pass review closed two
+confirmed GPS-leak paths and a panic: (1) a JPEG carrying data after its primary
+EOI — a Multi-Picture-Format second full-resolution image or a Motion-Photo MP4,
+each with its own GPS — would have survived the segment strip (img-parts
+re-emits post-scan bytes verbatim); such files are now detected by walking the
+JPEG marker structure to the primary EOI and routed to the transcode (a single
+clean re-encoded frame, no trailer). (2) The strip gate keyed on `is_image_ext`,
+whose list missed the `.tif`/`.jpe`/`.jfif` alias spellings, so those served raw
+with full EXIF — `normalize_ext` now folds the aliases so the gate and the strip
+dispatch agree. (3) A pathological JPEG stripping to a near-empty segment list
+could panic `set_exif`; it is guarded, and a `CatchPanic` layer now turns any
+handler panic into a clean 500. Also: a `JFXX` preview thumbnail in `APP0` is now
+dropped (same leak class as the EXIF thumbnail).
+
 The image work (C8) is complete for stills. **Still to build:** video
 (QuickTime/MP4 location atoms) remains a future format, not yet handled.
 
