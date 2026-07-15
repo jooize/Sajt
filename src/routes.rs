@@ -409,14 +409,18 @@ async fn try_asset(
     if is_sandboxed_document(ext) {
         return Some(sandbox_html_response(bytes, embed, document_content_type(ext)));
     }
-    // In-folder images (gallery tiles, attachments) are stripped just like a
-    // primary photo (post-model.md §8). The `original` opt-in is per file here,
-    // read from the asset's own Finder tags rather than the post's.
-    if crate::entry::is_image_ext(ext) {
-        let is_original = crate::tags::read_tags_colored(&canon_file)
-            .iter()
-            .any(|t| t.name.eq_ignore_ascii_case("original"));
-        return Some(serve_image(bytes, ext, is_original, thumb, cache_dir).await);
+    // In-folder assets go through the same privacy gate as a primary (post-model.md
+    // §8): images stripped/transcoded, un-cleanable media withheld, the rest raw.
+    // The `original` opt-in is per file here, read from the asset's own tags.
+    match crate::media::classify(ext, &bytes) {
+        crate::media::Disposition::Image => {
+            let is_original = crate::tags::read_tags_colored(&canon_file)
+                .iter()
+                .any(|t| t.name.eq_ignore_ascii_case("original"));
+            return Some(serve_image(bytes, ext, is_original, thumb, cache_dir).await);
+        }
+        crate::media::Disposition::Withhold => return Some(metadata_withheld()),
+        crate::media::Disposition::Raw => {}
     }
     let mime = raw_content_type(ext);
     Some(
@@ -846,12 +850,17 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool, cache_dir: &std::path::Path
         return sandbox_html_response(content, embed, document_content_type(&entry.extension));
     }
 
-    // Images are stripped of location/camera metadata before serving unless the
-    // author tagged the file `original` (post-model.md §8). SVG is excluded (no
-    // EXIF; its risk is script, already jailed by the CSP middleware) — its
-    // extension is not in `is_image_ext`.
-    if crate::entry::is_image_ext(&entry.extension) {
-        return serve_image(content, &entry.extension, entry.is_original(), false, cache_dir).await;
+    // Privacy gate (post-model.md §8): an image is stripped/transcoded (unless the
+    // author opted into the exact bytes); metadata-bearing media we cannot clean
+    // yet (video/RAW/audio) is withheld, never served raw; everything else serves
+    // as-is. SVG is not an `is_image_ext` raster — it serves raw, jailed by the
+    // CSP middleware (its risk is script, not EXIF).
+    match crate::media::classify(&entry.extension, &content) {
+        crate::media::Disposition::Image => {
+            return serve_image(content, &entry.extension, entry.is_original(), false, cache_dir).await;
+        }
+        crate::media::Disposition::Withhold => return metadata_withheld(),
+        crate::media::Disposition::Raw => {}
     }
 
     let mime = raw_content_type(&entry.extension);
@@ -928,7 +937,9 @@ fn metadata_withheld() -> Response {
     Response::builder()
         .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
         .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(Body::from("Image withheld: metadata could not be removed for privacy.\n"))
+        .body(Body::from(
+            "Withheld for privacy: this file's embedded metadata cannot be removed yet.\n",
+        ))
         .unwrap_or_else(|_| not_found())
 }
 

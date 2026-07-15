@@ -70,6 +70,87 @@ pub fn strip(ext: &str, bytes: &[u8]) -> StripOutcome {
     }
 }
 
+// --- serving-gate classification -------------------------------------------
+
+/// How a served file should be handled at the privacy gate.
+pub enum Disposition {
+    /// A raster image: strip or transcode before serving.
+    Image,
+    /// Media that routinely embeds location/camera metadata but that we have no
+    /// cleaning path for yet (video, RAW, location audio). Withheld, never served
+    /// raw — the fail-closed boundary the whole feature promises applies to
+    /// *files*, not just to the still-image formats we happen to clean.
+    Withhold,
+    /// Carries no invisible location/camera metadata that we strip (text,
+    /// markdown, PDF, ...): serve as-is.
+    Raw,
+}
+
+/// Extensions of media that routinely embed GPS/camera metadata and that we
+/// cannot yet clean — withheld rather than served raw. The extension is
+/// authoritative here (checked before content sniffing): a RAW `.dng` is
+/// TIFF-structured and would otherwise sniff as an image, but it must not be
+/// handed to the image path.
+fn is_withheld_media_ext(ext: &str) -> bool {
+    matches!(
+        crate::entry::normalize_ext(ext).as_str(),
+        // Video — QuickTime/MP4 carry location atoms; the rest by extension.
+        "mov" | "mp4" | "m4v" | "avi" | "mkv" | "webm" | "wmv" | "flv" | "mpg"
+            | "mpeg" | "3gp" | "3g2" | "mts" | "m2ts" | "ts"
+        // Location-bearing audio.
+            | "m4a" | "aac"
+        // Camera RAW — the richest EXIF/GPS of any format.
+            | "dng" | "cr2" | "cr3" | "nef" | "nrw" | "arw" | "sr2" | "srf"
+            | "raf" | "orf" | "rw2" | "pef" | "srw" | "x3f" | "raw" | "rwl" | "dcr"
+    )
+}
+
+/// Best-effort content sniff of the leading bytes, so a *mislabeled* file is
+/// classified by what it actually is rather than its extension: a raster image
+/// routes to the strip/transcode, ISOBMFF audio/video is withheld. Returns `None`
+/// when nothing is recognized (the caller then trusts the extension).
+fn sniff(bytes: &[u8]) -> Option<Disposition> {
+    if bytes.len() < 12 {
+        return None;
+    }
+    let b = bytes;
+    if b.starts_with(&[0xFF, 0xD8, 0xFF])                        // JPEG
+        || b.starts_with(b"\x89PNG\r\n\x1a\n")                   // PNG
+        || b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a")  // GIF
+        || b.starts_with(b"BM")                                  // BMP
+        || b.starts_with(&[0x49, 0x49, 0x2A, 0x00])              // TIFF (LE)
+        || b.starts_with(&[0x4D, 0x4D, 0x00, 0x2A])              // TIFF (BE)
+        || (b.starts_with(b"RIFF") && &b[8..12] == b"WEBP")      // WebP
+    {
+        return Some(Disposition::Image);
+    }
+    // ISOBMFF: `<size>ftyp<brand>`. HEIC/AVIF are images we transcode; MP4/MOV/
+    // M4A share the same box but a different brand and are withheld.
+    if &b[4..8] == b"ftyp" {
+        let brand = &b[8..12];
+        let is_image = matches!(
+            brand,
+            b"heic" | b"heix" | b"heif" | b"hevc" | b"mif1" | b"msf1" | b"avif" | b"avis"
+        );
+        return Some(if is_image { Disposition::Image } else { Disposition::Withhold });
+    }
+    None
+}
+
+/// Decide how a file is served at the privacy gate. Order matters: a known
+/// metadata-bearing media extension is withheld first (so a RAW `.dng` never
+/// reaches the image path via its TIFF magic); then declared images; then a
+/// content sniff catches mislabeled photos/videos; anything else is served raw.
+pub fn classify(ext: &str, bytes: &[u8]) -> Disposition {
+    if is_withheld_media_ext(ext) {
+        return Disposition::Withhold;
+    }
+    if crate::entry::is_image_ext(ext) {
+        return Disposition::Image;
+    }
+    sniff(bytes).unwrap_or(Disposition::Raw)
+}
+
 // --- JPEG -------------------------------------------------------------------
 
 /// JPEG APP markers that carry user/application metadata rather than structural
@@ -626,6 +707,32 @@ mod tests {
         // A trailered JPEG must never be segment-stripped (which would re-serve
         // the trailer) — it routes to the transcode path instead.
         assert!(matches!(strip("jpg", &jpeg), StripOutcome::NeedsTranscode));
+    }
+
+    #[test]
+    fn classify_gates_the_whole_file_boundary() {
+        // Declared images -> Image.
+        assert!(matches!(classify("jpg", b""), Disposition::Image));
+        assert!(matches!(classify("heic", b""), Disposition::Image));
+        // Metadata-bearing media we cannot clean -> Withhold (never raw), even
+        // though a `.dng` is TIFF-structured and would otherwise sniff as image.
+        for ext in ["mov", "mp4", "m4a", "dng", "cr2", "nef", "arw"] {
+            assert!(matches!(classify(ext, b""), Disposition::Withhold), "{ext}");
+        }
+        // A mislabeled photo is caught by content sniffing, not its extension.
+        let jpeg_magic = [0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0, 0, 0, 0, 0];
+        assert!(matches!(classify("bin", &jpeg_magic), Disposition::Image));
+        // A mislabeled MP4 (ISOBMFF, non-image brand) is withheld.
+        let mut mp4 = vec![0, 0, 0, 0x18];
+        mp4.extend_from_slice(b"ftypmp42____");
+        assert!(matches!(classify("txt", &mp4), Disposition::Withhold));
+        // A HEIC-branded ISOBMFF is an image.
+        let mut heic = vec![0, 0, 0, 0x18];
+        heic.extend_from_slice(b"ftypheic____");
+        assert!(matches!(classify("bin", &heic), Disposition::Image));
+        // Ordinary text/docs are served raw.
+        assert!(matches!(classify("txt", b"just some text here"), Disposition::Raw));
+        assert!(matches!(classify("pdf", b"%PDF-1.7 ....."), Disposition::Raw));
     }
 
     #[test]
