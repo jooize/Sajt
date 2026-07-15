@@ -76,6 +76,9 @@ pub fn strip(ext: &str, bytes: &[u8]) -> StripOutcome {
 pub enum Disposition {
     /// A raster image: strip or transcode before serving.
     Image,
+    /// A PDF: its `/Info`/XMP document metadata is stripped ([`strip_pdf`])
+    /// before serving; unparseable or encrypted ones are withheld.
+    Pdf,
     /// A file we cannot verify-clean: withheld, never served raw. This is the
     /// fail-closed *default* — the boundary is an allowlist (cleaned images,
     /// author-readable text), not a denylist of known-bad formats, so a format
@@ -162,12 +165,12 @@ pub fn classify(ext: &str, bytes: &[u8]) -> Disposition {
     }
     // PDF and SVG carry metadata that is invisible in the *rendered* view (XMP
     // author/tool info, editor filesystem paths) even though the bytes may be
-    // valid UTF-8 — they must not slip through the text gate. Each gets a
-    // dedicated strip path; until it lands they are withheld.
-    if crate::entry::normalize_ext(ext) == "pdf"
-        || crate::entry::normalize_ext(ext) == "svg"
-        || bytes.starts_with(b"%PDF-")
-    {
+    // valid UTF-8 — they must not slip through the text gate. PDF has its strip
+    // path; SVG's lands next (withheld until then).
+    if crate::entry::normalize_ext(ext) == "pdf" || bytes.starts_with(b"%PDF-") {
+        return Disposition::Pdf;
+    }
+    if crate::entry::normalize_ext(ext) == "svg" {
         return Disposition::Withhold;
     }
     // Author-readable text: every byte visible in an editor — nothing invisible
@@ -385,6 +388,112 @@ fn strip_webp(bytes: &[u8]) -> StripOutcome {
     }
 }
 
+// --- PDF ----------------------------------------------------------------------
+
+/// Strip a PDF's document-level metadata for serving: the `/Info` dictionary
+/// (Author, Creator, Producer, creation/modification dates — the exact fields
+/// that identify a person and their tooling), every XMP `/Metadata` stream (the
+/// same data in RDF form, attachable to *any* object), and `/PieceInfo`
+/// (application-private page data, where creative tools stash provenance).
+/// Content the author can see in a PDF viewer — the rendered pages, outlines,
+/// annotations — is untouched.
+///
+/// Because lopdf re-serializes the parsed document, **prior incremental
+/// generations are dropped too**: a PDF edited in place (the usual way tools
+/// update metadata) keeps its old metadata bytes in the file, invisible but
+/// recoverable — a rewrite from the object table leaves that shadow history
+/// behind.
+///
+/// Returns `None` — the caller withholds — for encrypted PDFs (we cannot see
+/// what we would be serving) and for anything lopdf cannot parse or re-save.
+/// Output is deterministic for a given input (no timestamps are introduced), so
+/// the content-hash ETag over the stripped bytes is stable.
+pub fn strip_pdf(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut doc = match lopdf::Document::load_mem(bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("PDF withheld: parse failed ({e})");
+            return None;
+        }
+    };
+    if doc.trailer.get(b"Encrypt").is_ok() {
+        tracing::warn!("PDF withheld: encrypted");
+        return None;
+    }
+
+    // The /Info dictionary: drop the trailer key and the object it points at.
+    if let Ok(info) = doc.trailer.get(b"Info") {
+        if let Ok(id) = info.as_reference() {
+            doc.delete_object(id);
+        }
+    }
+    doc.trailer.remove(b"Info");
+
+    // XMP metadata streams and application piece-info, wherever they hang:
+    // remove the dict keys everywhere, remember what they referenced, then
+    // delete those objects — plus any orphan whose /Type is /Metadata (an
+    // unreferenced stream would otherwise still be written out).
+    let mut doomed: Vec<lopdf::ObjectId> = Vec::new();
+    for (&id, obj) in doc.objects.iter_mut() {
+        let dict = match obj {
+            lopdf::Object::Dictionary(d) => d,
+            lopdf::Object::Stream(s) => &mut s.dict,
+            _ => continue,
+        };
+        for key in [b"Metadata".as_slice(), b"PieceInfo".as_slice()] {
+            if let Some(gone) = dict.remove(key) {
+                if let Ok(rid) = gone.as_reference() {
+                    doomed.push(rid);
+                }
+            }
+        }
+        if matches!(dict.get(b"Type"), Ok(lopdf::Object::Name(n)) if n == b"Metadata") {
+            doomed.push(id);
+        }
+    }
+    for id in doomed {
+        doc.delete_object(id);
+    }
+
+    let mut out = Vec::new();
+    if let Err(e) = doc.save_to(&mut out) {
+        tracing::warn!("PDF withheld: re-save failed ({e})");
+        return None;
+    }
+    // Verify before anything is served: re-parse the *output* and assert every
+    // stripped channel is actually gone. The strip above is trusted for nothing —
+    // a logic bug in it becomes a withhold plus a loud log, never a leak.
+    if !pdf_is_clean(&out) {
+        tracing::error!("PDF withheld: strip verification failed — output still carries metadata");
+        return None;
+    }
+    Some(out)
+}
+
+/// Post-strip verification: parse the stripped bytes fresh and check that no
+/// stripped metadata channel remains (`/Info` in the trailer, `/Metadata` or
+/// `/PieceInfo` on any object, any object typed `/Metadata`). Unparseable
+/// output is *not* clean — fail closed.
+fn pdf_is_clean(bytes: &[u8]) -> bool {
+    let doc = match lopdf::Document::load_mem(bytes) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    if doc.trailer.get(b"Info").is_ok() {
+        return false;
+    }
+    doc.objects.values().all(|obj| {
+        let dict = match obj {
+            lopdf::Object::Dictionary(d) => d,
+            lopdf::Object::Stream(s) => &s.dict,
+            _ => return true,
+        };
+        dict.get(b"Metadata").is_err()
+            && dict.get(b"PieceInfo").is_err()
+            && !matches!(dict.get(b"Type"), Ok(lopdf::Object::Name(n)) if n == b"Metadata")
+    })
+}
+
 // --- shared helpers ---------------------------------------------------------
 
 /// Lowercase-hex SHA-256 of served bytes — the strong ETag / content hash for a
@@ -447,15 +556,29 @@ pub enum Prepared {
 /// never reach here — the caller serves their exact bytes directly.
 pub async fn prepare(ext: &str, bytes: &[u8], cache_dir: &Path) -> Prepared {
     match strip(ext, bytes) {
-        StripOutcome::Clean { bytes, content_type } => Prepared::Ready { bytes, content_type },
+        StripOutcome::Clean { bytes, content_type } => verified_ready(bytes, content_type),
         StripOutcome::Failed => Prepared::Withheld,
         StripOutcome::NeedsTranscode => {
             match vips_clean_jpeg(ext, bytes, cache_dir, TRANSCODE_MAX_EDGE, TRANSCODE_TAG).await {
-                Some(bytes) => Prepared::Ready { bytes, content_type: "image/jpeg" },
+                Some(bytes) => verified_ready(bytes, "image/jpeg"),
                 None => Prepared::Withheld,
             }
         }
     }
+}
+
+/// The last gate before image bytes are declared servable: re-read the cleaned
+/// output with an *independent* parser (kamadak-exif, not the img-parts code
+/// that produced it) and withhold if any sensitive metadata is still readable.
+/// The strip is trusted for nothing — a bug in it, or an img-parts behavior we
+/// did not anticipate (the MPF-trailer class), becomes a loud withhold, never a
+/// served leak.
+fn verified_ready(bytes: Vec<u8>, content_type: &'static str) -> Prepared {
+    if has_sensitive_metadata(&bytes) {
+        tracing::error!("image withheld: strip verification failed — output still carries metadata");
+        return Prepared::Withheld;
+    }
+    Prepared::Ready { bytes, content_type }
 }
 
 /// Produce a small, clean JPEG thumbnail for a gallery tile. Unlike [`prepare`],
@@ -465,7 +588,7 @@ pub async fn prepare(ext: &str, bytes: &[u8], cache_dir: &Path) -> Prepared {
 /// separately from the full view via [`THUMB_TAG`].
 pub async fn thumbnail(ext: &str, bytes: &[u8], cache_dir: &Path) -> Prepared {
     match vips_clean_jpeg(ext, bytes, cache_dir, THUMB_MAX_EDGE, THUMB_TAG).await {
-        Some(bytes) => Prepared::Ready { bytes, content_type: "image/jpeg" },
+        Some(bytes) => verified_ready(bytes, "image/jpeg"),
         None => Prepared::Withheld,
     }
 }
@@ -795,11 +918,11 @@ mod tests {
         assert!(matches!(classify("md", "unicode är fine ✓".as_bytes()), Disposition::Raw));
         assert!(matches!(classify("", b"README body"), Disposition::Raw));
 
-        // PDF and SVG hide metadata behind the rendered view — withheld until
-        // their strip paths land, even when the bytes are pure ASCII, and even
-        // under a lying extension (PDF magic).
-        assert!(matches!(classify("pdf", b"%PDF-1.7 ....."), Disposition::Withhold));
-        assert!(matches!(classify("txt", b"%PDF-1.4 disguised"), Disposition::Withhold));
+        // PDF and SVG hide metadata behind the rendered view — never through the
+        // text gate even as pure ASCII. PDF routes to its strip (also under a
+        // lying extension, by magic); SVG is withheld until its strip lands.
+        assert!(matches!(classify("pdf", b"%PDF-1.7 ....."), Disposition::Pdf));
+        assert!(matches!(classify("txt", b"%PDF-1.4 disguised"), Disposition::Pdf));
         assert!(matches!(classify("svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>"), Disposition::Withhold));
 
         // The default is fail-closed: unknown binary formats (Office, archives,
@@ -823,6 +946,104 @@ mod tests {
         // routes to the transcode (which fails closed there), never a clean pass.
         assert!(matches!(strip("tif", b"x"), StripOutcome::NeedsTranscode));
         assert!(matches!(strip("jpe", b"x"), StripOutcome::NeedsTranscode));
+    }
+
+    /// A minimal one-page PDF carrying every metadata channel we strip: an
+    /// `/Info` dictionary, a catalog-level XMP `/Metadata` stream, and a
+    /// `/PieceInfo` on the page.
+    fn pdf_with_metadata() -> Vec<u8> {
+        use lopdf::{dictionary, Object, Stream};
+        let mut doc = lopdf::Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let piece = dictionary! {"SecretApp" => dictionary! {"Private" => Object::string_literal("SecretPiece")}};
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => Object::Reference(pages_id), "PieceInfo" => piece,
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![Object::Reference(page_id)], "Count" => 1,
+            }),
+        );
+        let xmp = Stream::new(
+            dictionary! {"Type" => "Metadata", "Subtype" => "XML"},
+            b"<x:xmpmeta><dc:creator>SecretCreator</dc:creator></x:xmpmeta>".to_vec(),
+        );
+        let meta_id = doc.add_object(xmp);
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog", "Pages" => Object::Reference(pages_id),
+            "Metadata" => Object::Reference(meta_id),
+        });
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+        let info_id = doc.add_object(dictionary! {
+            "Author" => Object::string_literal("Secret Author"),
+            "Producer" => Object::string_literal("SecretTool 1.0"),
+        });
+        doc.trailer.set("Info", Object::Reference(info_id));
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn strip_pdf_removes_every_metadata_channel_deterministically() {
+        let contains = |hay: &[u8], needle: &[u8]| hay.windows(needle.len()).any(|w| w == needle);
+        let bytes = pdf_with_metadata();
+        for needle in [b"Secret Author".as_slice(), b"SecretCreator", b"SecretTool", b"SecretPiece"] {
+            assert!(contains(&bytes, needle), "fixture must carry the metadata");
+        }
+        let clean = strip_pdf(&bytes).expect("valid PDF strips");
+        for needle in [b"Secret Author".as_slice(), b"SecretCreator", b"SecretTool", b"SecretPiece"] {
+            assert!(!contains(&clean, needle), "{:?} must be gone", String::from_utf8_lossy(needle));
+        }
+        // Still a valid PDF, and the strip is deterministic (stable ETag).
+        assert!(lopdf::Document::load_mem(&clean).is_ok());
+        assert_eq!(strip_pdf(&bytes).unwrap(), clean);
+    }
+
+    #[test]
+    fn strip_pdf_fails_closed() {
+        // Unparseable bytes are withheld, never passed through.
+        assert!(strip_pdf(b"%PDF-1.4 not really a pdf").is_none());
+        // An encrypted PDF is withheld: we cannot see what we would serve.
+        use lopdf::{dictionary, Object};
+        let mut doc = lopdf::Document::load_mem(&pdf_with_metadata()).unwrap();
+        let enc_id = doc.add_object(dictionary! {"Filter" => "Standard"});
+        doc.trailer.set("Encrypt", Object::Reference(enc_id));
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        assert!(strip_pdf(&bytes).is_none());
+    }
+
+    #[test]
+    fn pdf_verification_rejects_unstripped_output() {
+        // The independent re-check must flag the fixture as dirty, pass the
+        // stripped result, and treat unparseable bytes as NOT clean.
+        assert!(!pdf_is_clean(&pdf_with_metadata()));
+        assert!(pdf_is_clean(&strip_pdf(&pdf_with_metadata()).unwrap()));
+        assert!(!pdf_is_clean(b"not a pdf"));
+    }
+
+    #[test]
+    fn verification_gate_withholds_metadata_bearing_output() {
+        // A minimal TIFF whose one IFD entry is Make ("Cam") — sensitive
+        // metadata the strip should never let through. If the strip pipeline
+        // ever *did* emit something like this, the verification gate is the
+        // last line: it must withhold, not serve.
+        let tiff: Vec<u8> = vec![
+            b'I', b'I', 0x2A, 0x00, // little-endian TIFF magic
+            0x08, 0, 0, 0, // IFD0 at offset 8
+            0x01, 0x00, // one entry
+            0x0F, 0x01, // tag 0x010F (Make)
+            0x02, 0x00, // type ASCII
+            0x04, 0, 0, 0, // count 4 (fits inline)
+            b'C', b'a', b'm', 0, // "Cam\0"
+            0, 0, 0, 0, // no next IFD
+        ];
+        assert!(has_sensitive_metadata(&tiff));
+        assert!(matches!(verified_ready(tiff, "image/tiff"), Prepared::Withheld));
+        // A clean image passes the gate.
+        assert!(matches!(verified_ready(tiny_jpeg(), "image/jpeg"), Prepared::Ready { .. }));
     }
 
     #[test]

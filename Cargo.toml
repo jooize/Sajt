@@ -1,6 +1,6 @@
 [package]
 name = "esko-bar"
-version = "0.18.0"
+version = "0.19.0"
 edition = "2024"
 
 [dependencies]
@@ -34,3 +34,4 @@ kamadak-exif = "0.6"
 # a runaway decode of an attacker-controlled image, on top of the wall-clock
 # timeout). Unix only; the code is `#[cfg(unix)]`-gated.
 libc = "0.2"
+lopdf = { version = "0.44.0", default-features = false }

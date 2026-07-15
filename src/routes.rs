@@ -419,6 +419,9 @@ async fn try_asset(
             let is_original = file_serves_original(&canon_file);
             return Some(serve_image(bytes, ext, is_original, thumb, cache_dir).await);
         }
+        crate::media::Disposition::Pdf => {
+            return Some(serve_pdf(bytes, file_serves_original(&canon_file), &canon_file));
+        }
         crate::media::Disposition::Withhold => {
             if !file_serves_original(&canon_file) {
                 return Some(metadata_withheld());
@@ -880,6 +883,9 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool, cache_dir: &std::path::Path
             let is_original = file_serves_original(&entry.path);
             return serve_image(content, &entry.extension, is_original, false, cache_dir).await;
         }
+        crate::media::Disposition::Pdf => {
+            return serve_pdf(content, file_serves_original(&entry.path), &entry.path);
+        }
         crate::media::Disposition::Withhold => {
             if !file_serves_original(&entry.path) {
                 return metadata_withheld();
@@ -923,6 +929,24 @@ fn file_serves_original(path: &std::path::Path) -> bool {
         .any(crate::tags::Tag::is_original)
 }
 
+/// Serve a PDF with its document metadata stripped (`media::strip_pdf`), or the
+/// exact bytes when the author's per-file `public-original` tag says so. A PDF
+/// that cannot be verify-cleaned (encrypted, unparseable) is withheld — the
+/// same fail-closed rule as every other format.
+fn serve_pdf(bytes: Vec<u8>, is_original: bool, path: &std::path::Path) -> Response {
+    if is_original {
+        tracing::warn!(
+            "Serving {} exact bytes (public-original) — any embedded metadata is published",
+            path.display()
+        );
+        return clean_bytes_response(bytes, "application/pdf");
+    }
+    match crate::media::strip_pdf(&bytes) {
+        Some(clean) => clean_bytes_response(clean, "application/pdf"),
+        None => metadata_withheld(),
+    }
+}
+
 async fn serve_image(
     bytes: Vec<u8>,
     ext: &str,
@@ -936,23 +960,24 @@ async fn serve_image(
     let prepared = if thumb {
         crate::media::thumbnail(ext, &bytes, cache_dir).await
     } else if is_original {
-        return image_bytes_response(bytes, &raw_content_type(ext));
+        return clean_bytes_response(bytes, &raw_content_type(ext));
     } else {
         crate::media::prepare(ext, &bytes, cache_dir).await
     };
     match prepared {
         crate::media::Prepared::Ready { bytes, content_type } => {
-            image_bytes_response(bytes, content_type)
+            clean_bytes_response(bytes, content_type)
         }
         crate::media::Prepared::Withheld => metadata_withheld(),
     }
 }
 
-/// Build the HTTP response for prepared image bytes: a strong ETag derived from
-/// the *served* bytes (so it changes iff the served image changes) and a
-/// revalidatable cache window. The strip is deterministic, so identical source
-/// bytes always yield the same ETag.
-fn image_bytes_response(bytes: Vec<u8>, content_type: &str) -> Response {
+/// Build the HTTP response for verify-cleaned bytes (a stripped image or PDF,
+/// or an author-opted exact original): a strong ETag derived from the *served*
+/// bytes (so it changes iff the served bytes change) and a revalidatable cache
+/// window. The strips are deterministic, so identical source bytes always
+/// yield the same ETag.
+fn clean_bytes_response(bytes: Vec<u8>, content_type: &str) -> Response {
     let etag = format!("\"{}\"", crate::media::content_hash(&bytes));
     Response::builder()
         .status(StatusCode::OK)
