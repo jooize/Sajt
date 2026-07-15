@@ -130,6 +130,16 @@ its inner primary tagged), and `link.*` cite destinations (the published URL
 is that file's content). Nothing untagged is ever served, with no exceptions
 to remember.
 
+**What the folder's own tag publishes (decided 2026-07-15):** tagging an
+object publishes *that object's own* metadata — its name (the URL), its date
+(marker or mtime), and its **Finder comment** — never its children's content.
+So a comment on a public folder is served as the post description (know this:
+Finder doesn't show comments at tag time — check Get Info before tagging).
+Comments on files *inside* a folder are never read on any code path: a
+description is either metadata on the tagged post object (folder comment) or
+content excerpted from inside a file (first paragraph / H1 — served only with
+that file's own `public` tag). There is no third channel.
+
 **Access to `private` entries — ideas (PROPOSED, for later):**
 - **Passkeys (WebAuthn)** — the native answer: no passwords, synced by
   iCloud Keychain, phishing-resistant. A tiny allowlist of enrolled passkeys
