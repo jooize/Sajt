@@ -14,6 +14,14 @@ exist only where they *are* the content (bundles).
 
 Tagline: **"Tag it `public` — it's published."**
 
+What the tag means (DECIDED 2026-07-15, v0.22.0): **the `public` tag on an
+object publishes everything that belongs to that object — metadata and
+contents — and nothing it merely contains.** Tag a file → its name, date,
+and insides are published. Tag a folder → the folder's name (the URL), date,
+and Finder comment are published, plus the fact that a post exists; every
+file inside is a separate object needing its own tag. No exceptions — see
+"Visibility" below.
+
 - Cool URIs don't change: URLs contain only labels and dates, never
   technology. Renames redirect (301); removals answer 410 Gone, not 404.
 - Fail closed: nothing is published by accident. Security over convenience,

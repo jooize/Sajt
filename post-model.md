@@ -432,9 +432,11 @@ Decisions folded in:
   Untagged assets keep serving at `/label/file.ext` as part of a public post
   (inline images need no tagging) — they just never appear in any generated
   list.~~ **Amended (2026-07-08 strict gate; extended 2026-07-15, v0.22.0):**
-  `public` on a file means *served* — one rule, no exceptions. The folder tag
-  makes the post reachable; only the file's own `public` tag serves its
-  content. This covers assets (an untagged inline `<img>` 404s until tagged),
+  `public` on a file means *served* — one rule, no exceptions. The tag on an
+  object publishes everything that belongs to that object — metadata and
+  contents — and nothing it merely contains: the folder tag makes the post
+  reachable (name, date, comment); only the file's own `public` tag serves
+  its content. This covers assets (an untagged inline `<img>` 404s until tagged),
   **the primary itself** (untagged primary → the post demotes to a listing of
   its public files, withheld count visible, loud log), the listing intro
   document, ` copy [n]` revision snapshots (a folder copy needs the copy
