@@ -47,7 +47,8 @@ date-named unlabeled posts, `kind` as *medium* (`note`→`text`, dotless files,
 `link.*` sidecars, direct-out rows, retires `.link`), families keyed by base
 name (orphan promotion), slug-collision dropdowns, folder **listings** via an
 `index/` marker with allowlist-by-`public`-tag membership, a tiered outbound
-scheme guard, and default EXIF stripping with an `original` opt-in.
+scheme guard, and the file-privacy boundary (allowlist classification, metadata
+stripping, the `<visibility>[-original]` exact-bytes escape).
 (`/hello-world`). This supersedes the timestamp-prefix filename convention,
 birthtime dates, and the `.id`/UUID identity plan:
 
@@ -100,6 +101,9 @@ state in which something private goes live without a deliberate tagging act.
   area. Until that exists, `private` entries are simply never served.
 - **`personal` tag** = descriptive, orthogonal to visibility (an entry can be
   personal+public).
+- **`-original` suffix** composes with any visibility tier
+  (`public-original`): serve this file's **exact bytes**, bypassing the
+  file-privacy boundary's stripping — see "The file-privacy boundary" below.
 - Unpublishing (tag removed after being live) answers **410 Gone**.
 
 **SHIPPED 2026-07-08 (`post-model.md` §6 + [review]) — the gate is now
@@ -220,87 +224,163 @@ tree** (see cache location below); the content folder is the source of truth,
 opened read-only. The index still records which labels were once public so
 unpublishing can answer **410 Gone** vs **404** after deletion.
 
-### Media privacy — metadata stripping
+### The file-privacy boundary — what a served byte may contain
 
-**DECIDED 2026-07-03: strip on the fly, never touch originals.** Served
-images are cleaned at request time; the files on disk keep their EXIF forever.
-What gets removed: EXIF (GPS, serial numbers, owner name), IPTC, XMP, JPEG
-comments, PNG text chunks, and the embedded EXIF thumbnail (which can hold the
-un-cropped original). Color profiles (ICC) and orientation are preserved
-(orientation is re-emitted as a canonical tag, never lost). **Fail closed: a
-format the stripper cannot confidently clean is not served raw** — it renders
-through the viewer or is refused (HTTP 415), never leaked with metadata intact.
+**REWRITTEN 2026-07-15 (v0.18.0–v0.21.0; supersedes the image-only "media
+privacy" section).** The boundary grew from "strip images" into one serve-time
+rule for *every* file: **nothing is served unless we can say why it is safe** —
+an allowlist, not a denylist. Originals on disk are never touched; cleaning
+happens at request time.
 
-**SHIPPED — C8a (2026-07-09), the surgical segment strip.** For JPEG/PNG/WebP
-the clean is a *container-level segment strip*, not a re-encode: `img-parts`
-drops the metadata-bearing segments while the compressed pixel data stays
-byte-identical and the ICC `APP2`/`iCCP` survives (verified: served pixels
-hash-equal to source, GPS/camera/comment gone, ICC + orientation kept). The
-orientation tag is read with `kamadak-exif` (a parser that returns errors,
-never panics, on the attacker-controlled EXIF) and re-emitted as a fixed
-26-byte orientation-only EXIF — so the output is **deterministic** and the
-strong ETag / content hash over the stripped bytes stays stable. The cheap,
-deterministic strip is recomputed per request (the client caches via that
-content-hash ETag); the expensive **transcode and thumbnail** paths (C8b/C8c)
-disk-cache their output out-of-tree, keyed by source content hash.
+**Threat model in one line: strip what the author can't see (EXIF, XMP,
+document info, editor traces), keep what they can (the filename, the visible
+date, the pixels and prose they chose to publish).** An author publishing
+`mountain.heic` saw the mountain; they did not see the GPS fix, the camera
+serial, or the editor's record of their home directory. Code failure or human
+error must never leak those.
 
-**`original` opt-in (post-model.md §8, supersedes the 2026-07-04 "unreachable
-by construction" absolute).** An author may tag a file `original` to publish
-the exact bytes, EXIF and all — the "host an exact image file" case. So the
-guarantee is now: *every served content-tree image is stripped unless the
-author explicitly tagged it `original`.* A prominent, non-dismissing "metadata
-removed for privacy" notice on every stripped image page names the opt-out.
+#### The allowlist (`media::classify`)
 
-**Route guarantee.** Content-tree image bytes leave the server through exactly
-two functions — `serve_raw_bytes` (a bare-file / folder primary) and
-`try_asset` (an in-folder gallery/attachment asset). Both gate every image
-extension through `serve_image`, which strips-or-withholds (except `original`);
-there is no third path (archived revisions render the current entry's already
-stripped URL, not raw revision bytes). Out of scope here: `serve_embed_asset`
-(the out-of-tree remote-media embed cache, a separate subsystem) and
-`serve_static` (operator-owned `static/` assets).
+Every content-tree byte that would leave the server as a file is classified
+first. The default arm is **Withhold** — a format nobody thought about is an
+HTTP 415, not a leak.
 
-**SHIPPED — C8b (2026-07-09), the transcode path.** Formats we cannot
-segment-strip (HEIC/HEIF/AVIF via libheif, TIFF, GIF) are transcoded to a clean
-JPEG by **libvips run as a subprocess** — decode + re-encode keeping the source
-ICC and baking in orientation, then the resulting JPEG is run back through the
-C8a segment strip to drop the EXIF/GPS libvips carried through (so color is
-preserved but location is not). Output is disk-cached out-of-tree under
-`<cache_dir>/media`, keyed by source content hash, so the subprocess runs once
-per unique image. Isolation: local file input only (no network), one worker
-thread, a 25 s wall-clock timeout with kill-on-drop, a concurrency limiter, and
-an RLIMIT_CPU backstop. **libvips bundles an ImageMagick fallback loader; we set
-`VIPS_BLOCK_UNTRUSTED=1` to refuse it** (and the other loaders libvips flags
-untrusted, JXL/JP2K) — untrusted images decode only through vetted native
-loaders, so ImageMagick's hostile-image RCE history never applies. The
-ImageMagick-only tail (BMP) is therefore withheld, fail-closed, not decoded by
-untrusted code. Verified: HEIC/TIFF with GPS → served as a clean JPEG (GPS gone,
-valid image, cache hit on re-request); BMP → 415.
+| Class | Formats | Treatment |
+|---|---|---|
+| Raster image | JPEG, PNG, WebP | Surgical **segment strip** in pure Rust (`img-parts`): pixels stay byte-identical, ICC and a canonical re-emitted orientation tag are kept; EXIF/XMP/IPTC, comments, text chunks, embedded preview thumbnails (EXIF + `JFXX`), and MPF second images are gone. Deterministic output → stable content-hash ETag; recomputed per request (cheap). |
+| Raster image, hard containers | HEIC/HEIF/AVIF, TIFF, GIF; JPEGs with post-EOI trailers (Motion Photo / MPF); mislabeled images caught by content sniff | **Transcode to a clean JPEG** by libvips in an OS sandbox (below), then that JPEG runs back through the segment strip (libvips carries source EXIF through; color survives, location does not). Disk-cached out of tree, keyed by source content hash. |
+| PDF | `.pdf`, or `%PDF-` magic under any extension | `strip_pdf` (lopdf): drops `/Info` (author/tool/dates), every XMP `/Metadata` stream, `/PieceInfo`; re-serialization from the object table also drops **incremental-update shadow history** (a PDF edited in place keeps its old metadata bytes, invisible but recoverable). Encrypted or unparseable → withheld. |
+| SVG | `.svg` | `strip_svg` (quick-xml streaming rewrite): `<metadata>` subtrees, foreign-namespace elements/attributes **and their `xmlns` bindings** (the URI alone fingerprints tooling — `sodipodi:docname` carries real filesystem paths), comments, processing instructions, `<script>`, `on*`/`javascript:` all removed; `DOCTYPE` → withhold; embedded base64 raster `data:` URIs are decoded, run through the image strip, re-embedded — uncleanable payload withholds the whole file. `<title>`/`<desc>` kept (accessibility). |
+| Readable text | Valid UTF-8, no control characters beyond tab/newline/CR | Served raw: every byte is visible in any editor, so there is nothing invisible to strip. (Plain "valid UTF-8" is not the test — ZIP framing can decode as UTF-8; the control-character rule is what makes it *readable*.) |
+| Everything else | Video, camera RAW, audio, Office, archives, fonts, UTF-16 text, unknown binaries | **Withheld (415).** The 415 page names the escape hatch below. |
 
-**SHIPPED — C8c (2026-07-09), gallery thumbnails.** A gallery tile's `<img>`
-loads a small `?thumb` rendition: libvips resizes to a 600 px long edge and the
-result is run through the same clean-JPEG pipeline (strip the EXIF, keep the ICC)
-and cached out-of-tree under its own key (`THUMB_TAG`). Thumbnails always strip,
-even for an `original`-tagged file — a tile is a derived preview, and the exact
-bytes stay at the asset's non-`?thumb` URL. Verified: a 1600x1200 gallery photo
-serves as a clean 600x450 tile (~6x smaller) with GPS gone.
+Ordering matters: metadata-heavy media extensions are withheld *before* the
+image gate (camera RAW `.dng` is TIFF-structured and would otherwise sniff as
+an image), and PDF/SVG are caught *before* the text gate (their bytes can be
+pure ASCII while the metadata hides behind the rendered view).
 
-**Adversarial-review hardening (2026-07-11).** A second-pass review closed two
-confirmed GPS-leak paths and a panic: (1) a JPEG carrying data after its primary
-EOI — a Multi-Picture-Format second full-resolution image or a Motion-Photo MP4,
-each with its own GPS — would have survived the segment strip (img-parts
-re-emits post-scan bytes verbatim); such files are now detected by walking the
-JPEG marker structure to the primary EOI and routed to the transcode (a single
-clean re-encoded frame, no trailer). (2) The strip gate keyed on `is_image_ext`,
-whose list missed the `.tif`/`.jpe`/`.jfif` alias spellings, so those served raw
-with full EXIF — `normalize_ext` now folds the aliases so the gate and the strip
-dispatch agree. (3) A pathological JPEG stripping to a near-empty segment list
-could panic `set_exif`; it is guarded, and a `CatchPanic` layer now turns any
-handler panic into a clean 500. Also: a `JFXX` preview thumbnail in `APP0` is now
-dropped (same leak class as the EXIF thumbnail).
+#### Tag grammar: `<visibility>[-original]`
 
-The image work (C8) is complete for stills. **Still to build:** video
-(QuickTime/MP4 location atoms) remains a future format, not yet handled.
+Visibility tags gate publication (`public` today; `private` reserved — see
+"Visibility" above). The **`-original` suffix composes with any visibility
+tier**: a file tagged `public-original` is served as its **exact bytes** —
+EXIF, XMP, trailers and all. It is the author's *universal*, per-file escape
+hatch: it applies to every class in the table, including withheld formats
+(video, archives — "host this exact file" is a legitimate wish). A future
+secret-link tier would compose as `unlisted-original` without new machinery.
+
+Safety around the escape: both serving choke points honor it identically; the
+server logs a warning at serve time; stripped image pages carry a prominent,
+non-dismissing "metadata removed for privacy" notice naming the opt-out; and an
+`-original` image page warns **only when there is actually something to leak**
+(GPS/camera/timestamp present) — an inverted, meaningful warning instead of
+boilerplate.
+
+#### Verify gates — the strip trusts nothing, including itself
+
+Every cleaning path re-checks its **own output** before serving: images are
+re-read with `kamadak-exif` (an independent parser from the `img-parts` code
+that produced them), PDFs with `pdf_is_clean` (re-parse; assert every stripped
+channel is gone), SVGs with `svg_is_clean` (re-parse; assert no dropped
+construct remains, embedded rasters re-verified). Dirty *or unparseable*
+output → loud error and withhold. A logic bug in a strip becomes a 415, never
+a leak.
+
+#### The sandboxed transcode (v0.21.0, 2026-07-15)
+
+libvips decodes attacker-controlled bytes, so the subprocess is OS-confined —
+a decoder exploit reads pixels, not files:
+
+- **Per-job scratch directory** `<cache>/media/.tx.<key>.<n>/` holds the input
+  copy and the output JPEG: the only writable path in the sandbox, and (input
+  inside it) the only file tree read beyond the system. Deleted, untrusted
+  input included, the moment the job ends; a startup sweep clears anything a
+  killed process stranded.
+- **macOS: `sandbox-exec`** with a deny-default Seatbelt profile. Finding: a
+  `(deny default)` child aborts inside dyld on modern macOS unless the profile
+  imports Apple's `dyld-support.sb`; with it the allow list is just
+  `/nix/store` (read+exec), `/System`, `/dev`, and the scratch. Live-verified
+  (macOS 26.5): HEIC transcodes; reading outside the scratch, writing outside
+  the scratch, and HTTPS egress are all denied.
+- **Linux: `bwrap`** — `--unshare-all` (no network) `--die-with-parent`
+  `--new-session` `--clearenv`, read-only system binds, scratch mounted at
+  `/scratch` as the only writable mount. Command assembly is unit-tested;
+  live verification still needs a Linux host.
+- **Fail-closed policy:** no sandbox tooling → transcodes are refused
+  (affected formats withheld, 415) with a loud startup warning;
+  `--unsandboxed-transcode` is the explicit operator opt-out. An available
+  sandbox always wins — the flag cannot disable one — and an uninitialized
+  mode reads as disabled, so nothing ever transcodes unconfined by accident.
+- **Decoder hygiene, independent of the sandbox:** `VIPS_BLOCK_UNTRUSTED=1`
+  refuses libvips's bundled ImageMagick fallback loader (its hostile-image RCE
+  history is why we never shell out to ImageMagick) and the other loaders vips
+  flags untrusted — so the ImageMagick-only tail (BMP, JXL, JP2K) is withheld,
+  not decoded by untrusted code. One worker thread, a 25 s timeout with
+  kill-on-drop, an RLIMIT_CPU backstop, a concurrency limiter.
+- **Pre-decode megapixel cap:** declared dimensions are read with a pure-Rust
+  header parse (`imagesize`) and anything over **100 MP** — or whose
+  dimensions cannot be read at all — is withheld before libvips runs
+  (decompression-bomb defense; an iPhone panorama is ~63 MP).
+
+Thumbnails (`?thumb`, 600 px gallery tiles) ride the same pipeline and always
+strip, even for `-original` files — a tile is a derived preview; the exact
+bytes stay at the non-`?thumb` URL.
+
+#### Route guarantee — two choke points
+
+Content-tree bytes leave the server through exactly two functions:
+`serve_raw_bytes` (a bare-file / folder primary) and `try_asset` (an in-folder
+gallery/attachment asset). Both run `classify()` and match its `Disposition`
+enum **exhaustively** — adding a class forces both call sites to handle it at
+compile time. There is no third path: archived revisions render the current
+entry's stripped URL, not raw revision bytes; the grader's `/_raw` route is a
+separate localhost-only authoring tool showing authors their own bytes;
+`serve_embed_asset` is the out-of-tree remote embed cache (residual below);
+`serve_static` serves operator-owned assets.
+
+#### Shipped history
+
+C8a segment strip + `original` opt-in (2026-07-09, v0.13.0); C8b vips
+transcode (v0.14.0); C8c thumbnails (v0.15.0); adversarial-review fixes
+(2026-07-11, v0.15.1: MPF/Motion-Photo trailer walk to the primary EOI,
+`.tif`/`.jpe`/`.jfif` alias gap, `set_exif` panic guard + `CatchPanic` layer,
+`JFXX` drop); class-boundary fail-close for video/RAW/audio (v0.16.0);
+`public-original` + inverted EXIF warning (v0.17.0); the full allowlist
+boundary (2026-07-15, v0.18.0); PDF strip + verify gates (v0.19.0); SVG strip
+(v0.20.0); sandboxed transcode + MP cap + temp sweep (v0.21.0).
+
+#### Honest residuals (accepted or deferred, in the open)
+
+- The image verify gate reads EXIF-class metadata (`kamadak-exif`), not XMP —
+  a hypothetical strip bug that left *only* XMP behind would pass it. (Both
+  strip paths do drop XMP; the gate is a narrower backstop than the strip.)
+- `pdf_is_clean` re-parses with the same library (lopdf) that wrote the output:
+  it catches our logic bugs, not a lopdf serialization blind spot. The SVG
+  gate's embedded-raster check *does* use an independent parser.
+- Nothing mechanical stops a future third serving path from skipping
+  `classify()` — the exhaustive-match protection covers the two existing call
+  sites; the route guarantee is held by convention and review.
+- The readable-text gate withholds UTF-16/legacy-encoding text files (we
+  cannot cheaply prove the author read what we would serve).
+- GIF→JPEG transcode kills animation; a clean animated path would need a
+  GIF-specific comment/extension strip.
+- `Cache-Control: max-age=3600` on image bytes = up to one hour of un-publish
+  latency at clients/proxies.
+- **Embed-cache images are not stripped** (`serve_embed_asset`): remote
+  og:image/oEmbed media cached at fetch time — a separate subsystem; routing
+  it through `prepare()` would make "every served image passed one strip gate"
+  literally true. Deferred.
+- quick-xml 0.38 (pulled by `plist`, itself latest) has two DoS-class
+  advisories; its input here is local xattr plists, not attacker bytes. Our
+  SVG strip uses quick-xml 0.41 side by side.
+- The Seatbelt profile allows exec only from `/nix/store` — a non-Nix vips
+  (e.g. Homebrew) will not run under it. The deploy contract is the Nix
+  devshell; a failure is loud, not silent.
+- `bwrap` isolation is unit-tested but not yet live-verified on Linux.
+- Habit worth keeping: run `cargo audit` periodically (or in CI) — the strip
+  crates parse attacker-controlled bytes by design.
+- Video stays withheld (no ffmpeg path yet); `public-original` serves exact
+  bytes when the author explicitly chooses.
 
 ## URL scheme
 
@@ -768,7 +848,8 @@ Publishing hygiene (PROPOSED, accepted in spirit 2026-07-03):
 - **404 with suggestions** — fuzzy-match against public labels.
 
 Privacy & safety:
-- **Metadata stripping on the fly** — DECIDED, see Media privacy above.
+- **Metadata stripping on the fly** — SHIPPED, see "The file-privacy
+  boundary" above.
 - **Zero third-party requests** for readers, ever — embeds are already
   cached and served locally; enforce with a Content-Security-Policy header.
 - **Security headers** throughout (CSP, HSTS, X-Content-Type-Options).
