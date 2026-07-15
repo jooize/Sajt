@@ -76,13 +76,15 @@ pub fn strip(ext: &str, bytes: &[u8]) -> StripOutcome {
 pub enum Disposition {
     /// A raster image: strip or transcode before serving.
     Image,
-    /// Media that routinely embeds location/camera metadata but that we have no
-    /// cleaning path for yet (video, RAW, location audio). Withheld, never served
-    /// raw — the fail-closed boundary the whole feature promises applies to
-    /// *files*, not just to the still-image formats we happen to clean.
+    /// A file we cannot verify-clean: withheld, never served raw. This is the
+    /// fail-closed *default* — the boundary is an allowlist (cleaned images,
+    /// author-readable text), not a denylist of known-bad formats, so a format
+    /// nobody thought about is a 415, not a leak. The author's per-file
+    /// `public-original` tag is the universal escape: it serves the exact bytes
+    /// of any withheld format, on the author's explicit say-so.
     Withhold,
-    /// Carries no invisible location/camera metadata that we strip (text,
-    /// markdown, PDF, ...): serve as-is.
+    /// Author-readable text (valid UTF-8): every byte is visible in any editor,
+    /// so there is nothing invisible to strip. Served as-is.
     Raw,
 }
 
@@ -137,10 +139,17 @@ fn sniff(bytes: &[u8]) -> Option<Disposition> {
     None
 }
 
-/// Decide how a file is served at the privacy gate. Order matters: a known
-/// metadata-bearing media extension is withheld first (so a RAW `.dng` never
-/// reaches the image path via its TIFF magic); then declared images; then a
-/// content sniff catches mislabeled photos/videos; anything else is served raw.
+/// Decide how a file is served at the privacy gate. The boundary is an
+/// **allowlist**: only what we can clean (raster images) or what the author can
+/// fully read (UTF-8 text) is served by default; everything else — video, RAW,
+/// PDF, SVG, Office documents, archives, and every format nobody listed — is
+/// withheld until it has a cleaning path (PDF and SVG strips are next), with the
+/// per-file `public-original` tag as the author's exact-bytes escape.
+///
+/// Order matters: a known metadata-bearing media extension is withheld first (so
+/// a RAW `.dng` never reaches the image path via its TIFF magic); then declared
+/// images; then a content sniff catches mislabeled photos/videos; then the text
+/// gate; the default is Withhold, never raw.
 pub fn classify(ext: &str, bytes: &[u8]) -> Disposition {
     if is_withheld_media_ext(ext) {
         return Disposition::Withhold;
@@ -148,7 +157,38 @@ pub fn classify(ext: &str, bytes: &[u8]) -> Disposition {
     if crate::entry::is_image_ext(ext) {
         return Disposition::Image;
     }
-    sniff(bytes).unwrap_or(Disposition::Raw)
+    if let Some(d) = sniff(bytes) {
+        return d;
+    }
+    // PDF and SVG carry metadata that is invisible in the *rendered* view (XMP
+    // author/tool info, editor filesystem paths) even though the bytes may be
+    // valid UTF-8 — they must not slip through the text gate. Each gets a
+    // dedicated strip path; until it lands they are withheld.
+    if crate::entry::normalize_ext(ext) == "pdf"
+        || crate::entry::normalize_ext(ext) == "svg"
+        || bytes.starts_with(b"%PDF-")
+    {
+        return Disposition::Withhold;
+    }
+    // Author-readable text: every byte visible in an editor — nothing invisible
+    // to strip. (UTF-16/legacy encodings are withheld: we cannot cheaply prove
+    // they are what the author read.)
+    if is_readable_text(bytes) {
+        return Disposition::Raw;
+    }
+    Disposition::Withhold
+}
+
+/// Whether bytes are text an author has actually *seen*: valid UTF-8 with no
+/// control characters beyond tab/newline/CR. Plain "valid UTF-8" is not enough —
+/// a ZIP local-file header or any binary framing that stays under 0x80 decodes
+/// fine but is not readable text, and readability is the entire justification
+/// for serving the bytes unstripped.
+fn is_readable_text(bytes: &[u8]) -> bool {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => !s.chars().any(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r')),
+        Err(_) => false,
+    }
 }
 
 // --- JPEG -------------------------------------------------------------------
@@ -750,9 +790,26 @@ mod tests {
         let mut heic = vec![0, 0, 0, 0x18];
         heic.extend_from_slice(b"ftypheic____");
         assert!(matches!(classify("bin", &heic), Disposition::Image));
-        // Ordinary text/docs are served raw.
+        // Author-readable UTF-8 text is served raw.
         assert!(matches!(classify("txt", b"just some text here"), Disposition::Raw));
-        assert!(matches!(classify("pdf", b"%PDF-1.7 ....."), Disposition::Raw));
+        assert!(matches!(classify("md", "unicode är fine ✓".as_bytes()), Disposition::Raw));
+        assert!(matches!(classify("", b"README body"), Disposition::Raw));
+
+        // PDF and SVG hide metadata behind the rendered view — withheld until
+        // their strip paths land, even when the bytes are pure ASCII, and even
+        // under a lying extension (PDF magic).
+        assert!(matches!(classify("pdf", b"%PDF-1.7 ....."), Disposition::Withhold));
+        assert!(matches!(classify("txt", b"%PDF-1.4 disguised"), Disposition::Withhold));
+        assert!(matches!(classify("svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>"), Disposition::Withhold));
+
+        // The default is fail-closed: unknown binary formats (Office, archives,
+        // fonts, anything nobody listed) are withheld, never served raw.
+        assert!(matches!(classify("zip", b"PK\x03\x04\x14\x00\x00\x00\x00\x00etc"), Disposition::Withhold));
+        assert!(matches!(classify("docx", b"PK\x03\x04\x14\x00\x00\x00\x08\x00etc"), Disposition::Withhold));
+        assert!(matches!(classify("bin", &[0u8, 159, 146, 150, 7, 8, 9, 250, 251, 252, 253, 254]), Disposition::Withhold));
+        // Non-UTF-8 text encodings cannot be cheaply proven author-readable.
+        let utf16 = [0xFF, 0xFE, b'h', 0, b'i', 0, b' ', 0, b't', 0, b'x', 0, b't', 0];
+        assert!(matches!(classify("txt", &utf16), Disposition::Withhold));
     }
 
     #[test]

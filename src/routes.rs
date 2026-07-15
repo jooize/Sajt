@@ -410,14 +410,24 @@ async fn try_asset(
         return Some(sandbox_html_response(bytes, embed, document_content_type(ext)));
     }
     // In-folder assets go through the same privacy gate as a primary (post-model.md
-    // §8): images stripped/transcoded, un-cleanable media withheld, the rest raw.
-    // The `original` opt-in is per file here, read from the asset's own tags.
+    // §8): images stripped/transcoded, author-readable text raw, everything else
+    // withheld. The `public-original` opt-in is per file here, read from the
+    // asset's own tags; on a withheld format it is the universal exact-bytes
+    // escape (the author explicitly publishes whatever the file embeds).
     match crate::media::classify(ext, &bytes) {
         crate::media::Disposition::Image => {
             let is_original = file_serves_original(&canon_file);
             return Some(serve_image(bytes, ext, is_original, thumb, cache_dir).await);
         }
-        crate::media::Disposition::Withhold => return Some(metadata_withheld()),
+        crate::media::Disposition::Withhold => {
+            if !file_serves_original(&canon_file) {
+                return Some(metadata_withheld());
+            }
+            tracing::warn!(
+                "Serving {} exact bytes (public-original) — any embedded metadata is published",
+                canon_file.display()
+            );
+        }
         crate::media::Disposition::Raw => {}
     }
     let mime = raw_content_type(ext);
@@ -860,17 +870,25 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool, cache_dir: &std::path::Path
         return sandbox_html_response(content, embed, document_content_type(&entry.extension));
     }
 
-    // Privacy gate (post-model.md §8): an image is stripped/transcoded (unless the
-    // author opted into the exact bytes); metadata-bearing media we cannot clean
-    // yet (video/RAW/audio) is withheld, never served raw; everything else serves
-    // as-is. SVG is not an `is_image_ext` raster — it serves raw, jailed by the
-    // CSP middleware (its risk is script, not EXIF).
+    // Privacy gate (post-model.md §8): an image is stripped/transcoded (unless
+    // the author opted into the exact bytes); author-readable UTF-8 text serves
+    // as-is; every other format is withheld — the boundary is an allowlist, so a
+    // format nobody listed is a 415, never a metadata leak. The per-file
+    // `public-original` tag serves the exact bytes of any withheld format.
     match crate::media::classify(&entry.extension, &content) {
         crate::media::Disposition::Image => {
             let is_original = file_serves_original(&entry.path);
             return serve_image(content, &entry.extension, is_original, false, cache_dir).await;
         }
-        crate::media::Disposition::Withhold => return metadata_withheld(),
+        crate::media::Disposition::Withhold => {
+            if !file_serves_original(&entry.path) {
+                return metadata_withheld();
+            }
+            tracing::warn!(
+                "Serving {} exact bytes (public-original) — any embedded metadata is published",
+                entry.path.display()
+            );
+        }
         crate::media::Disposition::Raw => {}
     }
 
@@ -949,16 +967,19 @@ fn image_bytes_response(bytes: Vec<u8>, content_type: &str) -> Response {
         .unwrap_or_else(|_| not_found())
 }
 
-/// Fail-closed response when an image's metadata cannot be removed (an
-/// unsupported format still awaiting the transcode path, or corrupt bytes). The
-/// image page still renders with its "metadata removed" notice; only the pixels
-/// are withheld, so nothing unstripped is ever served.
+/// Fail-closed response when a file cannot be verify-cleaned (a format without a
+/// strip path, or corrupt bytes). The page around it still renders; only the
+/// bytes are withheld, so nothing with unvetted embedded metadata is ever
+/// served. The message names the per-file opt-out so the author knows the way
+/// through, without revealing anything to a reader beyond "not served".
 fn metadata_withheld() -> Response {
     Response::builder()
         .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
         .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
         .body(Body::from(
-            "Withheld for privacy: this file's embedded metadata cannot be removed yet.\n",
+            "Withheld for privacy: this file may embed metadata (location, device, author) \
+             that cannot be verified or removed. The site owner can publish its exact bytes \
+             by tagging the file public-original.\n",
         ))
         .unwrap_or_else(|_| not_found())
 }
