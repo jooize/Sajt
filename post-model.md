@@ -216,9 +216,19 @@ frontmatter). It is orthogonal to `kind`: a post *has a destination* or not.
   `link.md`, `link.txt`, `link.text`. This is how a *commentary* post gets a
   destination: the primary is your writing, the sidecar is the target.
 
-Resolution: a file that resolves to a URL **drops out of primary candidacy** and
-becomes the destination (the way date/`alias` markers are set aside). In the
-common case (`commentary.md` + `link.md`) that's unambiguous by content. The
+**Amended (2026-07-15, v0.23.0) — cite candidacy is intent-carried, never
+content-sniffed.** Inside a folder post, a file may claim the cite only when
+the *format* or the *name* says so: a bookmark format (`.webloc`/`.url`) is a
+URL by construction, so any name qualifies (drag a Safari bookmark in, it
+cites, no rename); a general text file qualifies only when its stem is
+`link`. A `notes.txt` whose content happens to be one URL stays an ordinary
+attachment — editing a file's contents, or adding a second URL-file beside
+it, never changes another file's role. (Bare-file posts at the top level are
+exempt: there the file *is* the post, so the single-URL predicate only
+changes its own rendering to a link card — no other file's meaning moves.)
+
+Resolution: a qualifying file **drops out of primary candidacy** and
+becomes the destination (the way date/`alias` markers are set aside). The
 stem `link` (like `index` for primary) is the explicit marker and the
 tie-break. **More than one destination with no tie-break** never guesses —
 but it demotes rather than erroring, matching the primary-collision rule

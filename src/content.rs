@@ -786,6 +786,20 @@ fn read_dot_url(path: &Path) -> Option<String> {
 /// one token** — a title line plus a URL is a note-with-a-link, not a link. The
 /// destination must pass the scheme guard as an `http(s)` URL; anything else
 /// (`javascript:`, a bare word, …) is not a link, so the file stays ordinary.
+/// Whether a non-primary folder file may claim the post's cite. Intent must be
+/// carried by the format or the name, never inferred from content alone: a
+/// bookmark format (.webloc/.url) *is* a URL by construction, so it always
+/// qualifies; a general text file qualifies only when its stem is `link`. This
+/// keeps a file's role stable — editing `notes.txt` down to a single URL, or
+/// adding a second URL-file next to it, never changes what either file means.
+/// (Bare-file posts at the top level are exempt: there the file is the whole
+/// post, so single-URL content only changes its own rendering, no other file's
+/// role — see `build_bare_post`.)
+fn cite_candidate(stem: &str, ext: &str) -> bool {
+    matches!(crate::entry::normalize_ext(ext).as_str(), "webloc" | "url")
+        || stem.eq_ignore_ascii_case("link")
+}
+
 fn resolve_link_destination(path: &Path, ext: &str) -> Option<String> {
     let url = match crate::entry::normalize_ext(ext).as_str() {
         "webloc" => read_webloc_url(path)?,
@@ -1015,10 +1029,14 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         mtime: primary_child.mtime,
     };
 
-    // Outbound destination (post-model.md §4): a `link.*` sidecar, or any
-    // non-primary file whose whole content is one URL, drops out of the file set
-    // and becomes the post's cite. The per-file rule applies here too — the cite
-    // publishes the file's content (the URL), so an untagged URL-file is no
+    // Outbound destination (post-model.md §4): a bookmark or a `link.*` text
+    // sidecar drops out of the file set and becomes the post's cite. Candidacy
+    // is intent-carried, never content-sniffed (`cite_candidate`): a bookmark
+    // format (.webloc/.url) is a URL by construction, so any name qualifies —
+    // dragging a Safari bookmark in cites without a rename; a general text file
+    // qualifies only when its stem is `link`, so editing a note down to one URL
+    // never silently changes its role. The per-file rule applies here too — the
+    // cite publishes the file's content (the URL), so an untagged URL-file is no
     // destination; it stays withheld like any other untagged sibling. The stem
     // `link` is the explicit tie-break; several destinations with no single
     // `link.*` never guess — emit no cite, log loudly (the files then stay
@@ -1028,6 +1046,9 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         .filter(|f| f.path != primary_child.path && file_is_public(&f.path))
         .filter_map(|f| {
             let (_, ext) = split_name(&f.name);
+            if !cite_candidate(&f.stem, ext) {
+                return None;
+            }
             resolve_link_destination(&f.path, ext).map(|u| (f, u))
         })
         .collect();
@@ -2345,6 +2366,53 @@ mod tests {
             e.attachments.iter().all(|a| a.name != "link.webloc"),
             "the cited destination is not also listed as an attachment"
         );
+    }
+
+    #[test]
+    fn cite_intent_is_format_or_name_never_content() {
+        // A bookmark format cites under any name (the format is the intent);
+        // a general text file holding one URL does NOT cite unless named
+        // `link` — it stays an ordinary attachment (role never content-sniffed).
+        let t = TmpDir::new();
+        touch(t.path(), "roads/roads.md", "# Roads\n\ncommentary");
+        touch(t.path(), "roads/Road Diets - NYT.webloc", &webloc("https://nytimes.com/road-diets"));
+        touch(t.path(), "cafes/cafes.md", "# Cafes\n\ncommentary");
+        touch(t.path(), "cafes/source.txt", "https://example.com/cafes");
+        if !set_tags(&t.path().join("roads/roads.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        assert!(set_tags(&t.path().join("roads/Road Diets - NYT.webloc"), &["public"]));
+        assert!(set_tags(&t.path().join("cafes/cafes.md"), &["public"]));
+        assert!(set_tags(&t.path().join("cafes/source.txt"), &["public"]));
+        let entries = scan_entries(t.path()).unwrap();
+
+        let roads = find(&entries, "roads");
+        assert_eq!(roads.link_url.as_deref(), Some("https://nytimes.com/road-diets"));
+        assert!(roads.attachments.iter().all(|a| !a.name.ends_with(".webloc")));
+
+        let cafes = find(&entries, "cafes");
+        assert!(cafes.link_url.is_none(), "a text file only cites when named `link`");
+        assert!(
+            cafes.attachments.iter().any(|a| a.name == "source.txt"),
+            "the URL-holding text file stays an ordinary attachment"
+        );
+    }
+
+    #[test]
+    fn link_named_text_file_cites() {
+        // `link.txt` (and `link.text` via normalize_ext) carries the intent in
+        // the name, so it cites like a bookmark would.
+        let t = TmpDir::new();
+        touch(t.path(), "narrow/narrow.md", "# Narrow\n\ncommentary");
+        touch(t.path(), "narrow/link.txt", "https://example.com/article");
+        if !set_tags(&t.path().join("narrow/narrow.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        assert!(set_tags(&t.path().join("narrow/link.txt"), &["public"]));
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "narrow");
+        assert_eq!(e.link_url.as_deref(), Some("https://example.com/article"));
+        assert!(e.attachments.iter().all(|a| a.name != "link.txt"));
     }
 
     // ── date-named posts & future-hold ──

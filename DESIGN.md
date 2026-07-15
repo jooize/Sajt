@@ -513,7 +513,14 @@ A post's outbound destination is orthogonal to its `kind`. The scanner resolves
 from a `.webloc`/`.url` bookmark, a text file whose **entire** content is a single
 URL, or a folder's `link.*` sidecar; anything else — a `javascript:` target, a
 title line *plus* a URL — is refused and the file stays an ordinary post (fail
-closed, no clickable link). Two shapes follow:
+closed, no clickable link). **Amended 2026-07-15 (v0.23.0): inside a folder,
+cite candidacy is intent-carried, never content-sniffed** — a bookmark format
+(`.webloc`/`.url`) qualifies under any name (the format is the intent), a
+general text file only when its stem is `link`; a `notes.txt` that happens to
+hold one URL stays an ordinary attachment, so content edits never change a
+file's role. Bare-file posts at the top level keep the single-URL predicate
+(the file is the whole post — only its own rendering changes). Two shapes
+follow:
 - **The post IS the link** (`kind() == "link"`: a bare bookmark / single-URL
   text) — its body is the rich embed card; its timeline row is the destination's
   own headline (a labeled bookmark keeps *our* label linking to *our* page and
