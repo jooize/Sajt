@@ -924,6 +924,16 @@ main > article > aside[data-notice] > code {
   font-size: .95em; padding: .05em .35em; border-radius: .25rem;
   background: color-mix(in oklab, var(--violet) 16%, transparent); color: var(--ink);
 }
+/* Danger variant: a public-original image that actually publishes GPS/camera
+   metadata. The safe state is quiet; this one shouts — a warm red rule/tint and
+   a heavier weight so it reads as a live warning in light and dark. */
+main > article > aside[data-notice="danger"] {
+  background: color-mix(in oklab, #e5484d 14%, transparent);
+  border-left-color: #e5484d; color: var(--ink); font-weight: 550;
+}
+main > article > aside[data-notice="danger"] > code {
+  background: color-mix(in oklab, #e5484d 22%, transparent);
+}
 
 /* ---------- Pandoc Skylighting: kate (light) + breezedark (dark) ---------- */
 :root {
@@ -3299,17 +3309,29 @@ fn kind_badge(ext: &str) -> (String, &'static str) {
     (label, category)
 }
 
-/// Render an image viewer page.
-/// The non-dismissing "metadata removed" note shown under a stripped image
-/// (`post-model.md` §8, and the project rule that privacy notices stay visible
-/// until the author acts). Explains what was removed and how to opt out.
+/// The quiet, non-dismissing "metadata removed" note shown under a stripped
+/// image (`post-model.md` §8, and the project rule that privacy notices stay
+/// visible until the author acts). Explains what was removed and how to opt out.
 fn metadata_notice() -> String {
-    r#"<aside data-notice="privacy">Location and camera metadata were removed for privacy. Add the <code>original</code> tag to the file to publish it unchanged.</aside>"#.to_string()
+    r#"<aside data-notice="privacy">Location and camera metadata were removed for privacy. Add the <code>public-original</code> tag to the file to publish it unchanged.</aside>"#.to_string()
 }
 
+/// The LOUD, non-dismissing warning shown under a `public-original` image that
+/// actually carries embedded metadata: the *dangerous* state (publishing EXIF)
+/// must shout, not the safe one (the project rule that security warnings display
+/// prominently until the author acts). Names the concrete leak and the fix.
+fn metadata_publish_warning() -> String {
+    r#"<aside data-notice="danger">This image publishes its embedded metadata &mdash; location (GPS), camera, and capture time are visible to anyone. Remove the <code>public-original</code> tag to strip them.</aside>"#.to_string()
+}
+
+/// Render an image viewer page. `is_original` is the per-file exact-bytes opt-in;
+/// `publishes_metadata` is set only when that image actually carries sensitive
+/// EXIF (so the warning fires on real leaks, not on a clean original).
 pub fn image_page(
     entry: &Entry,
     _mime: &str,
+    is_original: bool,
+    publishes_metadata: bool,
     all_entries: &[&Entry],
     next: Option<&Entry>,
 ) -> String {
@@ -3325,14 +3347,17 @@ pub fn image_page(
     let canon_href = canonical_href(entry, all_entries);
     let src = canonical_raw_href(entry, all_entries);
 
-    // Unless the author opted into the exact file (`original` tag), the served
-    // bytes have had their location/camera metadata stripped (post-model.md §8) —
-    // say so prominently and never auto-dismiss. The footer link then offers the
-    // "full size" stripped image rather than an "original" (which it no longer is).
-    let (notice, raw_label) = if entry.is_original() {
-        (String::new(), "original")
-    } else {
+    // Three states (post-model.md §8): a stripped image carries the quiet
+    // "metadata removed" note; a `public-original` image that actually embeds
+    // GPS/camera data carries the LOUD publish warning; a clean original needs
+    // neither. The footer link offers the "full size" stripped image, or the
+    // "original" exact bytes when that is what is served.
+    let (notice, raw_label) = if !is_original {
         (metadata_notice(), "full size")
+    } else if publishes_metadata {
+        (metadata_publish_warning(), "original")
+    } else {
+        (String::new(), "original")
     };
 
     let body = format!(

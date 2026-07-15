@@ -15,12 +15,22 @@ pub struct Tag {
 
 impl Tag {
     /// The `public` visibility tag — the allow half of the fail-closed gate.
+    /// `public-original` is a `public` that also publishes the exact bytes, so it
+    /// counts as public for visibility (post-model.md §8).
     pub fn is_public(&self) -> bool {
         self.name.eq_ignore_ascii_case("public")
+            || self.name.eq_ignore_ascii_case("public-original")
     }
     /// The `private` visibility tag — the deny half; it wins over `public`.
     pub fn is_private(&self) -> bool {
         self.name.eq_ignore_ascii_case("private")
+    }
+    /// The `public-original` tag: publish this image with its embedded metadata
+    /// intact (EXIF/GPS and all) — the author's explicit opt-out of the strip.
+    /// Compound-with-`public` on purpose: there is no dangling "original" whose
+    /// visibility is ambiguous, and the name states the publish consequence.
+    pub fn is_original(&self) -> bool {
+        self.name.eq_ignore_ascii_case("public-original")
     }
 }
 

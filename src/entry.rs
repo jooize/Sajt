@@ -6,7 +6,7 @@ use std::path::PathBuf;
 /// Tags the site treats as machinery, not topics — never shown in the cloud or
 /// the row rail. `favorite` drives the ★; `public`/`private` drive visibility.
 pub fn is_reserved_tag(name: &str) -> bool {
-    matches!(name.to_ascii_lowercase().as_str(), "public" | "private" | "favorite" | "original")
+    matches!(name.to_ascii_lowercase().as_str(), "public" | "private" | "favorite" | "public-original")
 }
 
 /// The Finder duplicate keyword. Finder writes it only in English ("copy"); the
@@ -197,14 +197,6 @@ impl Entry {
     /// Whether the author marked this entry a favorite (the `favorite` tag → ★).
     pub fn is_favorite(&self) -> bool {
         self.tags.iter().any(|t| t.name.eq_ignore_ascii_case("favorite"))
-    }
-
-    /// Whether the author opted this file into serving the exact original bytes,
-    /// EXIF and all (the `original` tag). When set, the image metadata strip is
-    /// bypassed — the "host an exact image file" case (`post-model.md` §8). See
-    /// [`crate::media`].
-    pub fn is_original(&self) -> bool {
-        self.tags.iter().any(|t| t.name.eq_ignore_ascii_case("original"))
     }
 
     /// Whether the post carries the `public` tag at its own (post) level.

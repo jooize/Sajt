@@ -414,9 +414,7 @@ async fn try_asset(
     // The `original` opt-in is per file here, read from the asset's own tags.
     match crate::media::classify(ext, &bytes) {
         crate::media::Disposition::Image => {
-            let is_original = crate::tags::read_tags_colored(&canon_file)
-                .iter()
-                .any(|t| t.name.eq_ignore_ascii_case("original"));
+            let is_original = file_serves_original(&canon_file);
             return Some(serve_image(bytes, ext, is_original, thumb, cache_dir).await);
         }
         crate::media::Disposition::Withhold => return Some(metadata_withheld()),
@@ -804,7 +802,19 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
             Html(templates::entry_page(entry, &card_html, &all, next)).into_response()
         }
         Ok(RenderedContent::Image { mime }) => {
-            Html(templates::image_page(entry, &mime, &all, next)).into_response()
+            // The exact-bytes opt-in is per file; the loud "publishes your
+            // location/camera metadata" warning fires only when an `original`
+            // image actually carries something sensitive to leak.
+            let is_original = file_serves_original(&entry.path);
+            let publishes_metadata = is_original && crate::media::has_sensitive_metadata(&content);
+            if publishes_metadata {
+                tracing::warn!(
+                    "Serving {} with embedded metadata intact (public-original tag)",
+                    entry.path.display()
+                );
+            }
+            Html(templates::image_page(entry, &mime, is_original, publishes_metadata, &all, next))
+                .into_response()
         }
         Ok(RenderedContent::Download { .. }) => {
             serve_raw_bytes(entry, false, &store.cache_dir).await
@@ -857,7 +867,8 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool, cache_dir: &std::path::Path
     // CSP middleware (its risk is script, not EXIF).
     match crate::media::classify(&entry.extension, &content) {
         crate::media::Disposition::Image => {
-            return serve_image(content, &entry.extension, entry.is_original(), false, cache_dir).await;
+            let is_original = file_serves_original(&entry.path);
+            return serve_image(content, &entry.extension, is_original, false, cache_dir).await;
         }
         crate::media::Disposition::Withhold => return metadata_withheld(),
         crate::media::Disposition::Raw => {}
@@ -885,6 +896,15 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool, cache_dir: &std::path::Path
 /// bypasses the strip and serves the exact source bytes. A format we cannot yet
 /// clean, or one that fails to parse, is withheld — fail closed, never a silent
 /// raw fallback that would leak the metadata we mean to remove.
+/// Whether the exact-bytes opt-in applies to *this specific file* — read from
+/// the file's own Finder tags, never inherited from a parent folder (post-model.md
+/// §8). A tag that re-exposes embedded GPS must never cascade.
+fn file_serves_original(path: &std::path::Path) -> bool {
+    crate::tags::read_tags_colored(path)
+        .iter()
+        .any(crate::tags::Tag::is_original)
+}
+
 async fn serve_image(
     bytes: Vec<u8>,
     ext: &str,

@@ -571,6 +571,26 @@ fn apply_rlimits(cmd: &mut std::process::Command) {
 #[cfg(not(unix))]
 fn apply_rlimits(_cmd: &mut std::process::Command) {}
 
+/// Whether an image carries embedded metadata a viewer would consider sensitive —
+/// GPS coordinates, camera make/model, or the original capture timestamp. Used to
+/// decide whether a `public-original` image needs the loud "this publishes your
+/// location/camera metadata" warning (post-model.md §8): the warning fires only
+/// when there is actually something to leak. Reads the whole container (JPEG,
+/// TIFF, PNG, WebP, HEIF), never panics on malformed input.
+pub fn has_sensitive_metadata(bytes: &[u8]) -> bool {
+    let mut cursor = std::io::Cursor::new(bytes);
+    match exif::Reader::new().read_from_container(&mut cursor) {
+        Ok(exif) => {
+            exif.get_field(exif::Tag::GPSLatitude, exif::In::PRIMARY).is_some()
+                || exif.get_field(exif::Tag::GPSLongitude, exif::In::PRIMARY).is_some()
+                || exif.get_field(exif::Tag::Make, exif::In::PRIMARY).is_some()
+                || exif.get_field(exif::Tag::Model, exif::In::PRIMARY).is_some()
+                || exif.get_field(exif::Tag::DateTimeOriginal, exif::In::PRIMARY).is_some()
+        }
+        Err(_) => false,
+    }
+}
+
 /// Read the EXIF orientation tag (1–8) from a raw TIFF/EXIF block. Uses the
 /// kamadak-exif parser, which returns an error (never panics) on malformed input —
 /// important because the block is attacker-controlled. Returns `None` when EXIF is
