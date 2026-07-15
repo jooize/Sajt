@@ -422,6 +422,9 @@ async fn try_asset(
         crate::media::Disposition::Pdf => {
             return Some(serve_pdf(bytes, file_serves_original(&canon_file), &canon_file));
         }
+        crate::media::Disposition::Svg => {
+            return Some(serve_svg(bytes, file_serves_original(&canon_file), &canon_file));
+        }
         crate::media::Disposition::Withhold => {
             if !file_serves_original(&canon_file) {
                 return Some(metadata_withheld());
@@ -886,6 +889,9 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool, cache_dir: &std::path::Path
         crate::media::Disposition::Pdf => {
             return serve_pdf(content, file_serves_original(&entry.path), &entry.path);
         }
+        crate::media::Disposition::Svg => {
+            return serve_svg(content, file_serves_original(&entry.path), &entry.path);
+        }
         crate::media::Disposition::Withhold => {
             if !file_serves_original(&entry.path) {
                 return metadata_withheld();
@@ -943,6 +949,25 @@ fn serve_pdf(bytes: Vec<u8>, is_original: bool, path: &std::path::Path) -> Respo
     }
     match crate::media::strip_pdf(&bytes) {
         Some(clean) => clean_bytes_response(clean, "application/pdf"),
+        None => metadata_withheld(),
+    }
+}
+
+/// Serve an SVG with its metadata stripped (`media::strip_svg`), or the exact
+/// bytes on the author's per-file `public-original` tag. Either way the
+/// response is `image/svg+xml`, which the security middleware hard-jails
+/// (`sandbox; default-src 'none'`) — the strip handles the metadata in the
+/// bytes; the CSP handles script when the SVG is opened as a document.
+fn serve_svg(bytes: Vec<u8>, is_original: bool, path: &std::path::Path) -> Response {
+    if is_original {
+        tracing::warn!(
+            "Serving {} exact bytes (public-original) — any embedded metadata is published",
+            path.display()
+        );
+        return clean_bytes_response(bytes, "image/svg+xml");
+    }
+    match crate::media::strip_svg(&bytes) {
+        Some(clean) => clean_bytes_response(clean, "image/svg+xml"),
         None => metadata_withheld(),
     }
 }

@@ -79,6 +79,9 @@ pub enum Disposition {
     /// A PDF: its `/Info`/XMP document metadata is stripped ([`strip_pdf`])
     /// before serving; unparseable or encrypted ones are withheld.
     Pdf,
+    /// An SVG: rewritten without its metadata ([`strip_svg`]) before serving;
+    /// unparseable ones (or uncleanable embedded rasters) are withheld.
+    Svg,
     /// A file we cannot verify-clean: withheld, never served raw. This is the
     /// fail-closed *default* — the boundary is an allowlist (cleaned images,
     /// author-readable text), not a denylist of known-bad formats, so a format
@@ -165,13 +168,13 @@ pub fn classify(ext: &str, bytes: &[u8]) -> Disposition {
     }
     // PDF and SVG carry metadata that is invisible in the *rendered* view (XMP
     // author/tool info, editor filesystem paths) even though the bytes may be
-    // valid UTF-8 — they must not slip through the text gate. PDF has its strip
-    // path; SVG's lands next (withheld until then).
+    // valid UTF-8 — they must not slip through the text gate; each has its own
+    // strip path.
     if crate::entry::normalize_ext(ext) == "pdf" || bytes.starts_with(b"%PDF-") {
         return Disposition::Pdf;
     }
     if crate::entry::normalize_ext(ext) == "svg" {
-        return Disposition::Withhold;
+        return Disposition::Svg;
     }
     // Author-readable text: every byte visible in an editor — nothing invisible
     // to strip. (UTF-16/legacy encodings are withheld: we cannot cheaply prove
@@ -492,6 +495,311 @@ fn pdf_is_clean(bytes: &[u8]) -> bool {
             && dict.get(b"PieceInfo").is_err()
             && !matches!(dict.get(b"Type"), Ok(lopdf::Object::Name(n)) if n == b"Metadata")
     })
+}
+
+// --- SVG ----------------------------------------------------------------------
+
+/// Namespaces whose elements and attributes are part of the image itself and
+/// survive the strip. Everything else — Dublin Core (`dc:creator`), RDF/CC
+/// license blocks, and the editor namespaces (`sodipodi:docname` and
+/// `inkscape:export-filename` carry the author's real filesystem paths) — is
+/// dropped.
+const SVG_KEEP_NAMESPACES: &[&[u8]] = &[
+    b"http://www.w3.org/2000/svg",
+    b"http://www.w3.org/1999/xlink",
+    b"http://www.w3.org/XML/1998/namespace",
+];
+
+/// SVG-namespace elements dropped with their whole subtree: `metadata` is the
+/// standard metadata container (RDF/Dublin Core — creator, license, tool);
+/// `script` never belongs in a served image (the CSP already jails it — this is
+/// defense in depth, not the primary control). `title`/`desc` are deliberately
+/// *kept*: they are accessibility content, read out by screen readers.
+const SVG_DROP_LOCAL: &[&[u8]] = &[b"metadata", b"script"];
+
+/// Strip an SVG's metadata for serving: a streaming XML rewrite (quick-xml)
+/// that copies the document through verbatim except for what it removes —
+/// `<metadata>` subtrees, elements and attributes in non-SVG namespaces,
+/// comments, processing instructions, `<script>` subtrees and `on*`/
+/// `javascript:` attributes. A `<image>` embedding a raster as a base64 `data:`
+/// URI is decoded and run through the raster [`strip`] (an embedded JPEG can
+/// carry a full EXIF/GPS payload); a payload we cannot verify-clean withholds
+/// the whole file.
+///
+/// Fail closed: any parse error, a `DOCTYPE` (entity machinery we will not
+/// interpret), a non-UTF-8 document, or an uncleanable embedded image returns
+/// `None` and the caller withholds. Because we only ever *remove* well-formed
+/// events, well-formed input stays well-formed. Output is deterministic.
+pub fn strip_svg(bytes: &[u8]) -> Option<Vec<u8>> {
+    use quick_xml::events::{BytesStart, Event};
+
+    // Non-UTF-8 documents are withheld outright (quick-xml would otherwise
+    // decode per the XML declaration; we never serve what we cannot read).
+    if std::str::from_utf8(bytes).is_err() {
+        tracing::warn!("SVG withheld: not UTF-8");
+        return None;
+    }
+
+    let mut reader = quick_xml::NsReader::from_reader(bytes);
+    let mut writer = quick_xml::Writer::new(Vec::with_capacity(bytes.len()));
+    let mut skip_depth = 0usize; // inside a dropped subtree when > 0
+
+    loop {
+        let event = match reader.read_resolved_event() {
+            Ok((_, Event::Eof)) => break,
+            Ok((resolved, event)) => {
+                // Everything below decides whether this event survives.
+                match &event {
+                    Event::DocType(_) => {
+                        tracing::warn!("SVG withheld: DOCTYPE (entity definitions) present");
+                        return None;
+                    }
+                    Event::Comment(_) | Event::PI(_) => continue, // metadata channels
+                    Event::Start(e) | Event::Empty(e) => {
+                        if skip_depth > 0 {
+                            if matches!(event, Event::Start(_)) {
+                                skip_depth += 1;
+                            }
+                            continue;
+                        }
+                        if svg_element_dropped(&resolved, e.local_name().as_ref()) {
+                            if matches!(event, Event::Start(_)) {
+                                skip_depth = 1;
+                            }
+                            continue;
+                        }
+                        // Rebuild the tag with only the surviving attributes.
+                        let mut clean =
+                            BytesStart::new(String::from_utf8_lossy(e.name().as_ref()).into_owned());
+                        for attr in e.attributes() {
+                            let attr = match attr {
+                                Ok(a) => a,
+                                Err(e) => {
+                                    tracing::warn!("SVG withheld: bad attribute ({e})");
+                                    return None;
+                                }
+                            };
+                            let key = attr.key;
+                            // Namespace declarations: keep only bindings to the
+                            // allowed namespaces. A leftover xmlns:inkscape or
+                            // xmlns:sodipodi is unused after the strip, and the
+                            // URI alone fingerprints the author's tooling.
+                            if key.as_namespace_binding().is_some() {
+                                let uri = attr.decode_and_unescape_value(reader.decoder()).ok()?;
+                                if SVG_KEEP_NAMESPACES.contains(&uri.as_bytes()) {
+                                    clean.push_attribute((
+                                        String::from_utf8_lossy(key.as_ref()).into_owned().as_str(),
+                                        uri.as_ref(),
+                                    ));
+                                }
+                                continue;
+                            }
+                            let (ns, local) = reader.resolver().resolve_attribute(key);
+                            // Foreign-namespace attributes are metadata
+                            // (sodipodi:docname, inkscape:export-filename, ...).
+                            if let quick_xml::name::ResolveResult::Bound(n) = &ns {
+                                if !SVG_KEEP_NAMESPACES.contains(&n.as_ref()) {
+                                    continue;
+                                }
+                            }
+                            // Event handlers never survive (defense in depth
+                            // under the CSP jail).
+                            if local.as_ref().to_ascii_lowercase().starts_with(b"on") {
+                                continue;
+                            }
+                            let value = attr.decode_and_unescape_value(reader.decoder()).ok()?;
+                            // href / xlink:href: refuse script URLs; clean
+                            // embedded raster data URIs through the image strip.
+                            let value = if local.as_ref() == b"href" {
+                                match clean_svg_href(&value) {
+                                    SvgHref::Keep => value.into_owned(),
+                                    SvgHref::Replace(v) => v,
+                                    SvgHref::Drop => continue,
+                                    SvgHref::WithholdFile => {
+                                        tracing::warn!(
+                                            "SVG withheld: embedded data: image cannot be verify-cleaned"
+                                        );
+                                        return None;
+                                    }
+                                }
+                            } else {
+                                value.into_owned()
+                            };
+                            clean.push_attribute((
+                                String::from_utf8_lossy(key.as_ref()).into_owned().as_str(),
+                                value.as_str(),
+                            ));
+                        }
+                        if matches!(event, Event::Start(_)) {
+                            Event::Start(clean)
+                        } else {
+                            Event::Empty(clean)
+                        }
+                    }
+                    Event::End(_) => {
+                        if skip_depth > 0 {
+                            skip_depth -= 1;
+                            continue;
+                        }
+                        event
+                    }
+                    _ => {
+                        if skip_depth > 0 {
+                            continue;
+                        }
+                        event
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("SVG withheld: parse failed ({e})");
+                return None;
+            }
+        };
+        writer.write_event(event).ok()?;
+    }
+
+    let out = writer.into_inner();
+    if !svg_is_clean(&out) {
+        tracing::error!("SVG withheld: strip verification failed — output still carries metadata");
+        return None;
+    }
+    Some(out)
+}
+
+/// Whether an element (with its subtree) is dropped: foreign-namespace elements
+/// (RDF, Dublin Core, sodipodi, inkscape) and the SVG-namespace drop list.
+fn svg_element_dropped(ns: &quick_xml::name::ResolveResult, local: &[u8]) -> bool {
+    if let quick_xml::name::ResolveResult::Bound(n) = ns {
+        if !SVG_KEEP_NAMESPACES.contains(&n.as_ref()) {
+            return true;
+        }
+    }
+    SVG_DROP_LOCAL.contains(&local)
+}
+
+enum SvgHref {
+    /// Keep the value as-is (relative path, http(s) — the CSP jail governs it).
+    Keep,
+    /// Replace with this cleaned value (a data: raster, re-encoded stripped).
+    Replace(String),
+    /// Drop the attribute (script URL).
+    Drop,
+    /// The embedded payload cannot be verify-cleaned: withhold the whole file.
+    WithholdFile,
+}
+
+/// Decide what happens to an `href`/`xlink:href` value. A base64 `data:` raster
+/// is decoded, run through the raster [`strip`], and re-embedded; any data: URI
+/// we cannot verify-clean (non-base64, a format without a pure-Rust strip, or a
+/// failing strip) withholds the whole SVG — fail closed, an embedded HEIC/GIF
+/// is rare but its GPS is as real as anyone's.
+fn clean_svg_href(value: &str) -> SvgHref {
+    use base64::Engine;
+    let lower = value.trim_start().to_ascii_lowercase();
+    if lower.starts_with("javascript:") || lower.starts_with("vbscript:") {
+        return SvgHref::Drop;
+    }
+    if !lower.starts_with("data:") {
+        return SvgHref::Keep;
+    }
+    // data:<mediatype>;base64,<payload> — only base64 rasters we can strip.
+    let (kind, ext) = if lower.starts_with("data:image/jpeg;base64,") {
+        ("data:image/jpeg;base64,", "jpg")
+    } else if lower.starts_with("data:image/png;base64,") {
+        ("data:image/png;base64,", "png")
+    } else if lower.starts_with("data:image/webp;base64,") {
+        ("data:image/webp;base64,", "webp")
+    } else {
+        return SvgHref::WithholdFile;
+    };
+    let payload = &value[kind.len()..];
+    let decoded = match base64::engine::general_purpose::STANDARD.decode(payload.trim()) {
+        Ok(d) => d,
+        Err(_) => return SvgHref::WithholdFile,
+    };
+    match strip(ext, &decoded) {
+        StripOutcome::Clean { bytes, .. } => SvgHref::Replace(format!(
+            "{kind}{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        )),
+        _ => SvgHref::WithholdFile,
+    }
+}
+
+/// Post-strip verification: parse the stripped output fresh and assert nothing
+/// the strip removes is still present — no DOCTYPE/comments/PIs, no foreign-
+/// namespace or dropped elements, no foreign-namespace or `on*` attributes, no
+/// script URLs, and every remaining `data:` href both decodes and carries no
+/// sensitive metadata (checked with kamadak-exif, an independent parser from
+/// the one that cleaned it). Unparseable output is not clean.
+fn svg_is_clean(bytes: &[u8]) -> bool {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::NsReader::from_reader(bytes);
+    loop {
+        match reader.read_resolved_event() {
+            Ok((_, Event::Eof)) => return true,
+            Ok((_, Event::DocType(_) | Event::Comment(_) | Event::PI(_))) => return false,
+            Ok((resolved, Event::Start(e) | Event::Empty(e))) => {
+                if svg_element_dropped(&resolved, e.local_name().as_ref()) {
+                    return false;
+                }
+                for attr in e.attributes() {
+                    let attr = match attr {
+                        Ok(a) => a,
+                        Err(_) => return false,
+                    };
+                    if attr.key.as_namespace_binding().is_some() {
+                        // Only bindings to allowed namespaces may remain.
+                        match attr.decode_and_unescape_value(reader.decoder()) {
+                            Ok(uri) if SVG_KEEP_NAMESPACES.contains(&uri.as_bytes()) => continue,
+                            _ => return false,
+                        }
+                    }
+                    let (ns, local) = reader.resolver().resolve_attribute(attr.key);
+                    if let quick_xml::name::ResolveResult::Bound(n) = &ns {
+                        if !SVG_KEEP_NAMESPACES.contains(&n.as_ref()) {
+                            return false;
+                        }
+                    }
+                    if local.as_ref().to_ascii_lowercase().starts_with(b"on") {
+                        return false;
+                    }
+                    if local.as_ref() == b"href" {
+                        let value = match attr.decode_and_unescape_value(reader.decoder()) {
+                            Ok(v) => v,
+                            Err(_) => return false,
+                        };
+                        if !svg_href_is_clean(&value) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(_) => return false,
+        }
+    }
+}
+
+/// The verifier's independent judgment of one href value.
+fn svg_href_is_clean(value: &str) -> bool {
+    use base64::Engine;
+    let lower = value.trim_start().to_ascii_lowercase();
+    if lower.starts_with("javascript:") || lower.starts_with("vbscript:") {
+        return false;
+    }
+    if !lower.starts_with("data:") {
+        return true;
+    }
+    let Some(comma) = value.find(',') else { return false };
+    if !lower[..comma + 1].ends_with(";base64,") {
+        return false;
+    }
+    match base64::engine::general_purpose::STANDARD.decode(value[comma + 1..].trim()) {
+        Ok(decoded) => !has_sensitive_metadata(&decoded),
+        Err(_) => false,
+    }
 }
 
 // --- shared helpers ---------------------------------------------------------
@@ -923,7 +1231,7 @@ mod tests {
         // lying extension, by magic); SVG is withheld until its strip lands.
         assert!(matches!(classify("pdf", b"%PDF-1.7 ....."), Disposition::Pdf));
         assert!(matches!(classify("txt", b"%PDF-1.4 disguised"), Disposition::Pdf));
-        assert!(matches!(classify("svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>"), Disposition::Withhold));
+        assert!(matches!(classify("svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>"), Disposition::Svg));
 
         // The default is fail-closed: unknown binary formats (Office, archives,
         // fonts, anything nobody listed) are withheld, never served raw.
@@ -1013,6 +1321,104 @@ mod tests {
         let mut bytes = Vec::new();
         doc.save_to(&mut bytes).unwrap();
         assert!(strip_pdf(&bytes).is_none());
+    }
+
+    /// An Inkscape-flavored SVG exercising every leak channel the strip covers:
+    /// editor-namespace attributes with filesystem paths, a `<metadata>` RDF
+    /// block with the creator, editor-namespace elements, comments, a script,
+    /// and an event handler.
+    fn inkscape_svg() -> String {
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<!-- Made with SecretEditor on Tilde's laptop -->
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     xmlns:dc="http://purl.org/dc/elements/1.1/"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.0.dtd"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     width="100" height="100"
+     sodipodi:docname="/Users/tilde/Secret Projects/logo-final.svg"
+     inkscape:export-filename="/Users/tilde/Desktop/secret-export.png">
+  <sodipodi:namedview inkscape:window-width="1728"/>
+  <metadata><rdf:RDF><dc:creator>Tilde Secret</dc:creator></rdf:RDF></metadata>
+  <title>A circle</title>
+  <script>alert('x')</script>
+  <circle cx="50" cy="50" r="40" fill="#a123f6" onclick="alert('y')"/>
+</svg>"##
+            .to_string()
+    }
+
+    #[test]
+    fn strip_svg_removes_every_metadata_channel() {
+        let src = inkscape_svg();
+        let clean = strip_svg(src.as_bytes()).expect("well-formed SVG strips");
+        let clean_str = String::from_utf8(clean.clone()).unwrap();
+        for leak in [
+            "Secret Projects", "secret-export", "Tilde Secret", "SecretEditor",
+            "sodipodi", "inkscape", "namedview", "purl.org", "rdf-syntax",
+            "<metadata", "<script", "onclick",
+        ] {
+            assert!(!clean_str.contains(leak), "{leak:?} must be gone:\n{clean_str}");
+        }
+        // The image itself survives: the circle, its styling, the accessible title.
+        for kept in ["<circle", "cx=\"50\"", "fill=\"#a123f6\"", "<title>A circle</title>", "width=\"100\""] {
+            assert!(clean_str.contains(kept), "{kept:?} must survive:\n{clean_str}");
+        }
+        // Deterministic, still well-formed, and verified clean by the checker.
+        assert_eq!(strip_svg(src.as_bytes()).unwrap(), clean);
+        assert!(svg_is_clean(&clean));
+        assert!(!svg_is_clean(src.as_bytes()));
+    }
+
+    #[test]
+    fn strip_svg_fails_closed() {
+        // Unparseable, DOCTYPE-carrying (entity machinery), and non-UTF-8
+        // documents are all withheld.
+        assert!(strip_svg(b"<svg><unclosed").is_none());
+        assert!(strip_svg(b"<?xml version=\"1.0\"?><!DOCTYPE svg [<!ENTITY x \"y\">]><svg/>").is_none());
+        assert!(strip_svg(&[0xFF, 0xFE, 0x3C, 0x00]).is_none());
+        // An embedded data: URI in a format we cannot pure-Rust-strip (GIF)
+        // withholds the whole file rather than passing the payload through.
+        let gif = "<svg xmlns=\"http://www.w3.org/2000/svg\"><image href=\"data:image/gif;base64,R0lGODlh\"/></svg>";
+        assert!(strip_svg(gif.as_bytes()).is_none());
+        // javascript: hrefs are dropped (the file still serves).
+        let js = "<svg xmlns=\"http://www.w3.org/2000/svg\"><a href=\"javascript:alert(1)\"><text>x</text></a></svg>";
+        let clean = String::from_utf8(strip_svg(js.as_bytes()).unwrap()).unwrap();
+        assert!(!clean.contains("javascript"));
+    }
+
+    #[test]
+    fn strip_svg_cleans_embedded_raster_data_uris() {
+        use base64::Engine;
+        // Build a JPEG carrying sensitive EXIF (Make), embed it as a data: URI,
+        // and check the strip re-embeds a cleaned version of it.
+        let mut jpeg = Vec::new();
+        jpeg.extend_from_slice(&[0xFF, 0xD8]); // SOI
+        let tiff = {
+            let mut t = vec![
+                b'I', b'I', 0x2A, 0x00, 0x08, 0, 0, 0, 0x01, 0x00,
+                0x0F, 0x01, 0x02, 0x00, 0x04, 0, 0, 0, b'C', b'a', b'm', 0,
+            ];
+            t.extend_from_slice(&[0, 0, 0, 0]);
+            t
+        };
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.extend_from_slice(&tiff);
+        let len = (app1.len() + 2) as u16;
+        jpeg.extend_from_slice(&[0xFF, 0xE1]);
+        jpeg.extend_from_slice(&len.to_be_bytes());
+        jpeg.extend_from_slice(&app1);
+        jpeg.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02, 0x11, 0x22, 0xFF, 0xD9]);
+        assert!(has_sensitive_metadata(&jpeg), "fixture must carry EXIF Make");
+
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg);
+        let svg = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><image href=\"data:image/jpeg;base64,{b64}\"/></svg>"
+        );
+        let clean = String::from_utf8(strip_svg(svg.as_bytes()).unwrap()).unwrap();
+        let embedded = clean.split("base64,").nth(1).unwrap().split('"').next().unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD.decode(embedded).unwrap();
+        assert!(!has_sensitive_metadata(&decoded), "embedded raster must be cleaned");
     }
 
     #[test]
