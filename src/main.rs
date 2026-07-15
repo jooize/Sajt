@@ -47,6 +47,13 @@ struct Args {
     #[arg(long, default_value_t = 24)]
     embed_check_hours: u64,
 
+    /// Allow image transcodes to run WITHOUT an OS sandbox when none is
+    /// available (sandbox-exec on macOS, bwrap on Linux). The default is
+    /// fail-closed: with no sandbox tooling, formats that need a transcode
+    /// (HEIC/TIFF/GIF/...) are withheld rather than decoded unconfined.
+    #[arg(long)]
+    unsandboxed_transcode: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -134,6 +141,11 @@ async fn main() {
             content_dir.display()
         );
     }
+
+    // Clear transcode scratch stranded by a prior run that died mid-job, then
+    // decide — loudly — how the vips subprocess is confined for this run.
+    media::sweep_cache(&cache_dir);
+    media::init_transcode(args.unsandboxed_transcode);
 
     let mut store = content::ContentStore::scan(&content_dir, &cache_dir)
         .expect("Failed to scan content directory");

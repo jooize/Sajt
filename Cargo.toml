@@ -1,6 +1,6 @@
 [package]
 name = "esko-bar"
-version = "0.20.0"
+version = "0.21.0"
 edition = "2024"
 
 [dependencies]
@@ -35,5 +35,9 @@ kamadak-exif = "0.6"
 # timeout). Unix only; the code is `#[cfg(unix)]`-gated.
 libc = "0.2"
 lopdf = { version = "0.44.0", default-features = false }
+# Pre-decode dimensions gate (decompression-bomb defense): a pure-Rust header
+# parse for every raster format we transcode, so an image declaring absurd
+# dimensions is withheld before libvips ever decodes it.
+imagesize = "0.15"
 quick-xml = "0.41"
 base64 = "0.22.1"

@@ -1,8 +1,13 @@
-//! Image metadata stripping at serving time (`post-model.md` §8).
+//! The file-privacy boundary: serve-time classification and metadata stripping
+//! (`post-model.md` §8).
 //!
-//! Privacy is fail-closed: GPS, camera, and timestamp metadata is a real leak, so
-//! every served image path (rendered *and* raw) runs through [`strip`] unless the
-//! author opted the file into the exact original with an `original` tag.
+//! Every served file passes [`classify`], an **allowlist**: raster images are
+//! cleaned (segment strip or sandboxed transcode), PDFs and SVGs are rewritten
+//! without their metadata, author-readable UTF-8 text is served as-is, and
+//! everything else is withheld — fail closed — with the author's per-file
+//! `public-original` tag as the explicit exact-bytes escape. GPS, camera, and
+//! timestamp metadata is a real leak, so every served image path (rendered
+//! *and* raw) runs through [`strip`] unless the author opted in.
 //!
 //! The strip is **surgical, not a re-encode**: we drop the metadata-bearing
 //! container segments (EXIF, XMP, IPTC, comments, the embedded EXIF thumbnail —
@@ -20,18 +25,28 @@
 //! content hash over the stripped result stays stable (the §8 caching rule).
 //!
 //! Formats we cannot segment-strip in pure Rust (HEIC/HEIF/TIFF/AVIF, and the
-//! GIF/BMP long tail) return [`StripOutcome::NeedsTranscode`]: the transcode path
-//! (libvips, a sandboxed subprocess) cleans them by re-encoding to a metadata-free
-//! JPEG. Until that path resolves them the caller withholds the bytes — never a
-//! silent raw fallback.
+//! GIF/BMP long tail) return [`StripOutcome::NeedsTranscode`]: libvips, running
+//! as an **OS-sandboxed subprocess** (Seatbelt on macOS, bubblewrap on Linux),
+//! re-encodes them to a metadata-free JPEG. The decoder parses attacker-
+//! controlled bytes, so even a decoder compromise is confined to a per-job
+//! scratch directory — no network, no view of the content tree. Without sandbox
+//! tooling the transcode path is disabled and those formats are withheld
+//! (`--unsandboxed-transcode` overrides, loudly). Anything the transcode cannot
+//! clean is withheld — never a silent raw fallback.
+//!
+//! No cleaning path is trusted on the way out: each re-checks its own output
+//! with an independent parse before serving (`verified_ready`, `pdf_is_clean`,
+//! `svg_is_clean`). A strip bug becomes a loud withhold, never a leak.
 
 use img_parts::jpeg::{markers, Jpeg};
 use img_parts::png::Png;
 use img_parts::webp::WebP;
 use img_parts::{Bytes, ImageEXIF};
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::Semaphore;
@@ -64,8 +79,8 @@ pub fn strip(ext: &str, bytes: &[u8]) -> StripOutcome {
         "jpg" | "jpeg" => strip_jpeg(bytes),
         "png" => strip_png(bytes),
         "webp" => strip_webp(bytes),
-        // Handled by the transcode path (libvips → clean JPEG). Fail closed until
-        // then: an image we cannot verify-clean is not served raw.
+        // Handled by the transcode path (sandboxed libvips → clean JPEG). Fail
+        // closed on the way: an image we cannot verify-clean is not served raw.
         _ => StripOutcome::NeedsTranscode,
     }
 }
@@ -817,6 +832,237 @@ pub fn content_hash(bytes: &[u8]) -> String {
     out
 }
 
+// --- transcode sandbox policy -------------------------------------------------
+
+/// How the libvips transcode subprocess is confined. Decided once at startup
+/// ([`init_transcode`]) and read on every transcode.
+#[derive(Debug, PartialEq)]
+pub enum TranscodeMode {
+    /// macOS: `sandbox-exec` with a deny-default Seatbelt profile — vips may
+    /// read the Nix store and system volume, read/write its per-job scratch
+    /// directory, and nothing else (no network, no content tree).
+    Seatbelt,
+    /// Linux: `bwrap` (bubblewrap) with fully unshared namespaces — read-only
+    /// system binds, the scratch directory as the only writable path, no
+    /// network.
+    Bwrap,
+    /// `--unsandboxed-transcode`: the operator explicitly accepted running
+    /// libvips on untrusted images without OS confinement.
+    Unsandboxed,
+    /// No sandbox tooling and no override: transcodes are refused and the
+    /// formats that need one are withheld. This is the fail-closed default —
+    /// also what any caller that never ran [`init_transcode`] gets.
+    Disabled,
+}
+
+static TRANSCODE_MODE: OnceLock<TranscodeMode> = OnceLock::new();
+
+/// Where macOS ships the Seatbelt profile interpreter (part of the OS).
+const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
+
+/// Resolve and record how transcodes are confined, logging the decision loudly.
+/// Called once at server startup; before (or without) it, the mode reads as
+/// [`TranscodeMode::Disabled`] — fail closed.
+pub fn init_transcode(allow_unsandboxed: bool) {
+    let mode = detect_transcode_mode(allow_unsandboxed);
+    match mode {
+        TranscodeMode::Seatbelt => {
+            tracing::info!("image transcodes run sandboxed: macOS Seatbelt (sandbox-exec)")
+        }
+        TranscodeMode::Bwrap => {
+            tracing::info!("image transcodes run sandboxed: bubblewrap (bwrap)")
+        }
+        TranscodeMode::Unsandboxed => tracing::warn!(
+            "SECURITY: --unsandboxed-transcode is set — libvips will decode untrusted \
+             images WITHOUT an OS sandbox; a decoder exploit could read this machine, \
+             including the private content tree"
+        ),
+        TranscodeMode::Disabled => tracing::warn!(
+            "SECURITY NOTICE: no OS sandbox for image transcodes ({}). Formats that \
+             need one (HEIC/TIFF/GIF/...) will be WITHHELD (HTTP 415). Install the \
+             tool, or accept the risk with --unsandboxed-transcode",
+            if cfg!(target_os = "macos") {
+                "sandbox-exec not found"
+            } else if cfg!(target_os = "linux") {
+                "bwrap not on PATH"
+            } else {
+                "unsupported platform"
+            },
+        ),
+    }
+    let _ = TRANSCODE_MODE.set(mode);
+}
+
+fn transcode_mode() -> &'static TranscodeMode {
+    TRANSCODE_MODE.get().unwrap_or(&TranscodeMode::Disabled)
+}
+
+/// Detect the platform sandbox: macOS ships `sandbox-exec` at a fixed path,
+/// Linux needs `bwrap` on PATH, anything else has no supported sandbox.
+fn detect_transcode_mode(allow_unsandboxed: bool) -> TranscodeMode {
+    let sandbox = if cfg!(target_os = "macos") {
+        Path::new(SANDBOX_EXEC)
+            .is_file()
+            .then_some(TranscodeMode::Seatbelt)
+    } else if cfg!(target_os = "linux") {
+        find_on_path("bwrap").map(|_| TranscodeMode::Bwrap)
+    } else {
+        None
+    };
+    resolve_transcode_mode(sandbox, allow_unsandboxed)
+}
+
+/// The policy itself: an available sandbox is always used — the override flag
+/// cannot turn one *off* — and with none, the explicit override is the only way
+/// a transcode runs at all.
+fn resolve_transcode_mode(
+    sandbox: Option<TranscodeMode>,
+    allow_unsandboxed: bool,
+) -> TranscodeMode {
+    match (sandbox, allow_unsandboxed) {
+        (Some(mode), _) => mode,
+        (None, true) => TranscodeMode::Unsandboxed,
+        (None, false) => TranscodeMode::Disabled,
+    }
+}
+
+/// First executable called `name` on PATH, as an absolute path — resolved on
+/// the host so a sandboxed invocation never depends on PATH lookup inside the
+/// sandbox (bwrap runs with a cleared environment).
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|c| is_executable_file(c))
+}
+
+#[cfg(unix)]
+fn is_executable_file(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(p: &Path) -> bool {
+    p.is_file()
+}
+
+/// The vips CLI invocation shared by every mode: sniff the real format from the
+/// content of `in.<ext>`, resize down to `max_edge`, write a quality-85 JPEG.
+fn vips_cli_args(tin: &Path, tout: &Path, max_edge: &str) -> Vec<OsString> {
+    vec![
+        "thumbnail".into(),
+        tin.as_os_str().to_owned(),
+        format!("{}[Q=85]", tout.display()).into(),
+        max_edge.into(),
+        "--size".into(),
+        "down".into(),
+    ]
+}
+
+/// Deny-default Seatbelt profile for one transcode. The `dyld-support.sb`
+/// import (shipped with macOS; the process-bootstrap rules Apple keeps in sync
+/// with dyld — without it a `(deny default)` child aborts inside dyld before
+/// `main`) is what lets the process start at all. Beyond that: read the Nix
+/// store and the system volume, read/write the per-job scratch directory, and
+/// nothing else — no network operation is allowed anywhere in the profile.
+/// Live-verified (2026-07-15, macOS 26.5): HEIC transcodes; reading a file
+/// outside the scratch, writing outside the scratch, and HTTPS egress are all
+/// denied.
+fn seatbelt_profile(scratch: &Path) -> String {
+    format!(
+        r#"(version 1)
+(deny default)
+(import "dyld-support.sb")
+(allow process-fork)
+(allow process-exec (subpath "/nix/store"))
+(allow file-read* (subpath "/nix/store"))
+(allow file-read* (subpath "/System"))
+(allow file-read* (subpath "/dev"))
+(allow file-write-data (literal "/dev/null"))
+(allow file-read* file-write* (subpath "{scratch}"))
+(allow sysctl-read)
+"#,
+        scratch = seatbelt_quote(scratch)
+    )
+}
+
+/// Escape a path for embedding in a Seatbelt string literal, so a hostile or
+/// merely unusual cache path cannot terminate the quoted string and inject
+/// profile rules.
+fn seatbelt_quote(p: &Path) -> String {
+    p.display()
+        .to_string()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+}
+
+/// Assemble the macOS invocation: `sandbox-exec -p <profile> vips ...` with
+/// host paths (Seatbelt filters syscalls; the filesystem view is unchanged).
+fn seatbelt_invocation(
+    vips: &Path,
+    scratch: &Path,
+    tin: &Path,
+    tout: &Path,
+    max_edge: &str,
+) -> (PathBuf, Vec<OsString>) {
+    let mut args: Vec<OsString> = vec![
+        "-p".into(),
+        seatbelt_profile(scratch).into(),
+        vips.as_os_str().to_owned(),
+    ];
+    args.extend(vips_cli_args(tin, tout, max_edge));
+    (PathBuf::from(SANDBOX_EXEC), args)
+}
+
+/// Assemble the Linux invocation: `bwrap` with every namespace unshared (which
+/// removes the network), a read-only view of the system paths a distro may
+/// have, and the scratch directory mounted at `/scratch` as the only writable
+/// mount — vips reads its input and writes its output there and can touch
+/// nothing else. Unit-tested here; live verification requires a Linux host.
+fn bwrap_invocation(
+    bwrap: &Path,
+    vips: &Path,
+    scratch: &Path,
+    ext: &str,
+    max_edge: &str,
+) -> (PathBuf, Vec<OsString>) {
+    let mut args: Vec<OsString> = Vec::new();
+    for flag in ["--unshare-all", "--die-with-parent", "--new-session", "--clearenv"] {
+        args.push(flag.into());
+    }
+    // vips's env must be re-set inside (not inherited): --clearenv wipes the
+    // parent environment.
+    for (key, value) in [("VIPS_CONCURRENCY", "1"), ("VIPS_BLOCK_UNTRUSTED", "1")] {
+        args.push("--setenv".into());
+        args.push(key.into());
+        args.push(value.into());
+    }
+    // Read-only system binds; --ro-bind-try skips paths this distro lacks.
+    for dir in ["/nix/store", "/usr", "/lib", "/lib64", "/bin", "/etc/ld.so.cache"] {
+        args.push("--ro-bind-try".into());
+        args.push(dir.into());
+        args.push(dir.into());
+    }
+    args.push("--bind".into());
+    args.push(scratch.as_os_str().to_owned());
+    args.push("/scratch".into());
+    for (flag, value) in [("--proc", "/proc"), ("--dev", "/dev"), ("--chdir", "/scratch")] {
+        args.push(flag.into());
+        args.push(value.into());
+    }
+    args.push("--".into());
+    args.push(vips.as_os_str().to_owned());
+    args.extend(vips_cli_args(
+        Path::new(&format!("/scratch/in.{ext}")),
+        Path::new("/scratch/out.jpg"),
+        max_edge,
+    ));
+    (bwrap.to_owned(), args)
+}
+
 // --- transcode (libvips subprocess) -----------------------------------------
 
 /// Cap on concurrent libvips subprocesses. Decoding a large HEIC/HEIF is memory-
@@ -915,6 +1161,13 @@ async fn vips_clean_jpeg(
     max_edge: &str,
     tag: &str,
 ) -> Option<Vec<u8>> {
+    // Decompression-bomb gate: read the declared dimensions from the header
+    // (pure Rust, no decode) and refuse anything over the cap — or whose
+    // dimensions cannot be read at all — before libvips ever sees the bytes.
+    if !decode_size_allowed(bytes) {
+        return None;
+    }
+
     let media = cache_dir.join("media");
     tokio::fs::create_dir_all(&media).await.ok()?;
 
@@ -931,15 +1184,24 @@ async fn vips_clean_jpeg(
         return Some(b);
     }
 
+    // Per-job scratch directory: the ONE place the sandboxed subprocess may
+    // write (and, with the input placed inside it, the one file tree it reads
+    // beyond the system). Dot-prefixed so the startup sweep ([`sweep_cache`])
+    // clears anything a killed process stranded.
     let uniq = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let scratch = media.join(format!(".tx.{key}.{uniq}"));
+    tokio::fs::create_dir_all(&scratch).await.ok()?;
     let norm = crate::entry::normalize_ext(ext);
-    let tin = media.join(format!(".{key}.{uniq}.in.{norm}"));
-    let traw = media.join(format!(".{key}.{uniq}.raw.jpg"));
 
-    let ran = run_vips_transcode(bytes, &tin, &traw, max_edge).await;
-    let _ = tokio::fs::remove_file(&tin).await; // never leave untrusted input around
-    let raw = if ran { tokio::fs::read(&traw).await.ok() } else { None };
-    let _ = tokio::fs::remove_file(&traw).await;
+    let ran = run_vips_transcode(bytes, &scratch, &norm, max_edge).await;
+    let raw = if ran {
+        tokio::fs::read(scratch.join("out.jpg")).await.ok()
+    } else {
+        None
+    };
+    // The whole scratch — untrusted full-metadata input included — goes away
+    // before anything else happens.
+    let _ = tokio::fs::remove_dir_all(&scratch).await;
     let raw = raw?;
 
     // libvips carried the source EXIF/GPS into the JPEG (confirmed) — strip it,
@@ -958,27 +1220,50 @@ async fn vips_clean_jpeg(
     Some(cleaned)
 }
 
-/// Run one libvips transcode as an isolated subprocess. Untrusted bytes go to a
-/// temp file we name (libvips sniffs the real format from content, not the
-/// extension); the output is a JPEG capped at `max_edge`. Hardening: only a local
-/// file path is ever passed (libvips makes no network request), a single internal
-/// thread, the ImageMagick/untrusted loaders blocked, a wall-clock timeout with
-/// kill-on-drop, and — on Unix — an RLIMIT_CPU backstop. Returns whether it
-/// succeeded.
-async fn run_vips_transcode(bytes: &[u8], tin: &Path, tout: &Path, max_edge: &str) -> bool {
-    if tokio::fs::write(tin, bytes).await.is_err() {
+/// Run one libvips transcode as an OS-sandboxed subprocess. Untrusted bytes go
+/// to `in.<ext>` inside the per-job `scratch` directory (libvips sniffs the real
+/// format from content, not the extension); the output is `out.jpg`, capped at
+/// `max_edge`. The sandbox (Seatbelt / bwrap, per [`init_transcode`]) confines
+/// the decoder to that directory: read-only system paths, no network, no view of
+/// the content tree — a decoder exploit on a hostile image reads pixels, not
+/// files. Also: a single internal thread, the ImageMagick/untrusted loaders
+/// blocked, a wall-clock timeout with kill-on-drop, and — on Unix — an
+/// RLIMIT_CPU backstop (inherited through the sandbox wrapper into vips).
+/// With no sandbox and no explicit override, refuses to run at all (fail
+/// closed). Returns whether it succeeded.
+async fn run_vips_transcode(bytes: &[u8], scratch: &Path, ext: &str, max_edge: &str) -> bool {
+    let mode = transcode_mode();
+    if matches!(mode, TranscodeMode::Disabled) {
+        tracing::warn!(
+            "transcode refused: no OS sandbox and no --unsandboxed-transcode \
+             (see the startup notice); withholding"
+        );
         return false;
     }
 
-    let mut std_cmd = std::process::Command::new("vips");
+    let tin = scratch.join(format!("in.{ext}"));
+    let tout = scratch.join("out.jpg");
+    if tokio::fs::write(&tin, bytes).await.is_err() {
+        return false;
+    }
+
+    let vips = find_on_path("vips").unwrap_or_else(|| PathBuf::from("vips"));
+    let (program, args) = match mode {
+        TranscodeMode::Seatbelt => seatbelt_invocation(&vips, scratch, &tin, &tout, max_edge),
+        TranscodeMode::Bwrap => {
+            let bwrap = find_on_path("bwrap").unwrap_or_else(|| PathBuf::from("bwrap"));
+            bwrap_invocation(&bwrap, &vips, scratch, ext, max_edge)
+        }
+        TranscodeMode::Unsandboxed => (vips.clone(), vips_cli_args(&tin, &tout, max_edge)),
+        TranscodeMode::Disabled => unreachable!("refused above"),
+    };
+
+    let mut std_cmd = std::process::Command::new(&program);
     std_cmd
-        .arg("thumbnail")
-        .arg(tin)
-        .arg(format!("{}[Q=85]", tout.display()))
-        .arg(max_edge)
-        .arg("--size")
-        .arg("down")
+        .args(&args)
         // One worker thread: predictable memory, no thread-count amplification.
+        // (The bwrap invocation re-sets these two inside via --setenv, since it
+        // clears the inherited environment; Seatbelt/unsandboxed inherit them.)
         .env("VIPS_CONCURRENCY", "1")
         // Refuse every loader libvips flags "untrusted" -- crucially its bundled
         // ImageMagick fallback (`magickload`), whose long RCE history on hostile
@@ -1021,9 +1306,11 @@ async fn run_vips_transcode(bytes: &[u8], tin: &Path, tout: &Path, max_edge: &st
 
 /// Apply an RLIMIT_CPU backstop to the child before exec (Unix only): a hostile
 /// image that makes libvips burn CPU is capped even if the async timeout is
-/// somehow missed. RLIMIT_AS is deliberately not set — virtual-address limits are
-/// blunt and can break legitimate large decodes; container memory limits
-/// (cgroups) are the right deployment control.
+/// somehow missed. (rlimits survive exec and are inherited, so the cap set on
+/// the sandbox wrapper reaches vips itself.) RLIMIT_AS is deliberately not set —
+/// virtual-address limits are blunt and break legitimate large decodes; memory
+/// blowup is bounded instead by the pre-decode megapixel cap
+/// ([`MAX_DECODE_PIXELS`]) and confined by the OS sandbox around the subprocess.
 #[cfg(unix)]
 fn apply_rlimits(cmd: &mut std::process::Command) {
     use std::os::unix::process::CommandExt;
@@ -1041,6 +1328,70 @@ fn apply_rlimits(cmd: &mut std::process::Command) {
 
 #[cfg(not(unix))]
 fn apply_rlimits(_cmd: &mut std::process::Command) {}
+
+/// Pixel ceiling for anything handed to the decoder — ~100 megapixels, well
+/// above real photography (an iPhone panorama is ~63 MP) and well below where
+/// a decode's memory hurts. A decompression bomb declares enormous dimensions
+/// in a tiny file; the header is parsed in pure Rust (`imagesize`, no decode),
+/// and anything over the cap — or whose dimensions cannot be read at all — is
+/// withheld before libvips ever runs.
+const MAX_DECODE_PIXELS: u64 = 100_000_000;
+
+/// Whether the declared dimensions are under [`MAX_DECODE_PIXELS`]. Unreadable
+/// dimensions fail closed: a container so mangled that a header parse cannot
+/// size it is not something to hand a decoder.
+fn decode_size_allowed(bytes: &[u8]) -> bool {
+    match imagesize::blob_size(bytes) {
+        Ok(dim) => {
+            let px = (dim.width as u64).saturating_mul(dim.height as u64);
+            if px > MAX_DECODE_PIXELS {
+                tracing::warn!(
+                    "image withheld: {}x{} exceeds the {} MP pre-decode cap",
+                    dim.width,
+                    dim.height,
+                    MAX_DECODE_PIXELS / 1_000_000
+                );
+                return false;
+            }
+            true
+        }
+        Err(e) => {
+            tracing::warn!("image withheld: could not read dimensions before decode ({e})");
+            false
+        }
+    }
+}
+
+/// Startup hygiene: clear transcode leftovers from `<cache>/media`. Scratch
+/// directories (`.tx.*`) and in-flight cache publishes (`.*.wip.jpg`) are
+/// dot-prefixed exactly so that a `kill -9` mid-transcode strands nothing a
+/// later run cannot recognize; everything dot-prefixed in this directory is
+/// disposable by construction. The stranded *inputs* are the point of the
+/// sweep — they hold untrusted, full-metadata bytes (not HTTP-reachable, but
+/// no reason to keep them on disk).
+pub fn sweep_cache(cache_dir: &Path) {
+    let media = cache_dir.join("media");
+    let entries = match std::fs::read_dir(&media) {
+        Ok(e) => e,
+        Err(_) => return, // no media cache yet — nothing to sweep
+    };
+    for entry in entries.flatten() {
+        if !entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        let removed = if is_dir {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        match removed {
+            Ok(()) => tracing::info!("swept stale transcode temp {}", path.display()),
+            Err(e) => tracing::warn!("could not sweep transcode temp {}: {e}", path.display()),
+        }
+    }
+}
 
 /// Whether an image carries embedded metadata a viewer would consider sensitive —
 /// GPS coordinates, camera make/model, or the original capture timestamp. Used to
@@ -1450,6 +1801,118 @@ mod tests {
         assert!(matches!(verified_ready(tiff, "image/tiff"), Prepared::Withheld));
         // A clean image passes the gate.
         assert!(matches!(verified_ready(tiny_jpeg(), "image/jpeg"), Prepared::Ready { .. }));
+    }
+
+    #[test]
+    fn transcode_mode_resolution_is_fail_closed() {
+        // No sandbox, no override: Disabled (withhold). The override is the
+        // only way to run without one; an available sandbox always wins, even
+        // with the override set.
+        assert_eq!(resolve_transcode_mode(None, false), TranscodeMode::Disabled);
+        assert_eq!(resolve_transcode_mode(None, true), TranscodeMode::Unsandboxed);
+        assert_eq!(
+            resolve_transcode_mode(Some(TranscodeMode::Seatbelt), true),
+            TranscodeMode::Seatbelt
+        );
+        assert_eq!(
+            resolve_transcode_mode(Some(TranscodeMode::Bwrap), false),
+            TranscodeMode::Bwrap
+        );
+    }
+
+    #[tokio::test]
+    async fn transcode_refused_when_mode_is_disabled() {
+        // TRANSCODE_MODE is never initialized in tests, so it reads Disabled —
+        // and a transcode must refuse to run (fail closed), touching nothing.
+        let scratch = std::env::temp_dir().join(format!("esko-tx-refuse-{}", std::process::id()));
+        std::fs::create_dir_all(&scratch).unwrap();
+        assert!(!run_vips_transcode(b"bytes", &scratch, "heic", "4096").await);
+        assert!(!scratch.join("in.heic").exists(), "input must not be written");
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn seatbelt_profile_is_deny_default_and_scratch_scoped() {
+        let p = seatbelt_profile(Path::new("/cache/media/.tx.abc.0"));
+        assert!(p.contains("(deny default)"));
+        assert!(p.contains("(import \"dyld-support.sb\")"));
+        assert!(p.contains("(subpath \"/cache/media/.tx.abc.0\")"));
+        // No network operation is allowed anywhere in the profile.
+        assert!(!p.contains("network"));
+        // A path cannot terminate the string literal and inject profile rules.
+        let q = seatbelt_profile(Path::new("/cache/we\")(allow network*)(\""));
+        assert!(q.contains(r#"we\")(allow network*)(\""#)); // escaped form present
+        assert!(!q.contains("we\")")); // the unescaped quote never survives
+    }
+
+    #[test]
+    fn bwrap_invocation_is_isolated() {
+        let (prog, args) = bwrap_invocation(
+            Path::new("/usr/bin/bwrap"),
+            Path::new("/nix/store/x/bin/vips"),
+            Path::new("/cache/media/.tx.k.1"),
+            "heic",
+            "4096",
+        );
+        assert_eq!(prog, Path::new("/usr/bin/bwrap"));
+        let a: Vec<String> = args.iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        // Namespaces fully unshared (that removes the network), tied to our
+        // lifetime, with a cleared environment.
+        for flag in ["--unshare-all", "--die-with-parent", "--new-session", "--clearenv"] {
+            assert!(a.contains(&flag.to_string()), "{flag} missing");
+        }
+        assert!(!a.iter().any(|s| s.contains("--share-net")));
+        // The scratch is the only writable bind; system binds are read-only.
+        assert_eq!(a.iter().filter(|s| *s == "--bind").count(), 1);
+        assert!(a.windows(3).any(|w| w == ["--bind", "/cache/media/.tx.k.1", "/scratch"]));
+        assert!(a.windows(3).any(|w| w == ["--ro-bind-try", "/nix/store", "/nix/store"]));
+        // vips reads and writes only inside /scratch.
+        assert!(a.contains(&"/scratch/in.heic".to_string()));
+        assert!(a.contains(&"/scratch/out.jpg[Q=85]".to_string()));
+        // The env vips relies on is re-set inside the cleared environment.
+        assert!(a.windows(3).any(|w| w == ["--setenv", "VIPS_BLOCK_UNTRUSTED", "1"]));
+        assert!(a.windows(3).any(|w| w == ["--setenv", "VIPS_CONCURRENCY", "1"]));
+    }
+
+    /// A minimal PNG header declaring the given dimensions (imagesize parses
+    /// the IHDR only; no pixel data or valid CRC is needed).
+    fn png_header(width: u32, height: u32) -> Vec<u8> {
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&width.to_be_bytes());
+        png.extend_from_slice(&height.to_be_bytes());
+        png.extend_from_slice(&[8, 2, 0, 0, 0]); // bit depth, color, ...
+        png.extend_from_slice(&[0, 0, 0, 0]); // (unchecked) CRC
+        png
+    }
+
+    #[test]
+    fn decode_cap_refuses_bombs_and_unknown_dimensions() {
+        // 100000 x 100000 = 10 gigapixels declared in a ~30-byte file: the
+        // classic decompression bomb. Refused before any decode.
+        assert!(!decode_size_allowed(&png_header(100_000, 100_000)));
+        // Dimensions we cannot read at all: fail closed.
+        assert!(!decode_size_allowed(b"not an image at all"));
+        // A real-world size passes.
+        assert!(decode_size_allowed(&png_header(1600, 1200)));
+    }
+
+    #[test]
+    fn sweep_clears_only_dot_prefixed_entries() {
+        let root = std::env::temp_dir().join(format!("esko-sweep-test-{}", std::process::id()));
+        let media = root.join("media");
+        std::fs::create_dir_all(media.join(".tx.deadbeef.3")).unwrap();
+        std::fs::write(media.join(".tx.deadbeef.3/in.heic"), b"stranded input").unwrap();
+        std::fs::write(media.join(".abc.0.wip.jpg"), b"stranded publish").unwrap();
+        std::fs::write(media.join("deadbeef-v1-j4096q85.jpg"), b"cached result").unwrap();
+        sweep_cache(&root);
+        assert!(!media.join(".tx.deadbeef.3").exists(), "scratch dir swept");
+        assert!(!media.join(".abc.0.wip.jpg").exists(), "wip file swept");
+        assert!(media.join("deadbeef-v1-j4096q85.jpg").exists(), "cache kept");
+        // A missing cache dir is fine (fresh install).
+        sweep_cache(Path::new("/nonexistent-esko-cache"));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
