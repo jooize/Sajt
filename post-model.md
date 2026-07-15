@@ -428,10 +428,19 @@ Decisions folded in:
 - Visibility is gated at **every** level, fail-closed AND: the post must be
   `public` for anything to exist, each subfolder on the path must be `public`,
   and the file must be `public` to be **listed**.
-- `public` on a file means *listed*; it does not change asset serving.
+- ~~`public` on a file means *listed*; it does not change asset serving.
   Untagged assets keep serving at `/label/file.ext` as part of a public post
   (inline images need no tagging) — they just never appear in any generated
-  list. Nothing is ever listed by default.
+  list.~~ **Amended (2026-07-08 strict gate; extended 2026-07-15, v0.22.0):**
+  `public` on a file means *served* — one rule, no exceptions. The folder tag
+  makes the post reachable; only the file's own `public` tag serves its
+  content. This covers assets (an untagged inline `<img>` 404s until tagged),
+  **the primary itself** (untagged primary → the post demotes to a listing of
+  its public files, withheld count visible, loud log), the listing intro
+  document, ` copy [n]` revision snapshots (a folder copy needs the copy
+  folder *and* its inner primary tagged), and `link.*` cite destinations (the
+  published URL is that file's content). Nothing is ever served or listed by
+  default.
 - Asset serving stays path-traversal-safe; a listing never reaches outside its
   own folder, and never through a non-public subfolder.
 

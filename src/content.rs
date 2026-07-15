@@ -896,9 +896,11 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
     let candidates: Vec<&FileChild> = plain.iter().filter(|f| is_candidate(f)).collect();
 
     // An `index/` marker forces a listing even when a primary could resolve; an
-    // `index`/folder-name document then becomes the listing's intro prose.
+    // `index`/folder-name document then becomes the listing's intro prose — but
+    // only when that document itself is tagged `public` (the universal per-file
+    // rule: no `public` tag on a file, no served content).
     if force_listing {
-        let intro = plain.iter().find(|f| is_candidate(f));
+        let intro = plain.iter().find(|f| is_candidate(f) && file_is_public(&f.path));
         let listing = build_listing(&plain, &subdirs, intro, Vec::new());
         return Ok(FolderScan {
             primary: None,
@@ -970,11 +972,39 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         }
     };
 
+    // The universal per-file rule (post-model.md §6): the folder's `public` tag
+    // makes the post *reachable*; only a file's own `public` tag ever serves its
+    // *content*. A would-be primary without its own tag is withheld — the post
+    // demotes to a listing of the folder's public files (possibly empty, with
+    // the withheld count) instead of rendering the untagged document.
+    if !file_is_public(&primary_child.path) {
+        tracing::warn!(
+            "Folder post {} withholds its primary '{}': the file is not tagged `public` \
+             (the folder tag alone never serves file content). Tag the file public to \
+             publish it; the post lists its public files meanwhile.",
+            dir.display(),
+            primary_child.name
+        );
+        let listing = build_listing(&plain, &subdirs, None, Vec::new());
+        return Ok(FolderScan {
+            primary: None,
+            listing: Some(listing),
+            attachments: Vec::new(),
+            link_url: None,
+            date_marker,
+            aliases,
+            revisions: Vec::new(),
+            error: None,
+        });
+    }
+
     // Revisions = ` copy [n]` files that snapshot the primary (share its stem).
+    // Same per-file rule: an untagged snapshot's content is never served, so it
+    // never becomes an addressable revision.
     let primary_stem = primary_child.stem.clone();
     let mut revisions: Vec<Revision> = copies
         .iter()
-        .filter(|(_, base, _)| *base == primary_stem)
+        .filter(|(f, base, _)| *base == primary_stem && file_is_public(&f.path))
         .map(|(f, _, rank)| Revision { date: f.mtime, path: f.path.clone(), rank: *rank })
         .collect();
     sort_revisions(&mut revisions);
@@ -987,12 +1017,15 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
 
     // Outbound destination (post-model.md §4): a `link.*` sidecar, or any
     // non-primary file whose whole content is one URL, drops out of the file set
-    // and becomes the post's cite. The stem `link` is the explicit tie-break;
-    // several destinations with no single `link.*` never guess — emit no cite,
-    // log loudly (the files then stay ordinary listed/attachment content).
+    // and becomes the post's cite. The per-file rule applies here too — the cite
+    // publishes the file's content (the URL), so an untagged URL-file is no
+    // destination; it stays withheld like any other untagged sibling. The stem
+    // `link` is the explicit tie-break; several destinations with no single
+    // `link.*` never guess — emit no cite, log loudly (the files then stay
+    // ordinary listed/attachment content).
     let destinations: Vec<(&FileChild, String)> = plain
         .iter()
-        .filter(|f| f.path != primary_child.path)
+        .filter(|f| f.path != primary_child.path && file_is_public(&f.path))
         .filter_map(|f| {
             let (_, ext) = split_name(&f.name);
             resolve_link_destination(&f.path, ext).map(|u| (f, u))
@@ -1206,6 +1239,18 @@ fn attach_revisions(entries: &mut Vec<Entry>, revisions: &[TopItem]) {
                         continue;
                     }
                 };
+                // Per-file rule: an archived snapshot's content is served only
+                // when its whole chain is tagged `public` (the copy item, and —
+                // for a folder copy — the inner primary file too).
+                if !revision_chain_public(rev, &rev_path) {
+                    tracing::info!(
+                        "Revision family '{}': withholding the copy '{}' — not tagged `public` \
+                         (file content is only served with its own tag).",
+                        base,
+                        rev.name
+                    );
+                    continue;
+                }
                 entries[i].revisions.push(Revision { date: rev_mtime, path: rev_path, rank });
                 sort_revisions(&mut entries[i].revisions);
                 tracing::info!(
@@ -1239,7 +1284,18 @@ fn attach_revisions(entries: &mut Vec<Entry>, revisions: &[TopItem]) {
         resolved.sort_by(|a, b| b.3.cmp(&a.3).then(b.1.cmp(&a.1)));
         let winner = resolved[0].0;
         let mut promoted = build_post_as(winner, Some(base.as_str()));
-        for (_, rank, path, mtime) in resolved.into_iter().skip(1) {
+        for (rev, rank, path, mtime) in resolved.into_iter().skip(1) {
+            // Same per-file rule as attached revisions: no `public` chain, no
+            // served snapshot.
+            if !revision_chain_public(rev, &path) {
+                tracing::info!(
+                    "Revision family '{}': withholding the copy '{}' — not tagged `public` \
+                     (file content is only served with its own tag).",
+                    base,
+                    rev.name
+                );
+                continue;
+            }
             promoted.revisions.push(Revision { date: mtime, path, rank });
         }
         sort_revisions(&mut promoted.revisions);
@@ -1273,6 +1329,16 @@ fn choose_current(entries: &[Entry], base: &str, is_dir: bool) -> Option<usize> 
         }
     }
     chosen
+}
+
+/// Whether a top-level ` copy [n]` sibling's served content is fully `public`:
+/// the copy item itself, and — for a folder copy — the inner primary file too
+/// (the same every-component chain `path_visible` enforces at request time).
+fn revision_chain_public(rev: &TopItem, primary: &Path) -> bool {
+    if !file_is_public(&rev.path) {
+        return false;
+    }
+    !rev.is_dir || file_is_public(primary)
 }
 
 /// The primary content file (and its mtime) of a top-level ` copy [n]` sibling.
@@ -1710,6 +1776,9 @@ mod tests {
         let t = TmpDir::new();
         touch(t.path(), "hello-world/hello-world.md", "# hi");
         mkdir(t.path(), "hello-world/2026-03-03T1430");
+        if !set_tags(&t.path().join("hello-world/hello-world.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
         let entries = scan_entries(t.path()).unwrap();
         assert_eq!(entries.len(), 1);
         let e = find(&entries, "hello-world");
@@ -1725,6 +1794,9 @@ mod tests {
     fn folder_post_index_primary() {
         let t = TmpDir::new();
         touch(t.path(), "notes/index.md", "body");
+        if !set_tags(&t.path().join("notes/index.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
         let entries = scan_entries(t.path()).unwrap();
         let e = find(&entries, "notes");
         assert_eq!(e.extension, "md");
@@ -1736,6 +1808,9 @@ mod tests {
     fn folder_post_sole_file_is_primary() {
         let t = TmpDir::new();
         touch(t.path(), "shot/whatever.jpg", "bytes");
+        if !set_tags(&t.path().join("shot/whatever.jpg"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
         let entries = scan_entries(t.path()).unwrap();
         let e = find(&entries, "shot");
         assert_eq!(e.extension, "jpg");
@@ -1784,6 +1859,7 @@ mod tests {
         if !set_tags(&t.path().join("album/photo.jpg"), &["public"]) {
             return; // xattr unsupported — skip
         }
+        assert!(set_tags(&t.path().join("album/index.md"), &["public"])); // the intro serves content
         let entries = scan_entries(t.path()).unwrap();
         let e = find(&entries, "album");
         let listing = e.listing.as_ref().expect("index/ forces a listing");
@@ -1818,6 +1894,95 @@ mod tests {
     }
 
     #[test]
+    fn untagged_primary_is_withheld_and_demotes_to_listing() {
+        // The folder tag makes the post reachable; only the file's own `public`
+        // tag serves its content. An untagged would-be primary is withheld and
+        // the post lists its public files instead.
+        let t = TmpDir::new();
+        touch(t.path(), "essay/essay.md", "not tagged -> never served");
+        touch(t.path(), "essay/appendix.pdf", "pdf");
+        if !set_tags(&t.path().join("essay/appendix.pdf"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "essay");
+        assert!(e.error.is_none(), "withholding is not an error state");
+        let listing = e.listing.as_ref().expect("untagged primary -> listing");
+        assert!(listing.intro.is_none(), "the withheld document is no intro either");
+        assert_eq!(listing.total, 2, "the withheld primary still counts as withheld");
+        let names: Vec<&str> = listing.items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, vec!["appendix.pdf"], "only the public sibling lists");
+    }
+
+    #[test]
+    fn untagged_lone_file_is_withheld() {
+        // A public folder with one untagged file publishes nothing of the file:
+        // the post is an empty listing with a visible withheld count.
+        let t = TmpDir::new();
+        touch(t.path(), "solo/secret.txt", "never served");
+        // No tag on secret.txt at all. (Folder tags are read at the store gate,
+        // not in scan_entries, so none is needed here.)
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "solo");
+        let listing = e.listing.as_ref().expect("untagged lone file -> empty listing");
+        assert_eq!(listing.total, 1, "the reader can tell something is withheld");
+        assert!(listing.items.is_empty(), "the untagged file never lists");
+    }
+
+    #[test]
+    fn untagged_intro_is_not_used() {
+        // An `index/`-forced listing only renders its intro document when that
+        // document itself is tagged `public`.
+        let t = TmpDir::new();
+        touch(t.path(), "album/index.md", "# Story\n\nnot tagged -> withheld");
+        touch(t.path(), "album/photo.jpg", "img");
+        mkdir(t.path(), "album/index");
+        if !set_tags(&t.path().join("album/photo.jpg"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "album");
+        let listing = e.listing.as_ref().expect("index/ forces a listing");
+        assert!(listing.intro.is_none(), "an untagged intro is withheld");
+        assert!(e.display_label.is_none(), "no title read from withheld content");
+        let names: Vec<&str> = listing.items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, vec!["photo.jpg"], "the untagged document never lists");
+    }
+
+    #[test]
+    fn untagged_snapshots_are_not_revisions() {
+        // ` copy [n]` snapshots (in-folder and top-level) serve content, so they
+        // need their own `public` tag too.
+        let t = TmpDir::new();
+        touch(t.path(), "post/post.md", "current");
+        touch(t.path(), "post/post copy.md", "untagged in-folder snapshot");
+        touch(t.path(), "note.md", "current");
+        touch(t.path(), "note copy.md", "untagged top-level snapshot");
+        if !set_tags(&t.path().join("post/post.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        assert!(find(&entries, "post").revisions.is_empty(), "in-folder copy withheld");
+        assert!(find(&entries, "note").revisions.is_empty(), "top-level copy withheld");
+    }
+
+    #[test]
+    fn untagged_link_destination_is_no_cite() {
+        // The cite publishes the destination file's content (its URL), so an
+        // untagged `link.*` sidecar yields no cite and stays withheld.
+        let t = TmpDir::new();
+        touch(t.path(), "narrow/index.md", "# Narrow\n\ncommentary");
+        touch(t.path(), "narrow/link.webloc", &webloc("https://example.com/secret-source"));
+        if !set_tags(&t.path().join("narrow/index.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "narrow");
+        assert!(e.link_url.is_none(), "an untagged destination publishes no URL");
+        assert!(e.attachments.iter().all(|a| a.name != "link.webloc"), "and never lists");
+    }
+
+    #[test]
     fn mixed_media_listing_is_a_file_list_not_a_gallery() {
         let t = TmpDir::new();
         touch(t.path(), "kit/logo.png", "img");
@@ -1846,6 +2011,7 @@ mod tests {
             return; // xattr unsupported — skip
         }
         assert!(set_tags(&t.path().join("resume/refs.pdf"), &["public"]));
+        assert!(set_tags(&t.path().join("resume/resume.md"), &["public"])); // the primary needs its own tag
         let entries = scan_entries(t.path()).unwrap();
         let e = find(&entries, "resume");
         assert!(e.error.is_none() && e.listing.is_none(), "still a document post");
@@ -1946,6 +2112,11 @@ mod tests {
         touch(t.path(), "post/post.md", "current");
         mkdir(t.path(), "post/2026-03-03T1430");
         touch(t.path(), "post copy/post.md", "archived");
+        if !set_tags(&t.path().join("post/post.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        assert!(set_tags(&t.path().join("post copy"), &["public"]));
+        assert!(set_tags(&t.path().join("post copy/post.md"), &["public"]));
         let entries = scan_entries(t.path()).unwrap();
         assert_eq!(entries.len(), 1, "the copy must not be its own post");
         let e = find(&entries, "post");
@@ -1958,6 +2129,10 @@ mod tests {
         let t = TmpDir::new();
         touch(t.path(), "post/post.md", "current");
         touch(t.path(), "post/post copy.md", "older");
+        if !set_tags(&t.path().join("post/post.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        assert!(set_tags(&t.path().join("post/post copy.md"), &["public"]));
         let entries = scan_entries(t.path()).unwrap();
         assert_eq!(entries.len(), 1);
         let e = find(&entries, "post");
@@ -1972,6 +2147,11 @@ mod tests {
         touch(t.path(), "post/post.md", "current");
         touch(t.path(), "post/post copy.md", "rev1");
         touch(t.path(), "post/post copy 2.md", "rev2");
+        if !set_tags(&t.path().join("post/post.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        assert!(set_tags(&t.path().join("post/post copy.md"), &["public"]));
+        assert!(set_tags(&t.path().join("post/post copy 2.md"), &["public"]));
         let entries = scan_entries(t.path()).unwrap();
         let e = find(&entries, "post");
         assert_eq!(e.revisions.len(), 2);
@@ -1985,6 +2165,9 @@ mod tests {
         let t = TmpDir::new();
         touch(t.path(), "note.md", "current");
         touch(t.path(), "note copy.md", "archived");
+        if !set_tags(&t.path().join("note copy.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
         let entries = scan_entries(t.path()).unwrap();
         assert_eq!(entries.len(), 1);
         let e = find(&entries, "note");
@@ -2015,6 +2198,9 @@ mod tests {
         let t = TmpDir::new();
         touch(t.path(), "draft copy.md", "older");
         touch(t.path(), "draft copy 2.md", "newer");
+        if !set_tags(&t.path().join("draft copy.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
         let entries = scan_entries(t.path()).unwrap();
         assert_eq!(entries.len(), 1, "one family row, not two posts");
         let e = find(&entries, "draft");
@@ -2032,6 +2218,10 @@ mod tests {
         touch(t.path(), "draft.md", "the real base");
         touch(t.path(), "draft copy.md", "older");
         touch(t.path(), "draft copy 2.md", "newer");
+        if !set_tags(&t.path().join("draft copy.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        assert!(set_tags(&t.path().join("draft copy 2.md"), &["public"]));
         let entries = scan_entries(t.path()).unwrap();
         assert_eq!(entries.len(), 1, "the base absorbs the copies");
         let e = find(&entries, "draft");
@@ -2047,6 +2237,9 @@ mod tests {
         // that claims `draft` and resolves that inner file as its primary.
         let t = TmpDir::new();
         touch(t.path(), "draft copy/draft.md", "archived-turned-current");
+        if !set_tags(&t.path().join("draft copy/draft.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
         let entries = scan_entries(t.path()).unwrap();
         assert_eq!(entries.len(), 1);
         let e = find(&entries, "draft");
@@ -2140,6 +2333,10 @@ mod tests {
         let t = TmpDir::new();
         touch(t.path(), "narrow/index.md", "# Narrow streets\n\nMy take on road diets.");
         touch(t.path(), "narrow/link.webloc", &webloc("https://nytimes.com/road-diets"));
+        if !set_tags(&t.path().join("narrow/index.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        assert!(set_tags(&t.path().join("narrow/link.webloc"), &["public"])); // the cite publishes the URL
         let entries = scan_entries(t.path()).unwrap();
         let e = find(&entries, "narrow");
         assert_eq!(e.link_url.as_deref(), Some("https://nytimes.com/road-diets"));

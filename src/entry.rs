@@ -213,7 +213,10 @@ impl Entry {
     /// is tagged `public` and not `private`. Untagged is not served. This decides
     /// whether the post exists in the served set at all (timeline, name
     /// resolution, listings) — enforced once in the scanner, so every downstream
-    /// consumer is fail-closed for free. See `post-model.md` §6.
+    /// consumer is fail-closed for free. Reachability only: file *content*
+    /// (including a folder post's primary) additionally requires that file's own
+    /// `public` tag, enforced in the scanner and per request. See
+    /// `post-model.md` §6.
     pub fn is_visible(&self) -> bool {
         self.is_public() && !self.is_private()
     }

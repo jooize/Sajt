@@ -116,9 +116,19 @@ hides its whole subtree. Assets are gated per-file and per-path
 denies): **every** file and subfolder needs its own `public` — strict, no
 inline-image exception, so an untagged inline `<img>` is a broken/404 image
 until its file is tagged (which also lists it, §6). A hidden path 404s
-identically to a missing one (the primary is covered by the post's own
-visibility and carries no separate tag). The tagline holds literally now: drop
+identically to a missing one. The tagline holds literally now: drop
 a file, **tag it `public`**, it's published.
+
+**AMENDED 2026-07-15 (v0.22.0) — no primary exception.** The folder tag makes
+a post *reachable*; only a file's **own** `public` tag ever serves its
+*content*. A folder post's primary (name-match, `index`, or a lone file) must
+itself be tagged `public` — otherwise the post demotes to a listing of the
+folder's public files (the withheld count stays visible) and the scanner logs
+why. The same one rule gates the listing intro document, ` copy [n]` revision
+snapshots (in-folder and top-level; a folder copy needs the copy folder *and*
+its inner primary tagged), and `link.*` cite destinations (the published URL
+is that file's content). Nothing untagged is ever served, with no exceptions
+to remember.
 
 **Access to `private` entries — ideas (PROPOSED, for later):**
 - **Passkeys (WebAuthn)** — the native answer: no passwords, synced by

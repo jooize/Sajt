@@ -381,8 +381,9 @@ async fn try_asset(
     }
 
     // The primary content is canonical at `/label(.ext)` — send duplicates there.
-    // The primary is covered by the post's own visibility, so this precedes the
-    // per-file gate below (the primary carries no separate `public` tag).
+    // A file only *is* the primary when it carries its own `public` tag (the scan
+    // demotes an untagged primary to a withheld listing), so this redirect never
+    // routes around the per-file gate below.
     if std::fs::canonicalize(&owner.path).ok().as_deref() == Some(canon_file.as_path()) {
         let label = owner.label.as_deref().unwrap_or(first);
         let decoded = if owner.extension.is_empty() {
