@@ -921,6 +921,49 @@ Content-hash dividends and quiet touches (DECIDED 2026-07-04):
 - **Later**: native macOS Share Extension (planned, not started) and an iOS
   Shortcut as accelerators — never requirements.
 
+## Platform portability (DECIDED 2026-07-16)
+
+**The core is one portable Rust binary: macOS-native authoring, Linux-native
+serving.** Authoring stays a Finder/Files.app gesture on Apple platforms;
+deployment targets include ordinary Linux servers with content arriving via
+`rsync -X`. No containers in the local dev loop — the server reads Finder
+metadata off the live filesystem, which a Linux-guest bind mount would not
+carry (virtiofs does not pass macOS xattrs through).
+
+What portability rests on, per subsystem:
+
+- **Tags/comments** — Linux confines unprivileged xattrs to the `user.`
+  namespace, so the Apple attr names arrive mapped. Readers try, in order:
+  the native name, `user.`-prefixed, and `user.rsync.%`-wrapped (rsync
+  `--fake-super`) — `tags.rs` `USER_TAGS_XATTR_NAMES` /
+  `FINDER_COMMENT_XATTR_NAMES`. Payload is the same binary plist everywhere.
+  The exact name a given rsync version produces is unverified against a real
+  Linux box; the list covers the documented forms and extends trivially.
+- **Watcher** — `notify` selects FSEvents on macOS and inotify on Linux by
+  target, not by feature; no configuration needed.
+- **Transcode sandbox** — Seatbelt (`sandbox-exec`) on macOS, bubblewrap on
+  Linux, fail-closed without either (shipped v0.21.0). The flake devshell
+  carries `bubblewrap` on Linux.
+- **CI** — `.github/workflows/ci.yml` runs `cargo test` in the flake
+  devshell on ubuntu and macos, so the Linux path cannot silently rot. The
+  gate tests write tags under whichever mapped name the platform accepts,
+  so fail-closed visibility is exercised on both.
+
+**Deliberately rejected:** running the backend as a local Linux container
+behind the machine-wide shared proxy (the `local-serving` scheme). The
+Finder-metadata coupling above makes that lane wrong for *this* backend;
+localhost dev keeps the repo `Caddyfile` + host Caddy, which exposes nothing.
+LAN/iPhone access, when wanted, is one mDNS name pointed at the host Caddy —
+an explicit, reversible step.
+
+**Deferred to ~1.0 (distribution question, not architecture):** a sandboxed
+macOS app shell over the same core. App Sandbox is compatible with the design
+(network-server entitlement, security-scoped bookmark for the content folder,
+FSEvents and xattrs work in-sandbox), with one real design consequence:
+nested `sandbox-exec` is unavailable inside App Sandbox, so the vips jail
+would become an XPC service with minimal entitlements. App Store vs.
+Developer ID + notarization stays open until then.
+
 ## Roadmap to publishable v0.1
 
 1. **Publish gate** — only `public`-tagged entries are served; everything
