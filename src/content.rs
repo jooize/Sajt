@@ -1587,6 +1587,15 @@ mod tests {
         assert_eq!(extract_excerpt(&d.path().join("page.html"), "html"), None);
     }
 
+    /// Set an xattr under the first platform-accepted name from `names` (macOS
+    /// takes the native Apple name; Linux rejects that namespace and takes the
+    /// `user.`-mapped one — the same list the readers try). Returns false when
+    /// every name is rejected, so a test can skip on an xattr-less filesystem.
+    #[must_use]
+    fn set_mapped_xattr(path: &Path, names: &[&str], buf: &[u8]) -> bool {
+        names.iter().any(|name| xattr::set(path, name, buf).is_ok())
+    }
+
     /// Write Finder tags the way Finder stores them — a binary-plist array of
     /// `"name\nN"` strings in the `_kMDItemUserTags` xattr — so `read_tags_colored`
     /// (and the visibility gate) see them. Returns false when the filesystem
@@ -1597,7 +1606,7 @@ mod tests {
             tags.iter().map(|t| plist::Value::String((*t).to_string())).collect();
         let mut buf = Vec::new();
         plist::to_writer_binary(&mut buf, &plist::Value::Array(arr)).unwrap();
-        xattr::set(path, "com.apple.metadata:_kMDItemUserTags", &buf).is_ok()
+        set_mapped_xattr(path, crate::tags::USER_TAGS_XATTR_NAMES, &buf)
     }
 
     /// Write a Finder comment the way Finder stores it — a binary-plist string in
@@ -1608,7 +1617,7 @@ mod tests {
     fn set_finder_comment(path: &Path, comment: &str) -> bool {
         let mut buf = Vec::new();
         plist::to_writer_binary(&mut buf, &plist::Value::String(comment.to_string())).unwrap();
-        xattr::set(path, "com.apple.metadata:kMDItemFinderComment", &buf).is_ok()
+        set_mapped_xattr(path, crate::tags::FINDER_COMMENT_XATTR_NAMES, &buf)
     }
 
     #[test]
