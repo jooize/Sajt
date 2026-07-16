@@ -1,0 +1,29 @@
+# CI: keep the Linux build honest.
+#
+# Development happens on macOS; the Linux job exists so the cross-platform
+# core (xattr tag mapping, inotify watcher, bwrap transcode sandbox) cannot
+# silently rot. Both jobs run inside the flake devshell so CI exercises the
+# same reproducible environment as `nix develop` on a workstation or server.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - name: cargo test
+        run: nix develop --command cargo test

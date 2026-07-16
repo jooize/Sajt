@@ -27,7 +27,11 @@
             pkgs.vips
             pkgs.cargo-watch
             pkgs.caddy
-          ];
+          ]
+          # bubblewrap sandboxes the vips transcode subprocess on Linux (the
+          # counterpart of macOS sandbox-exec; transcoding fails closed without
+          # it), so a Linux dev shell or server must carry it.
+          ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
         };
       }
     );
