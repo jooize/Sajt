@@ -17,6 +17,15 @@ http://localhost {
 	redir https://localhost{uri} permanent
 }
 
+# Mac-only HTTPS for the Linux fixture container (Apple `container` VM used to
+# live-verify the Linux serving path). *.localhost resolves to loopback, so this
+# is never LAN-reachable. The container IP can drift across container restarts —
+# check `container list` if this stops responding.
+https://linux.localhost {
+	tls internal
+	reverse_proxy [CONTAINER-IP]:1234
+}
+
 https://[LAN-IP] {
 	tls internal
 	import hsts
