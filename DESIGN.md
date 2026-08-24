@@ -332,8 +332,13 @@ a decoder exploit reads pixels, not files:
   the scratch, and HTTPS egress are all denied.
 - **Linux: `bwrap`** — `--unshare-all` (no network) `--die-with-parent`
   `--new-session` `--clearenv`, read-only system binds, scratch mounted at
-  `/scratch` as the only writable mount. Command assembly is unit-tested;
-  live verification still needs a Linux host.
+  `/scratch` as the only writable mount. Command assembly is unit-tested and
+  live-verified (2026-08-24, aarch64 Linux 6.18 in an Apple `container` VM,
+  flake devshell): a GPS-laden TIFF transcodes to a clean JPEG through the
+  sandboxed vips, and controlled probes of the same invocation shape confirm
+  reads outside the scratch (path not even visible), writes outside the
+  scratch, and TCP egress are all denied while the identical operations
+  succeed unsandboxed.
 - **Fail-closed policy:** no sandbox tooling → transcodes are refused
   (affected formats withheld, 415) with a loud startup warning;
   `--unsandboxed-transcode` is the explicit operator opt-out. An available
@@ -404,7 +409,6 @@ boundary (2026-07-15, v0.18.0); PDF strip + verify gates (v0.19.0); SVG strip
 - The Seatbelt profile allows exec only from `/nix/store` — a non-Nix vips
   (e.g. Homebrew) will not run under it. The deploy contract is the Nix
   devshell; a failure is loud, not silent.
-- `bwrap` isolation is unit-tested but not yet live-verified on Linux.
 - Habit worth keeping: run `cargo audit` periodically (or in CI) — the strip
   crates parse attacker-controlled bytes by design.
 - Video stays withheld (no ffmpeg path yet); `public-original` serves exact
