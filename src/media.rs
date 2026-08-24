@@ -34,9 +34,19 @@
 //! (`--unsandboxed-transcode` overrides, loudly). Anything the transcode cannot
 //! clean is withheld — never a silent raw fallback.
 //!
-//! No cleaning path is trusted on the way out: each re-checks its own output
-//! with an independent parse before serving (`verified_ready`, `pdf_is_clean`,
-//! `svg_is_clean`). A strip bug becomes a loud withhold, never a leak.
+//! No cleaner is trusted on the way out. For raster images, every producer
+//! (segment strip, transcode, thumbnail) funnels through one disk pipeline:
+//! the cleaned output lands in a quarantine file, *that file* is re-read and
+//! verified by independent parsers (kamadak-exif finds no sensitive metadata;
+//! `imagesize` confirms it still parses as the claimed container), and only a
+//! verified file is promoted — atomic rename — into the clean store
+//! (`<cache_dir>/media/clean/`), the sole byte source the serving layer reads.
+//! Store reads re-verify on every request, so even a corrupted or tampered
+//! store file withholds loudly instead of serving. [`CleanBytes`] makes the
+//! gate structural: its only constructor is the verifier, so no code path can
+//! hand the serving layer unverified image bytes. PDFs and SVGs re-check their
+//! output in memory the same spirit (`pdf_is_clean`, `svg_is_clean`). A strip
+//! bug becomes a loud withhold, never a leak.
 
 use img_parts::jpeg::{markers, Jpeg};
 use img_parts::png::Png;
@@ -1091,48 +1101,200 @@ const THUMB_MAX_EDGE: &str = "600";
 const TRANSCODE_TAG: &str = "v1-j4096q85";
 const THUMB_TAG: &str = "v1-t600q80";
 
+/// Image bytes that passed the independent output verification — the ONLY form
+/// the serving layer accepts. The fields are private and nothing but
+/// [`verify_bytes`] constructs one, so no serving path, present or future, can
+/// emit image bytes that skipped the verifier: the compiler enforces the gate.
+pub struct CleanBytes {
+    bytes: Vec<u8>,
+    content_type: &'static str,
+}
+
+impl CleanBytes {
+    pub fn content_type(&self) -> &'static str {
+        self.content_type
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
 /// The prepared bytes to serve for an image request.
 pub enum Prepared {
-    /// Serve these bytes with this content type (stripped or transcoded-clean).
-    Ready {
-        bytes: Vec<u8>,
-        content_type: &'static str,
-    },
-    /// Fail closed: the image could not be cleaned (corrupt, or the transcode
-    /// failed / timed out). The caller withholds the bytes.
+    /// Verified-clean bytes (stripped or transcoded), read back out of the
+    /// clean store: serve them.
+    Ready(CleanBytes),
+    /// Fail closed: the image could not be cleaned (corrupt, transcode failed
+    /// or timed out, or a cleaned output failed verification). The caller
+    /// withholds the bytes.
     Withheld,
 }
 
-/// Clean an image for serving: a pure-Rust segment strip when we can ([`strip`]),
-/// else a libvips transcode to a metadata-free JPEG. The transcode output is
-/// disk-cached out-of-tree under `<cache_dir>/media`, keyed by the source content
-/// hash, so the subprocess runs at most once per unique image. `original` files
-/// never reach here — the caller serves their exact bytes directly.
-pub async fn prepare(ext: &str, bytes: &[u8], cache_dir: &Path) -> Prepared {
-    match strip(ext, bytes) {
-        StripOutcome::Clean { bytes, content_type } => verified_ready(bytes, content_type),
+/// Wrap a pipeline result for the serving layer.
+fn ready(clean: Option<CleanBytes>) -> Prepared {
+    match clean {
+        Some(c) => Prepared::Ready(c),
+        None => Prepared::Withheld,
+    }
+}
+
+/// Version tag for the segment-strip pipeline's clean-store entries; bump when
+/// the strip's behavior changes so stale outputs regenerate.
+const STRIP_TAG: &str = "s1";
+
+/// The served MIME for a segment-strippable extension — also the clean-store
+/// filename extension via [`store_ext`]. `None` for formats only the transcode
+/// path can clean.
+fn strip_content_type(norm_ext: &str) -> Option<&'static str> {
+    match norm_ext {
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// Clean an image for serving. Every producer funnels through one disk
+/// pipeline: cleaned bytes (pure-Rust segment strip, or sandboxed libvips
+/// transcode) land in a quarantine file, THAT FILE is re-read and verified by
+/// independent parsers, and only a verified file is promoted — atomic rename —
+/// into the clean store, `<cache_dir>/media/clean/`, the sole byte source the
+/// serving layer reads (re-verifying on every read). `original` files never
+/// reach here — the caller serves their exact bytes directly.
+pub async fn prepare(ext: &str, source: &[u8], cache_dir: &Path) -> Prepared {
+    let norm = crate::entry::normalize_ext(ext);
+    let key = format!("{}-{STRIP_TAG}", content_hash(source));
+    // The strip is deterministic (§8), so its output is clean-store-cached
+    // exactly like a transcode's — a hit skips the strip entirely.
+    if let Some(content_type) = strip_content_type(&norm) {
+        if let Some(clean) = read_clean_store(cache_dir, &key, content_type).await {
+            return Prepared::Ready(clean);
+        }
+    }
+    match strip(ext, source) {
+        StripOutcome::Clean { bytes: cleaned, content_type } => {
+            ready(promote_and_read(&cleaned, content_type, cache_dir, &key).await)
+        }
         StripOutcome::Failed => Prepared::Withheld,
-        StripOutcome::NeedsTranscode => {
-            match vips_clean_jpeg(ext, bytes, cache_dir, TRANSCODE_MAX_EDGE, TRANSCODE_TAG).await {
-                Some(bytes) => verified_ready(bytes, "image/jpeg"),
-                None => Prepared::Withheld,
-            }
+        StripOutcome::NeedsTranscode => ready(
+            vips_clean_jpeg(ext, source, cache_dir, TRANSCODE_MAX_EDGE, TRANSCODE_TAG).await,
+        ),
+    }
+}
+
+/// The independent verifier — the only mint for [`CleanBytes`]. Re-checks a
+/// cleaned output with parsers that did not produce it: kamadak-exif must find
+/// no sensitive metadata, and the bytes must still parse as the image container
+/// the content type claims (a torn write or corrupted store entry is not
+/// servable merely because it carries no EXIF). Any failure is a loud None.
+fn verify_bytes(bytes: Vec<u8>, content_type: &'static str) -> Option<CleanBytes> {
+    if has_sensitive_metadata(&bytes) {
+        tracing::error!("image withheld: cleaned output still carries metadata");
+        return None;
+    }
+    let container = match imagesize::image_type(&bytes) {
+        Ok(t) => t,
+        Err(_) => {
+            tracing::error!("image withheld: cleaned output no longer parses as an image");
+            return None;
+        }
+    };
+    let container_matches = matches!(
+        (container, content_type),
+        (imagesize::ImageType::Jpeg, "image/jpeg")
+            | (imagesize::ImageType::Png, "image/png")
+            | (imagesize::ImageType::Webp, "image/webp")
+    );
+    if !container_matches {
+        tracing::error!("image withheld: cleaned output is not the {content_type} it claims");
+        return None;
+    }
+    Some(CleanBytes { bytes, content_type })
+}
+
+/// Clean-store filename extension for a served content type. Only the types
+/// [`verify_bytes`] admits ever reach the store.
+fn store_ext(content_type: &str) -> &'static str {
+    match content_type {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/webp" => "webp",
+        _ => "bin",
+    }
+}
+
+fn clean_store_path(cache_dir: &Path, key: &str, content_type: &str) -> PathBuf {
+    cache_dir
+        .join("media")
+        .join("clean")
+        .join(format!("{key}.{}", store_ext(content_type)))
+}
+
+/// Read one entry back from the clean store, re-verifying on EVERY read: a
+/// corrupted or tampered store file is withheld — and deleted, so the next
+/// request regenerates it from source — never served.
+async fn read_clean_store(
+    cache_dir: &Path,
+    key: &str,
+    content_type: &'static str,
+) -> Option<CleanBytes> {
+    let path = clean_store_path(cache_dir, key, content_type);
+    let bytes = tokio::fs::read(&path).await.ok()?;
+    match verify_bytes(bytes, content_type) {
+        Some(clean) => Some(clean),
+        None => {
+            tracing::error!(
+                "clean-store entry {} failed re-verification — removed",
+                path.display()
+            );
+            let _ = tokio::fs::remove_file(&path).await;
+            None
         }
     }
 }
 
-/// The last gate before image bytes are declared servable: re-read the cleaned
-/// output with an *independent* parser (kamadak-exif, not the img-parts code
-/// that produced it) and withhold if any sensitive metadata is still readable.
-/// The strip is trusted for nothing — a bug in it, or an img-parts behavior we
-/// did not anticipate (the MPF-trailer class), becomes a loud withhold, never a
-/// served leak.
-fn verified_ready(bytes: Vec<u8>, content_type: &'static str) -> Prepared {
-    if has_sensitive_metadata(&bytes) {
-        tracing::error!("image withheld: strip verification failed — output still carries metadata");
-        return Prepared::Withheld;
+/// The promotion gate between a cleaner's output and anything servable: write
+/// the cleaned bytes to a quarantine file, re-read THAT FILE (what is actually
+/// on disk, not the buffer the cleaner handed over — a torn write fails here),
+/// verify the re-read, and only on a pass rename it atomically into the clean
+/// store. The served bytes then come from a verifying store read like every
+/// other request — nothing is served from the pre-promotion buffer, so there is
+/// no window between what was verified and what is served. Any failure deletes
+/// the quarantine file and withholds; a killed process strands only a
+/// dot-prefixed file that [`sweep_cache`] clears at startup.
+async fn promote_and_read(
+    cleaned: &[u8],
+    content_type: &'static str,
+    cache_dir: &Path,
+    key: &str,
+) -> Option<CleanBytes> {
+    let media = cache_dir.join("media");
+    if tokio::fs::create_dir_all(media.join("clean")).await.is_err() {
+        return None;
     }
-    Prepared::Ready { bytes, content_type }
+    let uniq = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let quarantine = media.join(format!(".q.{key}.{uniq}"));
+    if tokio::fs::write(&quarantine, cleaned).await.is_err() {
+        let _ = tokio::fs::remove_file(&quarantine).await;
+        return None;
+    }
+    let verified = match tokio::fs::read(&quarantine).await {
+        Ok(reread) => verify_bytes(reread, content_type).is_some(),
+        Err(_) => false,
+    };
+    if !verified {
+        tracing::error!("image withheld: quarantined output failed file verification ({key})");
+        let _ = tokio::fs::remove_file(&quarantine).await;
+        return None;
+    }
+    let dest = clean_store_path(cache_dir, key, content_type);
+    if tokio::fs::rename(&quarantine, &dest).await.is_err() {
+        tracing::error!("image withheld: could not promote {key} into the clean store");
+        let _ = tokio::fs::remove_file(&quarantine).await;
+        return None;
+    }
+    read_clean_store(cache_dir, key, content_type).await
 }
 
 /// Produce a small, clean JPEG thumbnail for a gallery tile. Unlike [`prepare`],
@@ -1141,26 +1303,24 @@ fn verified_ready(bytes: Vec<u8>, content_type: &'static str) -> Prepared {
 /// so it is stripped even when the full asset it links to is served exact. Cached
 /// separately from the full view via [`THUMB_TAG`].
 pub async fn thumbnail(ext: &str, bytes: &[u8], cache_dir: &Path) -> Prepared {
-    match vips_clean_jpeg(ext, bytes, cache_dir, THUMB_MAX_EDGE, THUMB_TAG).await {
-        Some(bytes) => verified_ready(bytes, "image/jpeg"),
-        None => Prepared::Withheld,
-    }
+    ready(vips_clean_jpeg(ext, bytes, cache_dir, THUMB_MAX_EDGE, THUMB_TAG).await)
 }
 
 /// Decode any raster with libvips and re-encode a clean JPEG capped at
 /// `max_edge`, keeping the source ICC and baking in orientation; the JPEG still
 /// carries the source EXIF/GPS, so it is run back through the segment strip to
-/// drop the metadata while keeping the color profile libvips preserved. Result is
-/// cached out-of-tree keyed by source hash + `tag`, so the subprocess runs at
-/// most once per (image, size). Returns the cleaned bytes, or `None` on any
-/// failure (fail closed).
+/// drop the metadata while keeping the color profile libvips preserved. The
+/// result goes through the same quarantine → verify → promote gate as every
+/// cleaner ([`promote_and_read`]) into the clean store keyed by source hash +
+/// `tag`, so the subprocess runs at most once per (image, size). Returns the
+/// store-read verified bytes, or `None` on any failure (fail closed).
 async fn vips_clean_jpeg(
     ext: &str,
     bytes: &[u8],
     cache_dir: &Path,
     max_edge: &str,
     tag: &str,
-) -> Option<Vec<u8>> {
+) -> Option<CleanBytes> {
     // Decompression-bomb gate: read the declared dimensions from the header
     // (pure Rust, no decode) and refuse anything over the cap — or whose
     // dimensions cannot be read at all — before libvips ever sees the bytes.
@@ -1172,16 +1332,15 @@ async fn vips_clean_jpeg(
     tokio::fs::create_dir_all(&media).await.ok()?;
 
     let key = format!("{}-{}", content_hash(bytes), tag);
-    let cached = media.join(format!("{key}.jpg"));
-    if let Ok(b) = tokio::fs::read(&cached).await {
-        return Some(b);
+    if let Some(clean) = read_clean_store(cache_dir, &key, "image/jpeg").await {
+        return Some(clean);
     }
 
-    // Serialize heavy work behind the limiter, then re-check the cache: a
-    // concurrent request for the same image may have produced it while we waited.
+    // Serialize heavy work behind the limiter, then re-check the store: a
+    // concurrent request for the same image may have promoted it while we waited.
     let _permit = VIPS_SEMAPHORE.acquire().await.ok()?;
-    if let Ok(b) = tokio::fs::read(&cached).await {
-        return Some(b);
+    if let Some(clean) = read_clean_store(cache_dir, &key, "image/jpeg").await {
+        return Some(clean);
     }
 
     // Per-job scratch directory: the ONE place the sandboxed subprocess may
@@ -1211,13 +1370,8 @@ async fn vips_clean_jpeg(
         _ => return None,
     };
 
-    // Publish to the cache atomically so a concurrent reader never sees a partial
-    // file (write a sibling temp, then rename).
-    let wip = media.join(format!(".{key}.{uniq}.wip.jpg"));
-    if tokio::fs::write(&wip, &cleaned).await.is_ok() {
-        let _ = tokio::fs::rename(&wip, &cached).await;
-    }
-    Some(cleaned)
+    // Quarantine → verify-the-file → promote; serve from the verified store.
+    promote_and_read(&cleaned, "image/jpeg", cache_dir, &key).await
 }
 
 /// Run one libvips transcode as an OS-sandboxed subprocess. Untrusted bytes go
@@ -1376,19 +1530,24 @@ pub fn sweep_cache(cache_dir: &Path) {
         Err(_) => return, // no media cache yet — nothing to sweep
     };
     for entry in entries.flatten() {
-        if !entry.file_name().to_string_lossy().starts_with('.') {
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        // The verified clean store is the one thing that persists; everything
+        // else under media/ is in-flight (dot-prefixed quarantine files and
+        // transcode scratch dirs — possibly holding untrusted full-metadata
+        // input a killed process stranded) or a legacy flat cache file nothing
+        // reads anymore.
+        if is_dir && entry.file_name().to_string_lossy() == "clean" {
             continue;
         }
         let path = entry.path();
-        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
         let removed = if is_dir {
             std::fs::remove_dir_all(&path)
         } else {
             std::fs::remove_file(&path)
         };
         match removed {
-            Ok(()) => tracing::info!("swept stale transcode temp {}", path.display()),
-            Err(e) => tracing::warn!("could not sweep transcode temp {}: {e}", path.display()),
+            Ok(()) => tracing::info!("swept stale media temp {}", path.display()),
+            Err(e) => tracing::warn!("could not sweep media temp {}: {e}", path.display()),
         }
     }
 }
@@ -1513,6 +1672,54 @@ mod tests {
             0x11, 0x22, 0x33, // entropy
             0xFF, 0xD9, // EOI
         ]
+    }
+
+    /// A real, decodable 1x1 baseline JPEG (imagemagick-generated, metadata-free).
+    /// Unlike [`tiny_jpeg`] — whose header-only SOS img-parts mangles on a
+    /// round-trip — this survives the strip intact, so it can exercise the full
+    /// strip → verify → promote pipeline.
+    fn real_jpeg() -> Vec<u8> {
+        vec![
+            255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0,
+            255, 219, 0, 67, 0, 5, 3, 4, 4, 4, 3, 5, 4, 4, 4, 5, 5, 5, 6, 7,
+            12, 8, 7, 7, 7, 7, 15, 11, 11, 9, 12, 17, 15, 18, 18, 17, 15, 17, 17, 19,
+            22, 28, 23, 19, 20, 26, 21, 17, 17, 24, 33, 24, 26, 29, 29, 31, 31, 31, 19, 23,
+            34, 36, 34, 30, 36, 28, 30, 31, 30, 255, 219, 0, 67, 1, 5, 5, 5, 7, 6, 7,
+            14, 8, 8, 14, 30, 20, 17, 20, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+            30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+            30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 255, 192,
+            0, 17, 8, 0, 1, 0, 1, 3, 1, 34, 0, 2, 17, 1, 3, 17, 1, 255, 196, 0,
+            21, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6,
+            255, 196, 0, 20, 16, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 255, 196, 0, 21, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 7, 8, 255, 196, 0, 20, 17, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 255, 218, 0, 12, 3, 1, 0, 2, 17, 3, 17, 0, 63,
+            0, 141, 1, 67, 18, 159, 255, 217,
+        ]
+    }
+
+    /// [`real_jpeg`] with an APP1 EXIF segment (Make tag) spliced in after SOI —
+    /// the class of metadata the pipeline must never let through.
+    fn jpeg_with_make() -> Vec<u8> {
+        let tiff = [
+            b'I', b'I', 0x2A, 0x00, // little-endian TIFF magic
+            0x08, 0, 0, 0, // IFD0 at offset 8
+            0x01, 0x00, // one entry
+            0x0F, 0x01, // tag 0x010F (Make)
+            0x02, 0x00, // type ASCII
+            0x04, 0, 0, 0, // count 4 (fits inline)
+            b'C', b'a', b'm', 0, // "Cam\0"
+            0, 0, 0, 0, // no next IFD
+        ];
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.extend_from_slice(&tiff);
+        let mut segment = vec![0xFF, 0xE1];
+        segment.extend_from_slice(&((app1.len() + 2) as u16).to_be_bytes());
+        segment.extend_from_slice(&app1);
+        let mut jpeg = real_jpeg();
+        jpeg.splice(2..2, segment);
+        assert!(has_sensitive_metadata(&jpeg), "fixture must carry EXIF Make");
+        jpeg
     }
 
     #[test]
@@ -1798,9 +2005,14 @@ mod tests {
             0, 0, 0, 0, // no next IFD
         ];
         assert!(has_sensitive_metadata(&tiff));
-        assert!(matches!(verified_ready(tiff, "image/tiff"), Prepared::Withheld));
+        assert!(verify_bytes(tiff, "image/tiff").is_none());
         // A clean image passes the gate.
-        assert!(matches!(verified_ready(tiny_jpeg(), "image/jpeg"), Prepared::Ready { .. }));
+        assert!(verify_bytes(tiny_jpeg(), "image/jpeg").is_some());
+        // Clean bytes claiming the wrong container are rejected: a JPEG is not
+        // servable as image/png no matter how metadata-free it is.
+        assert!(verify_bytes(tiny_jpeg(), "image/png").is_none());
+        // Garbage without metadata is still not an image.
+        assert!(verify_bytes(b"no container here".to_vec(), "image/jpeg").is_none());
     }
 
     #[test]
@@ -1899,19 +2111,105 @@ mod tests {
     }
 
     #[test]
-    fn sweep_clears_only_dot_prefixed_entries() {
+    fn sweep_clears_everything_but_the_clean_store() {
         let root = std::env::temp_dir().join(format!("esko-sweep-test-{}", std::process::id()));
         let media = root.join("media");
         std::fs::create_dir_all(media.join(".tx.deadbeef.3")).unwrap();
         std::fs::write(media.join(".tx.deadbeef.3/in.heic"), b"stranded input").unwrap();
-        std::fs::write(media.join(".abc.0.wip.jpg"), b"stranded publish").unwrap();
-        std::fs::write(media.join("deadbeef-v1-j4096q85.jpg"), b"cached result").unwrap();
+        std::fs::write(media.join(".q.deadbeef-s1.0"), b"stranded quarantine").unwrap();
+        std::fs::write(media.join("deadbeef-v1-j4096q85.jpg"), b"legacy flat cache").unwrap();
+        std::fs::create_dir_all(media.join("clean")).unwrap();
+        std::fs::write(media.join("clean/deadbeef-s1.jpg"), b"verified store entry").unwrap();
         sweep_cache(&root);
         assert!(!media.join(".tx.deadbeef.3").exists(), "scratch dir swept");
-        assert!(!media.join(".abc.0.wip.jpg").exists(), "wip file swept");
-        assert!(media.join("deadbeef-v1-j4096q85.jpg").exists(), "cache kept");
+        assert!(!media.join(".q.deadbeef-s1.0").exists(), "quarantine file swept");
+        assert!(!media.join("deadbeef-v1-j4096q85.jpg").exists(), "legacy flat cache swept");
+        assert!(media.join("clean/deadbeef-s1.jpg").exists(), "clean store kept");
         // A missing cache dir is fine (fresh install).
         sweep_cache(Path::new("/nonexistent-esko-cache"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn promotion_gate_populates_store_and_rejects_dirty_output() {
+        let root =
+            std::env::temp_dir().join(format!("esko-promote-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        // A verified-clean output is promoted and read back from the store.
+        let clean = promote_and_read(&tiny_jpeg(), "image/jpeg", &root, "aaaa-s1").await;
+        let clean = clean.expect("clean output must promote");
+        assert_eq!(clean.content_type(), "image/jpeg");
+        assert!(
+            clean_store_path(&root, "aaaa-s1", "image/jpeg").exists(),
+            "promoted file lives in the clean store"
+        );
+        assert!(
+            read_clean_store(&root, "aaaa-s1", "image/jpeg").await.is_some(),
+            "store read verifies and returns the entry"
+        );
+
+        // A dirty output — pretend a broken strip let EXIF through — is refused:
+        // nothing lands in the store, no quarantine file is left behind.
+        assert!(
+            promote_and_read(&jpeg_with_make(), "image/jpeg", &root, "bbbb-s1").await.is_none(),
+            "dirty output must not promote"
+        );
+        assert!(
+            !clean_store_path(&root, "bbbb-s1", "image/jpeg").exists(),
+            "nothing in the clean store"
+        );
+        // Garbage that parses as no image container is refused too.
+        assert!(
+            promote_and_read(b"not an image", "image/jpeg", &root, "cccc-s1").await.is_none()
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(root.join("media"))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with('.'))
+            .collect();
+        assert!(leftovers.is_empty(), "no quarantine files left behind: {leftovers:?}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn poisoned_store_entry_is_withheld_and_removed() {
+        let root =
+            std::env::temp_dir().join(format!("esko-poison-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // A file placed in the store without going through the promotion gate
+        // (disk corruption, tampering, a version-drift bug) must never serve:
+        // the per-read verification withholds it and removes the entry so the
+        // next request regenerates from source.
+        let poisoned = clean_store_path(&root, "dddd-s1", "image/jpeg");
+        std::fs::create_dir_all(poisoned.parent().unwrap()).unwrap();
+        std::fs::write(&poisoned, jpeg_with_make()).unwrap();
+        assert!(
+            read_clean_store(&root, "dddd-s1", "image/jpeg").await.is_none(),
+            "poisoned entry must withhold"
+        );
+        assert!(!poisoned.exists(), "poisoned entry removed for regeneration");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn prepare_strip_path_serves_from_the_clean_store() {
+        let root =
+            std::env::temp_dir().join(format!("esko-prepare-store-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let source = jpeg_with_make();
+        let key = format!("{}-{STRIP_TAG}", content_hash(&source));
+        let first = prepare("jpg", &source, &root).await;
+        let Prepared::Ready(clean) = first else {
+            panic!("strippable JPEG must serve")
+        };
+        assert!(!has_sensitive_metadata(&clean.into_bytes()));
+        assert!(
+            clean_store_path(&root, &key, "image/jpeg").exists(),
+            "strip output was promoted into the clean store"
+        );
+        // Second request is a store hit (still verified per read).
+        assert!(matches!(prepare("jpg", &source, &root).await, Prepared::Ready(_)));
         std::fs::remove_dir_all(&root).unwrap();
     }
 

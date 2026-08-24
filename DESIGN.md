@@ -314,6 +314,35 @@ construct remains, embedded rasters re-verified). Dirty *or unparseable*
 output → loud error and withhold. A logic bug in a strip becomes a 415, never
 a leak.
 
+#### The clean store — quarantine, verify the file, promote (v0.25.0, 2026-08-24)
+
+For raster images the verify gate is **structural**, not just a call in the
+right place. Every producer — segment strip, sandboxed transcode, thumbnail —
+funnels through one disk pipeline:
+
+1. the cleaned output is written to a **quarantine file**
+   (`<cache>/media/.q.<key>.<n>`, dot-prefixed so the startup sweep clears
+   strands);
+2. **that file is re-read from disk** and verified by independent parsers —
+   `kamadak-exif` must find no sensitive metadata AND `imagesize` must confirm
+   the bytes still parse as the container the content type claims (a torn
+   write or a strip that mangled the file is refused, not served);
+3. only a verified file is **promoted** — atomic rename — into the clean store
+   `<cache>/media/clean/`, the **sole byte source** the serving layer reads;
+4. store reads **re-verify on every request**: a corrupted or tampered store
+   entry withholds loudly and is deleted for regeneration, never served.
+
+Nothing is served from a pre-promotion buffer, so there is no window between
+what was verified and what is served. The gate is compile-enforced:
+`media::CleanBytes` has private fields and its only constructor is the
+verifier (`verify_bytes`), so no serving path — present or future — can emit
+image bytes that skipped it. Deterministic strips (§8) make the store a cache:
+strip outputs are now disk-cached alongside transcodes, keyed by source
+content hash + pipeline version tag. The sweep keeps `media/clean/` and
+removes everything else under `media/` at startup (in-flight temp files and
+the legacy flat cache layout). PDFs and SVGs keep their in-memory verify gates
+(above); folding them into the same store is a candidate follow-up.
+
 #### The sandboxed transcode (v0.21.0, 2026-07-15)
 
 libvips decodes attacker-controlled bytes, so the subprocess is OS-confined —

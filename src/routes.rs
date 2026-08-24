@@ -991,8 +991,9 @@ async fn serve_image(
         crate::media::prepare(ext, &bytes, cache_dir).await
     };
     match prepared {
-        crate::media::Prepared::Ready { bytes, content_type } => {
-            clean_bytes_response(bytes, content_type)
+        crate::media::Prepared::Ready(clean) => {
+            let content_type = clean.content_type();
+            clean_bytes_response(clean.into_bytes(), content_type)
         }
         crate::media::Prepared::Withheld => metadata_withheld(),
     }
