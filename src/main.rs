@@ -43,6 +43,13 @@ struct Args {
     #[arg(long, default_value_t = 1234)]
     port: u16,
 
+    /// Address to bind. The loopback default keeps the server reachable only
+    /// through the local reverse proxy; set 0.0.0.0 only where the network
+    /// boundary is elsewhere (e.g. inside a container whose host does TLS).
+    /// The grading tool is NOT affected — it always binds loopback.
+    #[arg(long, default_value = "127.0.0.1")]
+    listen: std::net::IpAddr,
+
     /// Embed liveness check interval in hours (0 = disabled)
     #[arg(long, default_value_t = 24)]
     embed_check_hours: u64,
@@ -281,7 +288,7 @@ async fn main() {
         .layer(tower_http::catch_panic::CatchPanicLayer::new())
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
+    let addr = SocketAddr::from((args.listen, args.port));
     tracing::info!("Listening on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr)
