@@ -369,12 +369,15 @@ rendition, which therefore lives only at an address that says so:
 - The image page displays the rendition (`<img src="…?as=jpeg">`) and its
   notice says so: "Shown as a JPEG rendition …".
 
-Transcode quality is fixed (full view: max edge 4096, JPEG Q=85; tiles: max
-edge 600, Q=80) and deliberately NOT visitor-configurable: a `?quality=` would
-make every distinct value a fresh sandboxed vips run plus a permanent
-clean-store entry — attacker-scalable CPU and disk — for no visitor benefit
-over a well-chosen constant. If quality ever needs tuning it becomes an
-author-side server flag (a new cache tag), not a URL parameter.
+Transcode quality is author-side only, never a URL parameter: a visitor
+`?quality=` would make every distinct value a fresh sandboxed vips run plus a
+permanent clean-store entry — attacker-scalable CPU and disk — for no visitor
+benefit over a well-chosen constant. **`--jpeg-quality` (1-100, default 85,
+SHIPPED v0.27.0)** sets the full-view rendition quality; the value is part of
+the clean-store cache key, so changing it regenerates renditions on demand and
+can never serve a stale quality. Sizes stay fixed (full view: max edge 4096;
+tiles: max edge 600 at Q=80) — `?thumb` selects between exactly these two
+renditions, it is not a size dial, for the same reason quality is not one.
 
 #### The sandboxed transcode (v0.21.0, 2026-07-15)
 

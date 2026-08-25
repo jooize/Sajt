@@ -960,12 +960,12 @@ fn is_executable_file(p: &Path) -> bool {
 }
 
 /// The vips CLI invocation shared by every mode: sniff the real format from the
-/// content of `in.<ext>`, resize down to `max_edge`, write a quality-85 JPEG.
-fn vips_cli_args(tin: &Path, tout: &Path, max_edge: &str) -> Vec<OsString> {
+/// content of `in.<ext>`, resize down to `max_edge`, write a JPEG at `quality`.
+fn vips_cli_args(tin: &Path, tout: &Path, max_edge: &str, quality: u8) -> Vec<OsString> {
     vec![
         "thumbnail".into(),
         tin.as_os_str().to_owned(),
-        format!("{}[Q=85]", tout.display()).into(),
+        format!("{}[Q={quality}]", tout.display()).into(),
         max_edge.into(),
         "--size".into(),
         "down".into(),
@@ -1017,13 +1017,14 @@ fn seatbelt_invocation(
     tin: &Path,
     tout: &Path,
     max_edge: &str,
+    quality: u8,
 ) -> (PathBuf, Vec<OsString>) {
     let mut args: Vec<OsString> = vec![
         "-p".into(),
         seatbelt_profile(scratch).into(),
         vips.as_os_str().to_owned(),
     ];
-    args.extend(vips_cli_args(tin, tout, max_edge));
+    args.extend(vips_cli_args(tin, tout, max_edge, quality));
     (PathBuf::from(SANDBOX_EXEC), args)
 }
 
@@ -1038,6 +1039,7 @@ fn bwrap_invocation(
     scratch: &Path,
     ext: &str,
     max_edge: &str,
+    quality: u8,
 ) -> (PathBuf, Vec<OsString>) {
     let mut args: Vec<OsString> = Vec::new();
     for flag in ["--unshare-all", "--die-with-parent", "--new-session", "--clearenv"] {
@@ -1069,6 +1071,7 @@ fn bwrap_invocation(
         Path::new(&format!("/scratch/in.{ext}")),
         Path::new("/scratch/out.jpg"),
         max_edge,
+        quality,
     ));
     (bwrap.to_owned(), args)
 }
@@ -1098,8 +1101,39 @@ const THUMB_MAX_EDGE: &str = "600";
 /// Version tags folded into the cache key, so changing a pipeline's parameters
 /// (size/quality) invalidates old cache entries without a manual purge. The tag
 /// also separates the full-view and thumbnail caches for the same source image.
-const TRANSCODE_TAG: &str = "v1-j4096q85";
+/// Full-view transcodes carry the configured quality in their tag (see
+/// [`transcode_tag`]); tiles are fixed.
 const THUMB_TAG: &str = "v1-t600q80";
+const THUMB_QUALITY: u8 = 80;
+
+/// Author-configured JPEG quality for full-view transcoded renditions
+/// (`--jpeg-quality`, 1-100, default 85). Startup-set like the transcode mode;
+/// uninitialized reads as the default. Deliberately NOT visitor-controlled: a
+/// per-request quality would make every distinct value a fresh sandboxed vips
+/// run plus a permanent clean-store entry.
+static JPEG_QUALITY: OnceLock<u8> = OnceLock::new();
+
+const DEFAULT_JPEG_QUALITY: u8 = 85;
+
+/// Record the author-configured full-view JPEG quality (clap has already
+/// range-checked 1-100). Called once at server startup.
+pub fn init_jpeg_quality(quality: u8) {
+    if quality != DEFAULT_JPEG_QUALITY {
+        tracing::info!("full-view JPEG renditions transcode at quality {quality} (--jpeg-quality)");
+    }
+    let _ = JPEG_QUALITY.set(quality);
+}
+
+fn jpeg_quality() -> u8 {
+    JPEG_QUALITY.get().copied().unwrap_or(DEFAULT_JPEG_QUALITY)
+}
+
+/// The full-view transcode's cache tag. Quality is part of it, so changing
+/// `--jpeg-quality` regenerates renditions on demand and never serves a stale
+/// quality; old entries are just unused files in the clean store.
+fn transcode_tag(quality: u8) -> String {
+    format!("v1-j{TRANSCODE_MAX_EDGE}q{quality}")
+}
 
 /// Image bytes that passed the independent output verification — the ONLY form
 /// the serving layer accepts. The fields are private and nothing but
@@ -1187,9 +1221,20 @@ pub async fn prepare(ext: &str, source: &[u8], cache_dir: &Path) -> Prepared {
             ready(promote_and_read(&cleaned, content_type, cache_dir, &key).await)
         }
         StripOutcome::Failed => Prepared::Withheld,
-        StripOutcome::NeedsTranscode => ready(
-            vips_clean_jpeg(ext, source, cache_dir, TRANSCODE_MAX_EDGE, TRANSCODE_TAG).await,
-        ),
+        StripOutcome::NeedsTranscode => {
+            let quality = jpeg_quality();
+            ready(
+                vips_clean_jpeg(
+                    ext,
+                    source,
+                    cache_dir,
+                    TRANSCODE_MAX_EDGE,
+                    &transcode_tag(quality),
+                    quality,
+                )
+                .await,
+            )
+        }
     }
 }
 
@@ -1313,7 +1358,7 @@ async fn promote_and_read(
 /// so it is stripped even when the full asset it links to is served exact. Cached
 /// separately from the full view via [`THUMB_TAG`].
 pub async fn thumbnail(ext: &str, bytes: &[u8], cache_dir: &Path) -> Prepared {
-    ready(vips_clean_jpeg(ext, bytes, cache_dir, THUMB_MAX_EDGE, THUMB_TAG).await)
+    ready(vips_clean_jpeg(ext, bytes, cache_dir, THUMB_MAX_EDGE, THUMB_TAG, THUMB_QUALITY).await)
 }
 
 /// Decode any raster with libvips and re-encode a clean JPEG capped at
@@ -1330,6 +1375,7 @@ async fn vips_clean_jpeg(
     cache_dir: &Path,
     max_edge: &str,
     tag: &str,
+    quality: u8,
 ) -> Option<CleanBytes> {
     // Decompression-bomb gate: read the declared dimensions from the header
     // (pure Rust, no decode) and refuse anything over the cap — or whose
@@ -1362,7 +1408,7 @@ async fn vips_clean_jpeg(
     tokio::fs::create_dir_all(&scratch).await.ok()?;
     let norm = crate::entry::normalize_ext(ext);
 
-    let ran = run_vips_transcode(bytes, &scratch, &norm, max_edge).await;
+    let ran = run_vips_transcode(bytes, &scratch, &norm, max_edge, quality).await;
     let raw = if ran {
         tokio::fs::read(scratch.join("out.jpg")).await.ok()
     } else {
@@ -1395,7 +1441,13 @@ async fn vips_clean_jpeg(
 /// RLIMIT_CPU backstop (inherited through the sandbox wrapper into vips).
 /// With no sandbox and no explicit override, refuses to run at all (fail
 /// closed). Returns whether it succeeded.
-async fn run_vips_transcode(bytes: &[u8], scratch: &Path, ext: &str, max_edge: &str) -> bool {
+async fn run_vips_transcode(
+    bytes: &[u8],
+    scratch: &Path,
+    ext: &str,
+    max_edge: &str,
+    quality: u8,
+) -> bool {
     let mode = transcode_mode();
     if matches!(mode, TranscodeMode::Disabled) {
         tracing::warn!(
@@ -1413,12 +1465,14 @@ async fn run_vips_transcode(bytes: &[u8], scratch: &Path, ext: &str, max_edge: &
 
     let vips = find_on_path("vips").unwrap_or_else(|| PathBuf::from("vips"));
     let (program, args) = match mode {
-        TranscodeMode::Seatbelt => seatbelt_invocation(&vips, scratch, &tin, &tout, max_edge),
+        TranscodeMode::Seatbelt => {
+            seatbelt_invocation(&vips, scratch, &tin, &tout, max_edge, quality)
+        }
         TranscodeMode::Bwrap => {
             let bwrap = find_on_path("bwrap").unwrap_or_else(|| PathBuf::from("bwrap"));
-            bwrap_invocation(&bwrap, &vips, scratch, ext, max_edge)
+            bwrap_invocation(&bwrap, &vips, scratch, ext, max_edge, quality)
         }
-        TranscodeMode::Unsandboxed => (vips.clone(), vips_cli_args(&tin, &tout, max_edge)),
+        TranscodeMode::Unsandboxed => (vips.clone(), vips_cli_args(&tin, &tout, max_edge, quality)),
         TranscodeMode::Disabled => unreachable!("refused above"),
     };
 
@@ -2048,7 +2102,7 @@ mod tests {
         // and a transcode must refuse to run (fail closed), touching nothing.
         let scratch = std::env::temp_dir().join(format!("esko-tx-refuse-{}", std::process::id()));
         std::fs::create_dir_all(&scratch).unwrap();
-        assert!(!run_vips_transcode(b"bytes", &scratch, "heic", "4096").await);
+        assert!(!run_vips_transcode(b"bytes", &scratch, "heic", "4096", 85).await);
         assert!(!scratch.join("in.heic").exists(), "input must not be written");
         std::fs::remove_dir_all(&scratch).unwrap();
     }
@@ -2075,6 +2129,7 @@ mod tests {
             Path::new("/cache/media/.tx.k.1"),
             "heic",
             "4096",
+            85,
         );
         assert_eq!(prog, Path::new("/usr/bin/bwrap"));
         let a: Vec<String> = args.iter().map(|s| s.to_string_lossy().into_owned()).collect();
@@ -2118,6 +2173,18 @@ mod tests {
         assert!(!decode_size_allowed(b"not an image at all"));
         // A real-world size passes.
         assert!(decode_size_allowed(&png_header(1600, 1200)));
+    }
+
+    #[test]
+    fn transcode_tag_carries_the_configured_quality() {
+        // Quality is part of the cache key, so a changed --jpeg-quality can
+        // never serve a stale rendition — the key simply misses.
+        assert_eq!(transcode_tag(85), "v1-j4096q85");
+        assert_eq!(transcode_tag(60), "v1-j4096q60");
+        // The quality lands in the vips output argument.
+        let args = vips_cli_args(Path::new("/s/in.tif"), Path::new("/s/out.jpg"), "4096", 60);
+        let a: Vec<String> = args.iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        assert!(a.contains(&"/s/out.jpg[Q=60]".to_string()));
     }
 
     #[test]

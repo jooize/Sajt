@@ -54,6 +54,13 @@ struct Args {
     #[arg(long, default_value_t = 24)]
     embed_check_hours: u64,
 
+    /// JPEG quality (1-100) for full-view transcoded renditions (`?as=jpeg`).
+    /// Author-side only, never a URL parameter. The value is part of the
+    /// clean-store cache key, so changing it regenerates renditions on demand;
+    /// gallery tiles keep their own fixed quality.
+    #[arg(long, default_value_t = 85, value_parser = clap::value_parser!(u8).range(1..=100))]
+    jpeg_quality: u8,
+
     /// Allow image transcodes to run WITHOUT an OS sandbox when none is
     /// available (sandbox-exec on macOS, bwrap on Linux). The default is
     /// fail-closed: with no sandbox tooling, formats that need a transcode
@@ -153,6 +160,7 @@ async fn main() {
     // decide — loudly — how the vips subprocess is confined for this run.
     media::sweep_cache(&cache_dir);
     media::init_transcode(args.unsandboxed_transcode);
+    media::init_jpeg_quality(args.jpeg_quality);
 
     let mut store = content::ContentStore::scan(&content_dir, &cache_dir)
         .expect("Failed to scan content directory");
