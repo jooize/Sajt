@@ -41,9 +41,14 @@ fn pandoc_format(ext: &str) -> Option<&'static str> {
     }
 }
 
-/// Check if extension is an image type.
+/// Whether an image post renders as an image page (header + `<img>` + privacy
+/// notice). Delegates to the canonical medium predicate so a transcode-only
+/// format (HEIC/TIFF/...) gets the same page as a JPEG — the `<img>` src is the
+/// raw route, which serves whatever clean derivative the privacy gate produces.
+/// `svg`/`ico` are render-page extras: browsers display them, but they are not
+/// raster media in `entry::is_image_ext` terms.
 fn is_image(ext: &str) -> bool {
-    matches!(ext, "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" | "avif" | "ico" | "bmp")
+    crate::entry::is_image_ext(ext) || matches!(ext, "svg" | "ico")
 }
 
 /// Render content based on file extension.
@@ -134,4 +139,25 @@ async fn render_pandoc(input_format: &str, content: &[u8]) -> Result<String, Str
     }
 
     String::from_utf8(output.stdout).map_err(|e| format!("Pandoc output not UTF-8: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn transcode_only_formats_render_the_image_page() {
+        // Regression: is_image once had a stale private list without heic/tiff,
+        // so those posts fell into the Download branch and served bare bytes at
+        // their canonical URL instead of rendering the image page like a JPEG.
+        for ext in ["tif", "tiff", "heic", "heif", "jpg", "png", "webp", "gif", "avif", "bmp"] {
+            assert!(
+                matches!(
+                    render_entry(ext, b"irrelevant").await,
+                    Ok(RenderedContent::Image { .. })
+                ),
+                "{ext} post must render as an image page"
+            );
+        }
+    }
 }
