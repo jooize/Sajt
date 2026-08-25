@@ -177,13 +177,25 @@ pub async fn catch_all(
     // `?thumb` requests a small gallery-tile rendition of an image asset
     // (post-model.md §8, C8c) instead of the full stripped/transcoded view.
     let thumb = params.contains_key("thumb");
+    // `?as=jpeg` names the served representation when it is not the file's own
+    // container: the clean JPEG rendition of a transcode-only format, and any
+    // non-JPEG source's `?thumb` tile. The URL never lies about the bytes — the
+    // bare URL of such a file answers 303 to this address instead. Unknown
+    // values fail closed.
+    let as_jpeg = match params.get("as").map(String::as_str) {
+        None => false,
+        Some("jpeg") => true,
+        Some(_) => return not_found(),
+    };
+    // The request path re-encoded, for building the honest-address redirect.
+    let raw_href = templates::encode_path(&format!("/{}", path));
 
     let store = store.read().await;
     let all_entries: Vec<&Entry> = store.entries.iter().collect();
 
     // Folder-post asset (`/{folder}/{asset…}`): resolved before the query parser,
     // which would otherwise misread the multi-segment path as a label.
-    if let Some(resp) = try_asset(&all_entries, &path, &store.content_dir, &store.cache_dir, embed, thumb).await {
+    if let Some(resp) = try_asset(&all_entries, &path, &store.content_dir, &store.cache_dir, embed, thumb, as_jpeg, &raw_href).await {
         return resp;
     }
 
@@ -217,7 +229,7 @@ pub async fn catch_all(
 
     // Raw file request (URL has extension like sunset.jpg)
     if let Some(ref raw_ext) = query.raw_extension {
-        return serve_raw_file(&matching, raw_ext, &store.cache_dir, embed).await;
+        return serve_raw_file(&matching, raw_ext, &store.cache_dir, embed, as_jpeg, &raw_href).await;
     }
 
     // Listing: a trailing slash, or a date-only / tag-only filter with no label
@@ -348,6 +360,8 @@ async fn try_asset(
     cache_dir: &std::path::Path,
     embed: bool,
     thumb: bool,
+    as_jpeg: bool,
+    raw_href: &str,
 ) -> Option<Response> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.len() < 2 {
@@ -418,7 +432,7 @@ async fn try_asset(
     match crate::media::classify(ext, &bytes) {
         crate::media::Disposition::Image => {
             let is_original = file_serves_original(&canon_file);
-            return Some(serve_image(bytes, ext, is_original, thumb, cache_dir).await);
+            return Some(serve_image(bytes, ext, is_original, thumb, as_jpeg, raw_href, cache_dir).await);
         }
         crate::media::Disposition::Pdf => {
             return Some(serve_pdf(bytes, file_serves_original(&canon_file), &canon_file));
@@ -834,7 +848,8 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
                 .into_response()
         }
         Ok(RenderedContent::Download { .. }) => {
-            serve_raw_bytes(entry, false, &store.cache_dir).await
+            let raw_href = templates::canonical_raw_href(entry, &all);
+            serve_raw_bytes(entry, false, false, &raw_href, &store.cache_dir).await
         }
         Err(e) => {
             tracing::error!("Render error for {}: {}", entry.path.display(), e);
@@ -852,6 +867,8 @@ async fn serve_raw_file(
     requested_ext: &str,
     cache_dir: &std::path::Path,
     embed: bool,
+    as_jpeg: bool,
+    raw_href: &str,
 ) -> Response {
     let entry = matching
         .iter()
@@ -859,12 +876,18 @@ async fn serve_raw_file(
         .min_by_key(|e| e.timestamp);
 
     match entry {
-        Some(entry) => serve_raw_bytes(entry, embed, cache_dir).await,
+        Some(entry) => serve_raw_bytes(entry, embed, as_jpeg, raw_href, cache_dir).await,
         None => not_found(),
     }
 }
 
-async fn serve_raw_bytes(entry: &Entry, embed: bool, cache_dir: &std::path::Path) -> Response {
+async fn serve_raw_bytes(
+    entry: &Entry,
+    embed: bool,
+    as_jpeg: bool,
+    raw_href: &str,
+    cache_dir: &std::path::Path,
+) -> Response {
     let content = match std::fs::read(&entry.path) {
         Ok(c) => c,
         Err(_) => return not_found(),
@@ -885,7 +908,8 @@ async fn serve_raw_bytes(entry: &Entry, embed: bool, cache_dir: &std::path::Path
     match crate::media::classify(&entry.extension, &content) {
         crate::media::Disposition::Image => {
             let is_original = file_serves_original(&entry.path);
-            return serve_image(content, &entry.extension, is_original, false, cache_dir).await;
+            return serve_image(content, &entry.extension, is_original, false, as_jpeg, raw_href, cache_dir)
+                .await;
         }
         crate::media::Disposition::Pdf => {
             return serve_pdf(content, file_serves_original(&entry.path), &entry.path);
@@ -978,25 +1002,83 @@ async fn serve_image(
     ext: &str,
     is_original: bool,
     thumb: bool,
+    as_jpeg: bool,
+    raw_href: &str,
     cache_dir: &std::path::Path,
 ) -> Response {
+    let norm = crate::entry::normalize_ext(ext);
+    let source_is_jpeg = matches!(norm.as_str(), "jpg" | "jpeg");
+
     // A gallery-tile thumbnail is a derived preview: always stripped/resized,
     // even for an `original`-tagged file (the exact bytes stay at its non-thumb
-    // URL). So the `original` bypass only applies to the full view.
-    let prepared = if thumb {
-        crate::media::thumbnail(ext, &bytes, cache_dir).await
-    } else if is_original {
+    // URL). Tiles are JPEG renditions, so a non-JPEG source's tile is served
+    // only at its honest `?as=jpeg&thumb` address.
+    if thumb {
+        if !source_is_jpeg && !as_jpeg {
+            return jpeg_rendition_redirect(raw_href, true);
+        }
+        return match crate::media::thumbnail(ext, &bytes, cache_dir).await {
+            crate::media::Prepared::Ready(clean) => {
+                let content_type = clean.content_type();
+                clean_bytes_response(clean.into_bytes(), content_type)
+            }
+            crate::media::Prepared::Withheld => metadata_withheld(),
+        };
+    }
+
+    // `?as=jpeg` exists only where a JPEG rendition is the pipeline's own
+    // output (transcode-only formats, or a JPEG source). No on-demand format
+    // conversion for PNG/WebP — fail closed on the unexpected.
+    if as_jpeg && !source_is_jpeg && !crate::media::is_transcode_only_ext(ext) {
+        return not_found();
+    }
+
+    // `public-original` exact bytes at the bare URL: the container matches the
+    // extension, so the name is honest. `?as=jpeg` on an original still serves
+    // the clean rendition (it is a derived representation, never a leak).
+    if is_original && !as_jpeg {
         return clean_bytes_response(bytes, &raw_content_type(ext));
-    } else {
-        crate::media::prepare(ext, &bytes, cache_dir).await
-    };
-    match prepared {
+    }
+
+    // The bare URL of a transcode-only format never serves JPEG bytes under a
+    // foreign extension: answer with the honest address instead.
+    if crate::media::is_transcode_only_ext(ext) && !as_jpeg {
+        return jpeg_rendition_redirect(raw_href, false);
+    }
+
+    match crate::media::prepare(ext, &bytes, cache_dir).await {
         crate::media::Prepared::Ready(clean) => {
             let content_type = clean.content_type();
             clean_bytes_response(clean.into_bytes(), content_type)
         }
         crate::media::Prepared::Withheld => metadata_withheld(),
     }
+}
+
+/// 303 See Other to the honest address of a clean JPEG rendition. The plain-text
+/// body explains what happened, so a client that does not follow redirects still
+/// learns where the bytes are and how to publish the original instead.
+fn jpeg_rendition_redirect(raw_href: &str, thumb: bool) -> Response {
+    let location = if thumb {
+        format!("{raw_href}?as=jpeg&thumb")
+    } else {
+        format!("{raw_href}?as=jpeg")
+    };
+    let value = match HeaderValue::from_str(&location) {
+        Ok(v) => v,
+        Err(_) => return not_found(), // fail closed on an unencodable path
+    };
+    let body = format!(
+        "This file's format embeds metadata that cannot be removed in place, so its exact bytes are not served.\n\
+         A clean JPEG rendition is at {location}\n\
+         The author can tag the file public-original to publish the exact bytes instead.\n"
+    );
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header(header::LOCATION, value)
+        .header(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"))
+        .body(Body::from(body))
+        .unwrap_or_else(|_| not_found())
 }
 
 /// Build the HTTP response for verify-cleaned bytes (a stripped image or PDF,

@@ -2215,7 +2215,7 @@ fn canonical_href(entry: &Entry, all_entries: &[&Entry]) -> String {
 
 /// The raw-bytes href for an entry: canonical path + extension, so the parser
 /// reads the extension back off the last segment. Folders have none.
-fn canonical_raw_href(entry: &Entry, all_entries: &[&Entry]) -> String {
+pub(crate) fn canonical_raw_href(entry: &Entry, all_entries: &[&Entry]) -> String {
     let ext = (!entry.extension.is_empty()).then_some(entry.extension.as_str());
     compose_href(&canonical(entry, all_entries).path, ext)
 }
@@ -3167,9 +3167,18 @@ fn gallery_html(base_path: &str, items: &[ListItem]) -> String {
         .iter()
         .map(|it| {
             let href = html_escape(&encode_path(&format!("{}/{}", base_path, it.name)));
+            // Tiles are JPEG renditions; a non-JPEG source's tile URL says so
+            // (`?as=jpeg&thumb`) — the URL never lies about the bytes.
+            let tile_query =
+                if matches!(crate::entry::normalize_ext(&it.ext).as_str(), "jpg" | "jpeg") {
+                    "?thumb"
+                } else {
+                    "?as=jpeg&thumb"
+                };
             format!(
-                r#"<li><a href="{href}"><figure><div><img src="{href}?thumb" alt="{alt}" loading="lazy"></div><figcaption><b>{stem}<small>{ext}</small></b><span>{size}</span></figcaption></figure></a></li>"#,
+                r#"<li><a href="{href}"><figure><div><img src="{href}{tile_query}" alt="{alt}" loading="lazy"></div><figcaption><b>{stem}<small>{ext}</small></b><span>{size}</span></figcaption></figure></a></li>"#,
                 href = href,
+                tile_query = tile_query,
                 alt = html_escape(&it.stem),
                 stem = html_escape(&it.stem),
                 ext = html_escape(&dot_ext(&it.ext)),
@@ -3312,8 +3321,12 @@ fn kind_badge(ext: &str) -> (String, &'static str) {
 /// The quiet, non-dismissing "metadata removed" note shown under a stripped
 /// image (`post-model.md` §8, and the project rule that privacy notices stay
 /// visible until the author acts). Explains what was removed and how to opt out.
-fn metadata_notice() -> String {
-    r#"<aside data-notice="privacy">Location and camera metadata were removed for privacy. Add the <code>public-original</code> tag to the file to publish it unchanged.</aside>"#.to_string()
+fn metadata_notice(converted_to_jpeg: bool) -> String {
+    if converted_to_jpeg {
+        r#"<aside data-notice="privacy">Shown as a JPEG rendition: this file's format cannot have its metadata removed in place, so its exact bytes are not served. Location and camera metadata were removed. Add the <code>public-original</code> tag to the file to publish it unchanged.</aside>"#.to_string()
+    } else {
+        r#"<aside data-notice="privacy">Location and camera metadata were removed for privacy. Add the <code>public-original</code> tag to the file to publish it unchanged.</aside>"#.to_string()
+    }
 }
 
 /// The LOUD, non-dismissing warning shown under a `public-original` image that
@@ -3352,12 +3365,19 @@ pub fn image_page(
     // GPS/camera data carries the LOUD publish warning; a clean original needs
     // neither. The footer link offers the "full size" stripped image, or the
     // "original" exact bytes when that is what is served.
-    let (notice, raw_label) = if !is_original {
-        (metadata_notice(), "full size")
+    //
+    // A transcode-only format (HEIC/TIFF/...) is displayed as its clean JPEG
+    // rendition, which lives only at the honest `?as=jpeg` address — the bare
+    // raw URL never serves JPEG bytes under a foreign extension (it serves the
+    // exact bytes for an original, or 303s to the rendition otherwise).
+    let transcode_only = crate::media::is_transcode_only_ext(&entry.extension);
+    let img_src = if transcode_only { format!("{src}?as=jpeg") } else { src.clone() };
+    let (notice, raw_href, raw_label) = if !is_original {
+        (metadata_notice(transcode_only), img_src.clone(), "full size")
     } else if publishes_metadata {
-        (metadata_publish_warning(), "original")
+        (metadata_publish_warning(), src.clone(), "original")
     } else {
-        (String::new(), "original")
+        (String::new(), src.clone(), "original")
     };
 
     let body = format!(
@@ -3366,10 +3386,10 @@ pub fn image_page(
 <main>
 <article id="post" data-canonical="{canonical}" data-title="{data_title}">
 {post_header}
-<figure><img src="{src}" alt="{alt}"></figure>
+<figure><img src="{img_src}" alt="{alt}"></figure>
 {notice}
 {extras}
-<footer><a href="{src}">{raw_label}</a> <a href="/">timeline</a></footer>
+<footer><a href="{raw_href}">{raw_label}</a> <a href="/">timeline</a></footer>
 </article>
 {continue_nav}
 </main>"#,
@@ -3378,7 +3398,8 @@ pub fn image_page(
         canonical = html_escape(&canon_href),
         data_title = html_escape(label),
         post_header = post_header(entry),
-        src = html_escape(&src),
+        img_src = html_escape(&img_src),
+        raw_href = html_escape(&raw_href),
         alt = html_escape(label),
         notice = notice,
         raw_label = raw_label,

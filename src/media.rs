@@ -1155,6 +1155,16 @@ fn strip_content_type(norm_ext: &str) -> Option<&'static str> {
     }
 }
 
+/// A raster format the pipeline can only clean by transcoding to JPEG. The URL
+/// never lies about the bytes, so such a file's bare raw URL answers 303 to the
+/// honest `?as=jpeg` address instead of serving JPEG bytes under a foreign
+/// extension (`public-original` exact bytes stay at the bare URL — there the
+/// container matches the name).
+pub fn is_transcode_only_ext(ext: &str) -> bool {
+    let norm = crate::entry::normalize_ext(ext);
+    crate::entry::is_image_ext(&norm) && strip_content_type(&norm).is_none()
+}
+
 /// Clean an image for serving. Every producer funnels through one disk
 /// pipeline: cleaned bytes (pure-Rust segment strip, or sandboxed libvips
 /// transcode) land in a quarantine file, THAT FILE is re-read and verified by
@@ -2108,6 +2118,23 @@ mod tests {
         assert!(!decode_size_allowed(b"not an image at all"));
         // A real-world size passes.
         assert!(decode_size_allowed(&png_header(1600, 1200)));
+    }
+
+    #[test]
+    fn transcode_only_classification_drives_the_honest_url_rule() {
+        // These formats serve a JPEG rendition, so their bare raw URL must 303
+        // to `?as=jpeg` instead of serving foreign bytes under the extension.
+        for ext in ["tiff", "tif", "heic", "heif", "avif", "gif", "bmp"] {
+            assert!(is_transcode_only_ext(ext), "{ext} is transcode-only");
+        }
+        // Strippable formats serve their own container — bare URL stays honest.
+        for ext in ["jpg", "jpeg", "jpe", "jfif", "png", "webp"] {
+            assert!(!is_transcode_only_ext(ext), "{ext} serves its own container");
+        }
+        // Non-image formats are not part of this rule at all.
+        for ext in ["pdf", "svg", "md", "zip", ""] {
+            assert!(!is_transcode_only_ext(ext), "{ext} is not raster media");
+        }
     }
 
     #[test]

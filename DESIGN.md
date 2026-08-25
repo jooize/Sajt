@@ -343,6 +343,39 @@ removes everything else under `media/` at startup (in-flight temp files and
 the legacy flat cache layout). PDFs and SVGs keep their in-memory verify gates
 (above); folding them into the same store is a candidate follow-up.
 
+#### Honest representation URLs — `?as=jpeg` (v0.26.0, 2026-08-25)
+
+A URL's extension never lies about the bytes it returns (DECIDED 2026-08-25).
+Strippable formats (JPEG/PNG/WebP) serve their own
+container at the bare URL — stripped, pixels intact — so nothing changes
+there. A transcode-only format (HEIC/TIFF/AVIF/GIF/BMP) serves a JPEG
+rendition, which therefore lives only at an address that says so:
+
+- `/photo.tif` (bare, no `public-original`) → **303 See Other** to
+  `/photo.tif?as=jpeg`, with a plain-text body explaining why the exact bytes
+  are not served and how to publish them (`public-original`). Browsers follow
+  transparently and end up on the honest address.
+- `/photo.tif?as=jpeg` → the clean JPEG rendition (`image/jpeg`).
+- `/photo.tif` with `public-original` → the exact bytes; container matches the
+  name, so the bare URL is honest by definition. `?as=jpeg` still serves the
+  clean rendition (it is derived, never a leak).
+- Gallery tiles are always JPEG renditions, so a non-JPEG source's tile URL is
+  `?as=jpeg&thumb` (`?thumb` composes as the size selector); a JPEG source's
+  tile stays `?thumb`. Bare tile requests for non-JPEG sources 303 the same way.
+- `?as=` takes exactly `jpeg`; any other value is a 404 (fail closed), and
+  `as=jpeg` on a format whose rendition would not be JPEG (PNG/WebP) is a 404 —
+  the parameter names the pipeline's own output, it is not an on-demand
+  converter.
+- The image page displays the rendition (`<img src="…?as=jpeg">`) and its
+  notice says so: "Shown as a JPEG rendition …".
+
+Transcode quality is fixed (full view: max edge 4096, JPEG Q=85; tiles: max
+edge 600, Q=80) and deliberately NOT visitor-configurable: a `?quality=` would
+make every distinct value a fresh sandboxed vips run plus a permanent
+clean-store entry — attacker-scalable CPU and disk — for no visitor benefit
+over a well-chosen constant. If quality ever needs tuning it becomes an
+author-side server flag (a new cache tag), not a URL parameter.
+
 #### The sandboxed transcode (v0.21.0, 2026-07-15)
 
 libvips decodes attacker-controlled bytes, so the subprocess is OS-confined —
