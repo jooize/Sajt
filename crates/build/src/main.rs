@@ -4,7 +4,8 @@
 //! its reply written to a content-addressed blob store, and the whole build
 //! described by one host-neutral manifest — files with hashes, the redirect
 //! map, the 410 ledger, the fallback page, and the security headers. Per-host
-//! adapters translate the manifest; this binary knows no provider.
+//! adapters translate the manifest (`caddyfile` here so far); `verify`
+//! replays it against any live host. The walk itself knows no provider.
 //!
 //! The invariant this walk enforces: **every URL the site emits is a real
 //! file**. A link that resolves to a 404 is a broken build (nonzero exit),
@@ -12,7 +13,6 @@
 //! loud warning for a deliberate partial publish; internal errors still fail.
 
 use clap::Parser;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
@@ -20,9 +20,68 @@ use std::path::PathBuf;
 use staticdrop_core::page::{self, Reply, RequestFlags};
 use staticdrop_core::url::percent_decode;
 
+mod caddyfile;
+mod manifest;
+mod verify;
+
+use manifest::{FileEntry, Manifest, ProvenanceEntry};
+
 #[derive(Parser)]
-#[command(name = "staticdrop-build", about = "StaticDrop closure builder")]
-struct Args {
+#[command(
+    name = "staticdrop-build",
+    about = "StaticDrop closure builder, manifest adapters, and verifier"
+)]
+enum Cli {
+    /// Walk the site closure; emit blobs/, manifest.json, and the report.
+    Build(BuildArgs),
+    /// Render manifest.json as a complete generated Caddyfile.
+    Caddyfile(CaddyfileArgs),
+    /// Fetch every manifest address from a live host and compare status,
+    /// body hash, and headers against the manifest.
+    Verify(VerifyArgs),
+}
+
+#[derive(Parser)]
+struct CaddyfileArgs {
+    /// The manifest to render.
+    #[arg(long, default_value = "./build/manifest.json")]
+    manifest: PathBuf,
+
+    /// Site address line for the generated file. The default is the parity
+    /// loop's local address; pass the real domain for production.
+    #[arg(long, default_value = "http://localhost:8080")]
+    address: String,
+
+    /// Where to write the generated Caddyfile.
+    #[arg(long, default_value = "./build/Caddyfile")]
+    out: PathBuf,
+
+    /// Filesystem root the host serves blobs from. Defaults to the
+    /// manifest's own directory, absolute.
+    #[arg(long)]
+    root: Option<PathBuf>,
+}
+
+#[derive(Parser)]
+struct VerifyArgs {
+    /// The manifest that is the reference.
+    #[arg(long, default_value = "./build/manifest.json")]
+    manifest: PathBuf,
+
+    /// Base URL of the host to check, e.g. http://127.0.0.1:1234 (the
+    /// preview server) or http://localhost:8080 (the Caddyfile adapter).
+    #[arg(long)]
+    base: String,
+
+    /// The host runs code and personalizes its out-of-closure 404 (the
+    /// preview server does). Skips the byte-exact body check on the fallback
+    /// probe only; its status and headers are still checked.
+    #[arg(long)]
+    dynamic_fallback: bool,
+}
+
+#[derive(Parser)]
+struct BuildArgs {
     /// Directory containing content files
     #[arg(long, default_value = "./content")]
     content_dir: PathBuf,
@@ -60,47 +119,6 @@ struct Args {
     /// for a deliberate publish of a knowingly incomplete site.
     #[arg(long)]
     allow_broken_links: bool,
-}
-
-/// The provenance record on a published file: the content-relative source
-/// path and the tag on that file that authorized publishing it. Absent on
-/// generated pages (template output over already-public metadata). The push
-/// step refuses to upload a content-bearing file without this record.
-#[derive(Serialize, Deserialize, Clone, PartialEq)]
-struct ProvenanceEntry {
-    source: String,
-    tag: String,
-}
-
-/// One published file in the manifest: where its bytes live (the blob hash),
-/// what the reply looked like, every header the host should reproduce, and
-/// the provenance that authorized it.
-#[derive(Serialize, Deserialize, Clone, PartialEq)]
-struct FileEntry {
-    hash: String,
-    size: u64,
-    status: u16,
-    headers: BTreeMap<String, String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    provenance: Option<ProvenanceEntry>,
-}
-
-/// The host-neutral manifest: the entire build as data. Adapters (Caddyfile,
-/// _redirects/_headers, S3 sync plans) are renderings of this one artifact.
-#[derive(Serialize, Deserialize)]
-struct Manifest {
-    version: u32,
-    generated: String,
-    files: BTreeMap<String, FileEntry>,
-    redirects: BTreeMap<String, String>,
-    /// URLs that were published once and are gone now — served 410, never a
-    /// silent 404 (unpublishing is an answer, not an absence).
-    gone: BTreeSet<String>,
-    /// The out-of-closure fallback page (the host's custom 404).
-    fallback: FileEntry,
-    /// Hardening headers for every response, from the one policy source
-    /// (`staticdrop_core::security`).
-    universal_headers: Vec<(String, String)>,
 }
 
 /// Where a link points, after normalization.
@@ -270,8 +288,69 @@ fn store_blob(
 async fn main() {
     // The report goes to stdout; logs stay on stderr.
     tracing_subscriber::fmt().with_writer(std::io::stderr).init();
-    let args = Args::parse();
+    match Cli::parse() {
+        Cli::Build(args) => build(args).await,
+        Cli::Caddyfile(args) => render_caddyfile(args),
+        Cli::Verify(args) => run_verify(args).await,
+    }
+}
 
+fn render_caddyfile(args: CaddyfileArgs) {
+    let manifest = manifest::load(&args.manifest).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    });
+    let root = args
+        .root
+        .unwrap_or_else(|| args.manifest.parent().unwrap_or(std::path::Path::new(".")).to_path_buf());
+    let root = root.canonicalize().unwrap_or(root);
+    let text = caddyfile::render(&manifest, &args.address, &root.display().to_string())
+        .unwrap_or_else(|e| {
+            eprintln!("Cannot render Caddyfile: {}", e);
+            std::process::exit(1);
+        });
+    // Write-then-rename: the file on disk is always a complete rendering.
+    let tmp = args.out.with_extension("tmp");
+    std::fs::write(&tmp, &text).expect("write Caddyfile");
+    std::fs::rename(&tmp, &args.out).expect("rename Caddyfile");
+    println!(
+        "Caddyfile written to {} ({} files, {} redirects, {} gone; root {})",
+        args.out.display(),
+        manifest.files.len(),
+        manifest.redirects.len(),
+        manifest.gone.len(),
+        root.display()
+    );
+}
+
+async fn run_verify(args: VerifyArgs) {
+    let manifest = manifest::load(&args.manifest).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    });
+    let outcome = verify::run(&manifest, &args.base, args.dynamic_fallback)
+        .await
+        .unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    });
+    println!("StaticDrop verify report ({})", args.base);
+    println!("  addresses checked  {}", outcome.checked);
+    if args.dynamic_fallback {
+        println!("  note               fallback probe body not compared (--dynamic-fallback)");
+    }
+    if outcome.mismatches.is_empty() {
+        println!("  result             OK -- host matches the manifest exactly");
+        std::process::exit(0);
+    }
+    println!("  MISMATCHES         {}", outcome.mismatches.len());
+    for m in &outcome.mismatches {
+        println!("    {}", m);
+    }
+    std::process::exit(1);
+}
+
+async fn build(args: BuildArgs) {
     let content_dir = args
         .content_dir
         .canonicalize()
