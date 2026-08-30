@@ -1,5 +1,5 @@
 {
-  description = "esko.bar — personal content server";
+  description = "StaticDrop: publishing engine where the filesystem is the CMS";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";

@@ -1,11 +1,14 @@
-# esko.bar
+# StaticDrop
 
-A personal website where the filesystem is the CMS. One folder, synced
+A publishing engine where the filesystem is the CMS. One folder, synced
 through iCloud Drive, is the whole publishing pipeline: drop a file, tag it
 `public`, it's published. No database as source of truth, no frontmatter, no
 build step — metadata is native metadata (filenames, folder names, file
 dates, Finder/Files tags), and the server treats the content folder as
 strictly read-only.
+
+StaticDrop powers [esko.bar](https://esko.bar), the personal site it grew
+out of; the domain remains that site's, while the engine is StaticDrop.
 
 ## The publishing rule
 
@@ -60,4 +63,6 @@ Then visit <https://localhost>. To trust Caddy's local CA:
   (dates, aliases, revisions, name collisions).
 - [`post-model.md`](post-model.md) — slugs, kinds, the link axis, folder
   listings, the outbound-scheme guard, media privacy.
+- [`staticdrop.md`](staticdrop.md) — the static-publish design: build
+  locally, ship bytes; closure model, manifest, host adapters.
 - [`PLAN.md`](PLAN.md) — working plan and history.
