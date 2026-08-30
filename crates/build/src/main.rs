@@ -207,6 +207,21 @@ fn content_type_of(reply: &Reply) -> String {
         .unwrap_or_default()
 }
 
+/// Fill the per-response gap the serve middleware fills on live responses: a
+/// content-type-appropriate CSP where the handler chose none. The policy
+/// itself stays in `staticdrop_core::security` (the single source); without
+/// this, manifest entries would ship weaker headers than the preview server
+/// sends.
+fn default_csp(headers: &mut BTreeMap<String, String>) {
+    if !headers.contains_key("content-security-policy") {
+        let ct = headers.get("content-type").cloned().unwrap_or_default();
+        headers.insert(
+            "content-security-policy".to_string(),
+            staticdrop_core::security::csp_for_content_type(&ct).to_string(),
+        );
+    }
+}
+
 /// Hash + persist a reply body into the blob store; return its manifest entry
 /// with the reply's provenance recorded content-relative.
 fn store_blob(
@@ -225,11 +240,12 @@ fn store_blob(
         std::fs::write(&tmp, &reply.body)?;
         std::fs::rename(&tmp, &blob_path)?;
     }
-    let headers: BTreeMap<String, String> = reply
+    let mut headers: BTreeMap<String, String> = reply
         .headers
         .iter()
         .map(|(n, v)| (n.to_string(), v.clone()))
         .collect();
+    default_csp(&mut headers);
     let provenance = match &reply.provenance {
         page::Provenance::Generated => None,
         page::Provenance::File { source, tag } => Some(ProvenanceEntry {
@@ -494,6 +510,35 @@ mod tests {
         // the query, reported.
         assert!(matches!(normalize("/doc.html?embed"), Target::QueryVariant(p) if p == "/doc.html"));
         assert!(matches!(normalize("/doc?fullscreen"), Target::QueryVariant(p) if p == "/doc"));
+    }
+
+    #[test]
+    fn default_csp_mirrors_the_serve_middleware() {
+        // HTML gets the page policy; everything else the jail; a handler's
+        // own choice is never overridden.
+        let mut h: BTreeMap<String, String> =
+            [("content-type".into(), "text/html; charset=utf-8".into())].into();
+        default_csp(&mut h);
+        assert_eq!(
+            h["content-security-policy"],
+            staticdrop_core::security::csp_for_content_type("text/html")
+        );
+
+        let mut h: BTreeMap<String, String> =
+            [("content-type".into(), "image/jpeg".into())].into();
+        default_csp(&mut h);
+        assert_eq!(
+            h["content-security-policy"],
+            staticdrop_core::security::csp_for_content_type("image/jpeg")
+        );
+
+        let mut h: BTreeMap<String, String> = [
+            ("content-type".into(), "text/html; charset=utf-8".into()),
+            ("content-security-policy".into(), "sandbox".into()),
+        ]
+        .into();
+        default_csp(&mut h);
+        assert_eq!(h["content-security-policy"], "sandbox");
     }
 
     #[test]
