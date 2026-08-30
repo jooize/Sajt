@@ -203,31 +203,17 @@ pub async fn catch_all(
 
     // Standalone-HTML view selectors (post-model.md §4 / the A/B/C model): `?embed`
     // appends the height reporter to the raw asset; `?fullscreen` hands a standalone
-    // post the whole viewport. Both are presence flags, like `?favorites`.
+    // post the whole viewport. Both are presence flags.
     let embed = params.contains_key("embed");
     let fullscreen = params.contains_key("fullscreen");
-    // `?thumb` requests a small gallery-tile rendition of an image asset
-    // (post-model.md §8, C8c) instead of the full stripped/transcoded view.
-    let thumb = params.contains_key("thumb");
-    // `?as=jpeg` names the served representation when it is not the file's own
-    // container: the clean JPEG rendition of a transcode-only format, and any
-    // non-JPEG source's `?thumb` tile. The URL never lies about the bytes — the
-    // bare URL of such a file answers 303 to this address instead. Unknown
-    // values fail closed.
-    let as_jpeg = match params.get("as").map(String::as_str) {
-        None => false,
-        Some("jpeg") => true,
-        Some(_) => return not_found(),
-    };
-    // The request path re-encoded, for building the honest-address redirect.
-    let raw_href = templates::encode_path(&format!("/{}", path));
 
     let store = store.read().await;
     let all_entries: Vec<&Entry> = store.entries.iter().collect();
 
     // Folder-post asset (`/{folder}/{asset…}`): resolved before the query parser,
-    // which would otherwise misread the multi-segment path as a label.
-    if let Some(resp) = try_asset(&all_entries, &path, &store.content_dir, &store.cache_dir, embed, thumb, as_jpeg, &raw_href).await {
+    // which would otherwise misread the multi-segment path as a label. Rendition
+    // rungs (`…/photo.tif/jpeg`, `…/jpeg/thumb`) are parsed off the tail there.
+    if let Some(resp) = try_asset(&all_entries, &path, &store.content_dir, &store.cache_dir, embed).await {
         return resp;
     }
 
@@ -260,9 +246,21 @@ pub async fn catch_all(
         .filter(|e| query.matches(&e.timestamp, &e.slug, &e.tag_names()))
         .collect();
 
-    // Raw file request (URL has extension like sunset.jpg)
+    // Raw file request (URL has extension like sunset.jpg), possibly with
+    // rendition rungs (`/jpeg`, `/jpeg/thumb`) parsed off the path. The base
+    // href (renditions stripped) anchors rendition links and redirects.
     if let Some(ref raw_ext) = query.raw_extension {
-        return serve_raw_file(&matching, raw_ext, &store.cache_dir, embed, as_jpeg, &raw_href).await;
+        let base_href = strip_rendition_suffix(&templates::encode_path(&requested), &query);
+        return serve_raw_file(
+            &matching,
+            raw_ext,
+            &store.cache_dir,
+            embed,
+            query.rendition_jpeg,
+            query.rendition_thumb,
+            &base_href,
+        )
+        .await;
     }
 
     // Listing: a trailing slash, or a date / tag / view filter with no label
@@ -348,6 +346,19 @@ pub async fn catch_all(
     render_listing(&matching, &all_entries, &query, &view, &base)
 }
 
+/// Drop the rendition rungs off the tail of an encoded raw-file path, giving
+/// the file's own base address (`/photo.tif/jpeg/thumb` → `/photo.tif`).
+fn strip_rendition_suffix(encoded_path: &str, query: &ContentQuery) -> String {
+    let mut out = encoded_path;
+    if query.rendition_thumb {
+        out = out.strip_suffix("/thumb").unwrap_or(out);
+    }
+    if query.rendition_jpeg {
+        out = out.strip_suffix("/jpeg").unwrap_or(out);
+    }
+    out.to_string()
+}
+
 /// Drop the reserved view words from a path, so a label-listing base composes
 /// header links without doubling them.
 fn strip_view_segments(path: &str) -> String {
@@ -425,16 +436,15 @@ fn error_response(entry: &Entry, all_entries: &[&Entry]) -> Response {
 /// Resolve a folder-post asset request (`/{folder}/{asset…}`) to bytes on disk,
 /// strictly inside that post's directory. Returns None when the path is not an
 /// asset (wrong shape, unknown folder, a missing or escaping file), so the
-/// caller falls through to normal resolution.
+/// caller falls through to normal resolution. Rendition rungs on the tail
+/// (`…/photo.tif/jpeg`, `…/jpeg/thumb`) are recognized only when no literal
+/// file answers the full path, so a real file always wins its own name.
 async fn try_asset(
     all_entries: &[&Entry],
     path: &str,
     content_dir: &std::path::Path,
     cache_dir: &std::path::Path,
     embed: bool,
-    thumb: bool,
-    as_jpeg: bool,
-    raw_href: &str,
 ) -> Option<Response> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.len() < 2 {
@@ -448,11 +458,34 @@ async fn try_asset(
 
     let owner = templates::name_owner(first, all_entries)?;
     let dir = owner.dir.as_ref()?; // only folder posts carry assets
-
-    // Resolve the requested file and confirm it stays inside the post directory.
-    let candidate = dir.join(segments[1..].join("/"));
     let canon_dir = std::fs::canonicalize(dir).ok()?;
-    let canon_file = std::fs::canonicalize(&candidate).ok()?;
+
+    // Resolve the requested file, literal path first; failing that, peel the
+    // canonical rendition tail (`thumb` then `jpeg`) and retry.
+    let mut thumb = false;
+    let mut as_jpeg = false;
+    let mut file_segments: &[&str] = &segments[1..];
+    let mut canon_file = std::fs::canonicalize(dir.join(file_segments.join("/"))).ok();
+    if canon_file.is_none() {
+        let mut trimmed = file_segments;
+        if trimmed.last() == Some(&"thumb") {
+            thumb = true;
+            trimmed = &trimmed[..trimmed.len() - 1];
+        }
+        if trimmed.last() == Some(&"jpeg") {
+            as_jpeg = true;
+            trimmed = &trimmed[..trimmed.len() - 1];
+        }
+        // A thumb rung is honest for a JPEG source without the /jpeg rung;
+        // anything else must carry it. The last real segment must name a file
+        // with an extension — rendition rungs hang off files, not folders.
+        if (!thumb && !as_jpeg) || trimmed.is_empty() || !trimmed.last()?.contains('.') {
+            return None;
+        }
+        file_segments = trimmed;
+        canon_file = std::fs::canonicalize(dir.join(file_segments.join("/"))).ok();
+    }
+    let canon_file = canon_file?;
     if !canon_file.starts_with(&canon_dir) {
         return None; // path-traversal guard
     }
@@ -495,6 +528,9 @@ async fn try_asset(
     // it with the sandbox CSP, honoring `?embed` so a folder-hosted page can be
     // framed the same way a bare-file one is.
     if is_sandboxed_document(ext) {
+        if thumb || as_jpeg {
+            return Some(not_found()); // renditions exist for images only
+        }
         return Some(sandbox_html_response(bytes, embed, document_content_type(ext)));
     }
     // In-folder assets go through the same privacy gate as a primary (post-model.md
@@ -502,16 +538,36 @@ async fn try_asset(
     // withheld. The `public-original` opt-in is per file here, read from the
     // asset's own tags; on a withheld format it is the universal exact-bytes
     // escape (the author explicitly publishes whatever the file embeds).
+    let stem = canon_file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file")
+        .to_string();
     match staticdrop_core::media::classify(ext, &bytes) {
         staticdrop_core::media::Disposition::Image => {
             let is_original = file_serves_original(&canon_file);
-            return Some(serve_image(bytes, ext, is_original, thumb, as_jpeg, raw_href, cache_dir).await);
+            // The asset's own address with the rendition rungs stripped.
+            let base_href =
+                templates::encode_path(&format!("/{}/{}", first, file_segments.join("/")));
+            return Some(
+                serve_image(ImageRequest {
+                    bytes,
+                    ext,
+                    is_original,
+                    thumb,
+                    as_jpeg,
+                    base_href: &base_href,
+                    save_stem: &stem,
+                    cache_dir,
+                })
+                .await,
+            );
         }
         staticdrop_core::media::Disposition::Pdf => {
-            return Some(serve_pdf(bytes, file_serves_original(&canon_file), &canon_file));
+            return Some(serve_pdf(bytes, file_serves_original(&canon_file), &canon_file, &stem));
         }
         staticdrop_core::media::Disposition::Svg => {
-            return Some(serve_svg(bytes, file_serves_original(&canon_file), &canon_file));
+            return Some(serve_svg(bytes, file_serves_original(&canon_file), &canon_file, &stem));
         }
         staticdrop_core::media::Disposition::Withhold => {
             if !file_serves_original(&canon_file) {
@@ -523,6 +579,10 @@ async fn try_asset(
             );
         }
         staticdrop_core::media::Disposition::Raw => {}
+    }
+    // A rendition rung on a non-image asset names nothing — fail closed.
+    if thumb || as_jpeg {
+        return Some(not_found());
     }
     let mime = raw_content_type(ext);
     Some(
@@ -923,7 +983,7 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
         }
         Ok(RenderedContent::Download { .. }) => {
             let raw_href = templates::canonical_raw_href(entry, &all);
-            serve_raw_bytes(entry, false, false, &raw_href, &store.cache_dir).await
+            serve_raw_bytes(entry, false, false, false, &raw_href, &store.cache_dir).await
         }
         Err(e) => {
             tracing::error!("Render error for {}: {}", entry.path.display(), e);
@@ -942,7 +1002,8 @@ async fn serve_raw_file(
     cache_dir: &std::path::Path,
     embed: bool,
     as_jpeg: bool,
-    raw_href: &str,
+    thumb: bool,
+    base_href: &str,
 ) -> Response {
     let entry = matching
         .iter()
@@ -950,8 +1011,17 @@ async fn serve_raw_file(
         .min_by_key(|e| e.timestamp);
 
     match entry {
-        Some(entry) => serve_raw_bytes(entry, embed, as_jpeg, raw_href, cache_dir).await,
+        Some(entry) => serve_raw_bytes(entry, embed, as_jpeg, thumb, base_href, cache_dir).await,
         None => not_found(),
+    }
+}
+
+/// The save-name stem for an entry's bytes: its label, or the timestamp stamp
+/// for an unlabeled file.
+fn entry_save_stem(entry: &Entry) -> String {
+    match &entry.label {
+        Some(label) => sanitize_filename(label),
+        None => entry.timestamp.file_stamp(),
     }
 }
 
@@ -959,18 +1029,23 @@ async fn serve_raw_bytes(
     entry: &Entry,
     embed: bool,
     as_jpeg: bool,
-    raw_href: &str,
+    thumb: bool,
+    base_href: &str,
     cache_dir: &std::path::Path,
 ) -> Response {
     let content = match std::fs::read(&entry.path) {
         Ok(c) => c,
         Err(_) => return not_found(),
     };
+    let stem = entry_save_stem(entry);
 
     // A standalone HTML/XHTML post's bytes are the byte-exact asset (model C):
     // served jailed by the sandbox CSP, with the height reporter appended only on
     // the `?embed` copy. Never the trusted origin, never a download prompt.
     if is_sandboxed_document(&entry.extension) {
+        if as_jpeg || thumb {
+            return not_found(); // renditions exist for images only
+        }
         return sandbox_html_response(content, embed, document_content_type(&entry.extension));
     }
 
@@ -982,14 +1057,23 @@ async fn serve_raw_bytes(
     match staticdrop_core::media::classify(&entry.extension, &content) {
         staticdrop_core::media::Disposition::Image => {
             let is_original = file_serves_original(&entry.path);
-            return serve_image(content, &entry.extension, is_original, false, as_jpeg, raw_href, cache_dir)
-                .await;
+            return serve_image(ImageRequest {
+                bytes: content,
+                ext: &entry.extension,
+                is_original,
+                thumb,
+                as_jpeg,
+                base_href,
+                save_stem: &stem,
+                cache_dir,
+            })
+            .await;
         }
         staticdrop_core::media::Disposition::Pdf => {
-            return serve_pdf(content, file_serves_original(&entry.path), &entry.path);
+            return serve_pdf(content, file_serves_original(&entry.path), &entry.path, &stem);
         }
         staticdrop_core::media::Disposition::Svg => {
-            return serve_svg(content, file_serves_original(&entry.path), &entry.path);
+            return serve_svg(content, file_serves_original(&entry.path), &entry.path, &stem);
         }
         staticdrop_core::media::Disposition::Withhold => {
             if !file_serves_original(&entry.path) {
@@ -1003,13 +1087,14 @@ async fn serve_raw_bytes(
         staticdrop_core::media::Disposition::Raw => {}
     }
 
+    // A rendition rung on a non-image raw file names nothing — fail closed.
+    if as_jpeg || thumb {
+        return not_found();
+    }
+
     let mime = raw_content_type(&entry.extension);
 
-    let filename = match &entry.label {
-        Some(label) => format!("{}.{}", sanitize_filename(label), entry.extension),
-        None => format!("{}.{}", entry.timestamp.file_stamp(), entry.extension),
-    };
-
+    let filename = format!("{}.{}", stem, entry.extension);
     let disposition = format!(r#"inline; filename="{}""#, filename);
 
     Response::builder()
@@ -1038,16 +1123,17 @@ fn file_serves_original(path: &std::path::Path) -> bool {
 /// exact bytes when the author's per-file `public-original` tag says so. A PDF
 /// that cannot be verify-cleaned (encrypted, unparseable) is withheld — the
 /// same fail-closed rule as every other format.
-fn serve_pdf(bytes: Vec<u8>, is_original: bool, path: &std::path::Path) -> Response {
+fn serve_pdf(bytes: Vec<u8>, is_original: bool, path: &std::path::Path, stem: &str) -> Response {
+    let name = format!("{}.pdf", stem);
     if is_original {
         tracing::warn!(
             "Serving {} exact bytes (public-original) — any embedded metadata is published",
             path.display()
         );
-        return clean_bytes_response(bytes, "application/pdf");
+        return clean_bytes_response(bytes, "application/pdf", &name);
     }
     match staticdrop_core::media::strip_pdf(&bytes) {
-        Some(clean) => clean_bytes_response(clean, "application/pdf"),
+        Some(clean) => clean_bytes_response(clean, "application/pdf", &name),
         None => metadata_withheld(),
     }
 }
@@ -1057,111 +1143,120 @@ fn serve_pdf(bytes: Vec<u8>, is_original: bool, path: &std::path::Path) -> Respo
 /// response is `image/svg+xml`, which the security middleware hard-jails
 /// (`sandbox; default-src 'none'`) — the strip handles the metadata in the
 /// bytes; the CSP handles script when the SVG is opened as a document.
-fn serve_svg(bytes: Vec<u8>, is_original: bool, path: &std::path::Path) -> Response {
+fn serve_svg(bytes: Vec<u8>, is_original: bool, path: &std::path::Path, stem: &str) -> Response {
+    let name = format!("{}.svg", stem);
     if is_original {
         tracing::warn!(
             "Serving {} exact bytes (public-original) — any embedded metadata is published",
             path.display()
         );
-        return clean_bytes_response(bytes, "image/svg+xml");
+        return clean_bytes_response(bytes, "image/svg+xml", &name);
     }
     match staticdrop_core::media::strip_svg(&bytes) {
-        Some(clean) => clean_bytes_response(clean, "image/svg+xml"),
+        Some(clean) => clean_bytes_response(clean, "image/svg+xml", &name),
         None => metadata_withheld(),
     }
 }
 
-async fn serve_image(
+/// Everything one image request needs: the source bytes and extension, the
+/// author's exact-bytes opt-in, the rendition rungs off the URL, the file's
+/// base address (rungs stripped) for redirects and the explainer, and the
+/// save-name stem the response's Content-Disposition names the download by —
+/// so `/photo.tif/jpeg` saves as `photo.jpg`, never as `jpeg`.
+struct ImageRequest<'a> {
     bytes: Vec<u8>,
-    ext: &str,
+    ext: &'a str,
     is_original: bool,
     thumb: bool,
     as_jpeg: bool,
-    raw_href: &str,
-    cache_dir: &std::path::Path,
-) -> Response {
-    let norm = staticdrop_core::entry::normalize_ext(ext);
+    base_href: &'a str,
+    save_stem: &'a str,
+    cache_dir: &'a std::path::Path,
+}
+
+async fn serve_image(req: ImageRequest<'_>) -> Response {
+    let norm = staticdrop_core::entry::normalize_ext(req.ext);
     let source_is_jpeg = matches!(norm.as_str(), "jpg" | "jpeg");
+    let transcode_only = staticdrop_core::media::is_transcode_only_ext(req.ext);
+
+    // A `/jpeg` rung on a file that already IS a JPEG adds nothing: 301 to the
+    // parent (the closure model collapses no-op rungs, staticdrop.md).
+    if req.as_jpeg && source_is_jpeg {
+        let target = if req.thumb {
+            format!("{}/thumb", req.base_href)
+        } else {
+            req.base_href.to_string()
+        };
+        return redirect(&target);
+    }
 
     // A gallery-tile thumbnail is a derived preview: always stripped/resized,
     // even for an `original`-tagged file (the exact bytes stay at its non-thumb
-    // URL). Tiles are JPEG renditions, so a non-JPEG source's tile is served
-    // only at its honest `?as=jpeg&thumb` address.
-    if thumb {
-        if !source_is_jpeg && !as_jpeg {
-            return jpeg_rendition_redirect(raw_href, true);
+    // URL). Tiles are JPEG renditions, so a non-JPEG source's tile lives only
+    // at its honest `…/jpeg/thumb` address — a bare `…/thumb` 301s there.
+    if req.thumb {
+        if !source_is_jpeg && !req.as_jpeg {
+            if !transcode_only {
+                return not_found(); // no JPEG rendition exists for PNG/WebP
+            }
+            return redirect(&format!("{}/jpeg/thumb", req.base_href));
         }
-        return match staticdrop_core::media::thumbnail(ext, &bytes, cache_dir).await {
+        let name = format!("{}-thumb.jpg", req.save_stem);
+        return match staticdrop_core::media::thumbnail(req.ext, &req.bytes, req.cache_dir).await {
             staticdrop_core::media::Prepared::Ready(clean) => {
                 let content_type = clean.content_type();
-                clean_bytes_response(clean.into_bytes(), content_type)
+                clean_bytes_response(clean.into_bytes(), content_type, &name)
             }
             staticdrop_core::media::Prepared::Withheld => metadata_withheld(),
         };
     }
 
-    // `?as=jpeg` exists only where a JPEG rendition is the pipeline's own
-    // output (transcode-only formats, or a JPEG source). No on-demand format
-    // conversion for PNG/WebP — fail closed on the unexpected.
-    if as_jpeg && !source_is_jpeg && !staticdrop_core::media::is_transcode_only_ext(ext) {
+    // The `/jpeg` rung exists only where a JPEG rendition is the pipeline's
+    // own output (transcode-only formats, or a JPEG source). No on-demand
+    // format conversion for PNG/WebP — fail closed on the unexpected.
+    if req.as_jpeg && !source_is_jpeg && !transcode_only {
         return not_found();
     }
 
     // `public-original` exact bytes at the bare URL: the container matches the
-    // extension, so the name is honest. `?as=jpeg` on an original still serves
-    // the clean rendition (it is a derived representation, never a leak).
-    if is_original && !as_jpeg {
-        return clean_bytes_response(bytes, &raw_content_type(ext));
+    // extension, so the name is honest. The `/jpeg` rung on an original still
+    // serves the clean rendition (a derived representation, never a leak).
+    if req.is_original && !req.as_jpeg {
+        let name = format!("{}.{}", req.save_stem, req.ext);
+        return clean_bytes_response(req.bytes, &raw_content_type(req.ext), &name);
     }
 
     // The bare URL of a transcode-only format never serves JPEG bytes under a
-    // foreign extension: answer with the honest address instead.
-    if staticdrop_core::media::is_transcode_only_ext(ext) && !as_jpeg {
-        return jpeg_rendition_redirect(raw_href, false);
+    // foreign extension: a styled page explains and links the honest rendition
+    // address (was a 303 with a text body).
+    if transcode_only && !req.as_jpeg {
+        return Html(templates::transcode_explainer_page(req.base_href, req.ext)).into_response();
     }
 
-    match staticdrop_core::media::prepare(ext, &bytes, cache_dir).await {
+    let name = if req.as_jpeg || transcode_only {
+        format!("{}.jpg", req.save_stem)
+    } else {
+        format!("{}.{}", req.save_stem, norm)
+    };
+    match staticdrop_core::media::prepare(req.ext, &req.bytes, req.cache_dir).await {
         staticdrop_core::media::Prepared::Ready(clean) => {
             let content_type = clean.content_type();
-            clean_bytes_response(clean.into_bytes(), content_type)
+            clean_bytes_response(clean.into_bytes(), content_type, &name)
         }
         staticdrop_core::media::Prepared::Withheld => metadata_withheld(),
     }
 }
 
-/// 303 See Other to the honest address of a clean JPEG rendition. The plain-text
-/// body explains what happened, so a client that does not follow redirects still
-/// learns where the bytes are and how to publish the original instead.
-fn jpeg_rendition_redirect(raw_href: &str, thumb: bool) -> Response {
-    let location = if thumb {
-        format!("{raw_href}?as=jpeg&thumb")
-    } else {
-        format!("{raw_href}?as=jpeg")
-    };
-    let value = match HeaderValue::from_str(&location) {
-        Ok(v) => v,
-        Err(_) => return not_found(), // fail closed on an unencodable path
-    };
-    let body = format!(
-        "This file's format embeds metadata that cannot be removed in place, so its exact bytes are not served.\n\
-         A clean JPEG rendition is at {location}\n\
-         The author can tag the file public-original to publish the exact bytes instead.\n"
-    );
-    Response::builder()
-        .status(StatusCode::SEE_OTHER)
-        .header(header::LOCATION, value)
-        .header(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"))
-        .body(Body::from(body))
-        .unwrap_or_else(|_| not_found())
-}
-
 /// Build the HTTP response for verify-cleaned bytes (a stripped image or PDF,
 /// or an author-opted exact original): a strong ETag derived from the *served*
-/// bytes (so it changes iff the served bytes change) and a revalidatable cache
-/// window. The strips are deterministic, so identical source bytes always
+/// bytes (so it changes iff the served bytes change), a revalidatable cache
+/// window, and an honest save-name — the URL's last segment may be a rendition
+/// rung (`jpeg`, `thumb`), so the filename must come from the header, not the
+/// address. The strips are deterministic, so identical source bytes always
 /// yield the same ETag.
-fn clean_bytes_response(bytes: Vec<u8>, content_type: &str) -> Response {
+fn clean_bytes_response(bytes: Vec<u8>, content_type: &str, filename: &str) -> Response {
     let etag = format!("\"{}\"", staticdrop_core::media::content_hash(&bytes));
+    let disposition = format!(r#"inline; filename="{}""#, sanitize_filename(filename));
     Response::builder()
         .status(StatusCode::OK)
         .header(
@@ -1169,6 +1264,7 @@ fn clean_bytes_response(bytes: Vec<u8>, content_type: &str) -> Response {
             HeaderValue::from_str(content_type)
                 .unwrap_or(HeaderValue::from_static("application/octet-stream")),
         )
+        .header(header::CONTENT_DISPOSITION, HeaderValue::from_str(&disposition).unwrap_or(HeaderValue::from_static("inline")))
         .header(header::ETAG, HeaderValue::from_str(&etag).unwrap_or(HeaderValue::from_static("\"0\"")))
         .header(header::CACHE_CONTROL, "public, max-age=3600")
         .body(Body::from(bytes))

@@ -25,6 +25,13 @@ pub struct ContentQuery {
     pub notable: bool,
     /// View axis: favorites-only (the reserved `/favorites` path segment).
     pub favorites: bool,
+    /// The clean-JPEG rendition of a raw file (`/photo.tif/jpeg`) — the
+    /// pipeline's own output, addressed as a subresource of the file so the
+    /// URL never lies about the bytes.
+    pub rendition_jpeg: bool,
+    /// The small gallery-tile rendition (`/photo.jpg/thumb`,
+    /// `/photo.tif/jpeg/thumb`).
+    pub rendition_thumb: bool,
 }
 
 impl ContentQuery {
@@ -239,6 +246,20 @@ pub fn parse_url_path(path: &str) -> ContentQuery {
                     query.raw_extension = Some(e.to_string());
                     dates_done = true;
                 }
+                continue;
+            }
+        }
+
+        // Rendition subresources of a raw file, in canonical order only:
+        // `jpeg` directly after the extension-carrying segment, `thumb` after
+        // the extension or the `jpeg` rung. Any other spelling is a miss.
+        if query.raw_extension.is_some() {
+            if segment == "jpeg" && !query.rendition_jpeg && !query.rendition_thumb {
+                query.rendition_jpeg = true;
+                continue;
+            }
+            if segment == "thumb" && !query.rendition_thumb {
+                query.rendition_thumb = true;
                 continue;
             }
         }
@@ -588,6 +609,36 @@ mod tests {
             "/+a,b"
         );
         assert_eq!(parse_url_path("/-3000").canonical_scope_path(), "/-3000");
+    }
+
+    #[test]
+    fn rendition_path_segments() {
+        let q = parse_url_path("/photo.tif/jpeg");
+        assert_eq!(q.label.as_deref(), Some("photo"));
+        assert_eq!(q.raw_extension.as_deref(), Some("tif"));
+        assert!(q.rendition_jpeg && !q.rendition_thumb);
+
+        let q = parse_url_path("/photo.tif/jpeg/thumb");
+        assert!(q.rendition_jpeg && q.rendition_thumb);
+
+        // A JPEG source's tile needs no /jpeg rung.
+        let q = parse_url_path("/photo.jpg/thumb");
+        assert!(!q.rendition_jpeg && q.rendition_thumb);
+
+        // Renditions compose with the date address of an unlabeled file.
+        let q = parse_url_path("/2026/03/04.tif/jpeg");
+        assert_eq!(q.date_prefix.as_deref(), Some("2026-03-04"));
+        assert!(q.rendition_jpeg);
+
+        // Only the canonical order exists: /thumb/jpeg is not a rendition.
+        let q = parse_url_path("/photo.tif/thumb/jpeg");
+        assert!(!q.rendition_jpeg);
+        assert_eq!(q.label.as_deref(), Some("jpeg"));
+
+        // Without a raw file there is no rendition — "jpeg" is a plain label.
+        let q = parse_url_path("/jpeg");
+        assert!(!q.rendition_jpeg);
+        assert_eq!(q.label.as_deref(), Some("jpeg"));
     }
 
     #[test]

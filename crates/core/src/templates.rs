@@ -3149,7 +3149,7 @@ fn listing_grid(base_path: &str, listing: &Listing) -> String {
     }
 }
 
-/// A gallery `<ul>` of image tiles. The tile `<img>` loads a small `?thumb`
+/// A gallery `<ul>` of image tiles. The tile `<img>` loads a small `/thumb`
 /// rendition (a stripped, resized JPEG built by libvips — `post-model.md` §8,
 /// C8c) so a grid stays light; the surrounding link opens the full asset.
 fn gallery_html(base_path: &str, items: &[ListItem]) -> String {
@@ -3157,18 +3157,19 @@ fn gallery_html(base_path: &str, items: &[ListItem]) -> String {
         .iter()
         .map(|it| {
             let href = html_escape(&encode_path(&format!("{}/{}", base_path, it.name)));
-            // Tiles are JPEG renditions; a non-JPEG source's tile URL says so
-            // (`?as=jpeg&thumb`) — the URL never lies about the bytes.
-            let tile_query =
+            // Tiles are JPEG renditions; a non-JPEG source's tile address says
+            // so (`…/jpeg/thumb` path rungs) — the URL never lies about the
+            // bytes.
+            let tile_suffix =
                 if matches!(crate::entry::normalize_ext(&it.ext).as_str(), "jpg" | "jpeg") {
-                    "?thumb"
+                    "/thumb"
                 } else {
-                    "?as=jpeg&thumb"
+                    "/jpeg/thumb"
                 };
             format!(
-                r#"<li><a href="{href}"><figure><div><img src="{href}{tile_query}" alt="{alt}" loading="lazy"></div><figcaption><b>{stem}<small>{ext}</small></b><span>{size}</span></figcaption></figure></a></li>"#,
+                r#"<li><a href="{href}"><figure><div><img src="{href}{tile_suffix}" alt="{alt}" loading="lazy"></div><figcaption><b>{stem}<small>{ext}</small></b><span>{size}</span></figcaption></figure></a></li>"#,
                 href = href,
-                tile_query = tile_query,
+                tile_suffix = tile_suffix,
                 alt = html_escape(&it.stem),
                 stem = html_escape(&it.stem),
                 ext = html_escape(&dot_ext(&it.ext)),
@@ -3357,11 +3358,12 @@ pub fn image_page(
     // "original" exact bytes when that is what is served.
     //
     // A transcode-only format (HEIC/TIFF/...) is displayed as its clean JPEG
-    // rendition, which lives only at the honest `?as=jpeg` address — the bare
-    // raw URL never serves JPEG bytes under a foreign extension (it serves the
-    // exact bytes for an original, or 303s to the rendition otherwise).
+    // rendition, which lives only at the honest `…/jpeg` path address — the
+    // bare raw URL never serves JPEG bytes under a foreign extension (it
+    // serves the exact bytes for an original, or a styled explainer page
+    // naming the rendition otherwise).
     let transcode_only = crate::media::is_transcode_only_ext(&entry.extension);
-    let img_src = if transcode_only { format!("{src}?as=jpeg") } else { src.clone() };
+    let img_src = if transcode_only { format!("{src}/jpeg") } else { src.clone() };
     let (notice, raw_href, raw_label) = if !is_original {
         (metadata_notice(transcode_only), img_src.clone(), "full size")
     } else if publishes_metadata {
@@ -3514,6 +3516,33 @@ pub fn not_found_label_page(label: &str, all_entries: &[&Entry]) -> String {
 }
 
 /// Render the 404 page (minimal — no cloud, just the way home).
+/// The styled explainer served at the bare raw URL of a transcode-only format
+/// (HEIC/TIFF/…): the exact bytes are withheld for privacy, and the honest
+/// clean-JPEG rendition lives one path rung down. A real page rather than a
+/// redirect, so the address never serves bytes its extension does not name —
+/// and so a static host can ship it as a plain file (staticdrop.md).
+pub fn transcode_explainer_page(base_href: &str, ext: &str) -> String {
+    let href = html_escape(base_href);
+    let ext_upper = html_escape(&ext.to_ascii_uppercase());
+    let body = format!(
+        r#"<nav id="crumbs" aria-label="Site"><a href="/">&#8592; Timeline</a></nav>
+<main>
+<article id="post">
+<header><time>{ext_upper}</time></header>
+<section>
+<p>This file's format embeds metadata (location, device, author) that cannot be
+removed in place, so its exact bytes are not served.</p>
+<p><a href="{href}/jpeg">A clean JPEG rendition of this image</a> is published
+instead, with that metadata stripped.</p>
+<p>The site owner can publish the exact original bytes by tagging the file
+<code>public-original</code>.</p>
+</section>
+</article>
+</main>"#
+    );
+    page_shell("esko.bar — Clean rendition", &body, "plain", false)
+}
+
 pub fn not_found_page() -> String {
     let body = r#"<nav id="crumbs" aria-label="Site"><a href="/">&#8592; Timeline</a></nav>
 <main>

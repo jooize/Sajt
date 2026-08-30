@@ -40,7 +40,7 @@ struct Args {
     #[arg(long, default_value_t = 24)]
     embed_check_hours: u64,
 
-    /// JPEG quality (1-100) for full-view transcoded renditions (`?as=jpeg`).
+    /// JPEG quality (1-100) for full-view transcoded renditions (the `/jpeg` rung).
     /// Author-side only, never a URL parameter. The value is part of the
     /// clean-store cache key, so changing it regenerates renditions on demand;
     /// gallery tiles keep their own fixed quality.

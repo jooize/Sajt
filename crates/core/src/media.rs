@@ -1191,7 +1191,7 @@ fn strip_content_type(norm_ext: &str) -> Option<&'static str> {
 
 /// A raster format the pipeline can only clean by transcoding to JPEG. The URL
 /// never lies about the bytes, so such a file's bare raw URL answers 303 to the
-/// honest `?as=jpeg` address instead of serving JPEG bytes under a foreign
+/// honest `/jpeg` rung address instead of serving JPEG bytes under a foreign
 /// extension (`public-original` exact bytes stay at the bare URL — there the
 /// container matches the name).
 pub fn is_transcode_only_ext(ext: &str) -> bool {
@@ -2190,7 +2190,7 @@ mod tests {
     #[test]
     fn transcode_only_classification_drives_the_honest_url_rule() {
         // These formats serve a JPEG rendition, so their bare raw URL must 303
-        // to `?as=jpeg` instead of serving foreign bytes under the extension.
+        // to the `/jpeg` rung instead of serving foreign bytes under the extension.
         for ext in ["tiff", "tif", "heic", "heif", "avif", "gif", "bmp"] {
             assert!(is_transcode_only_ext(ext), "{ext} is transcode-only");
         }

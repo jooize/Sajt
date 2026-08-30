@@ -343,30 +343,41 @@ removes everything else under `media/` at startup (in-flight temp files and
 the legacy flat cache layout). PDFs and SVGs keep their in-memory verify gates
 (above); folding them into the same store is a candidate follow-up.
 
-#### Honest representation URLs — `?as=jpeg` (v0.26.0, 2026-08-25)
+#### Honest representation URLs — the `/jpeg` and `/thumb` rungs (v0.30.0,
+2026-08-30; path form of v0.26.0's `?as=jpeg`, per staticdrop.md)
 
 A URL's extension never lies about the bytes it returns (DECIDED 2026-08-25).
 Strippable formats (JPEG/PNG/WebP) serve their own
 container at the bare URL — stripped, pixels intact — so nothing changes
 there. A transcode-only format (HEIC/TIFF/AVIF/GIF/BMP) serves a JPEG
-rendition, which therefore lives only at an address that says so:
+rendition, which lives only at a path that says so — renditions are
+subresources of the file, addressed by rungs in canonical order only
+(`/jpeg`, then `/thumb`):
 
-- `/photo.tif` (bare, no `public-original`) → **303 See Other** to
-  `/photo.tif?as=jpeg`, with a plain-text body explaining why the exact bytes
-  are not served and how to publish them (`public-original`). Browsers follow
-  transparently and end up on the honest address.
-- `/photo.tif?as=jpeg` → the clean JPEG rendition (`image/jpeg`).
-- `/photo.tif` with `public-original` → the exact bytes; container matches the
-  name, so the bare URL is honest by definition. `?as=jpeg` still serves the
-  clean rendition (it is derived, never a leak).
-- Gallery tiles are always JPEG renditions, so a non-JPEG source's tile URL is
-  `?as=jpeg&thumb` (`?thumb` composes as the size selector); a JPEG source's
-  tile stays `?thumb`. Bare tile requests for non-JPEG sources 303 the same way.
-- `?as=` takes exactly `jpeg`; any other value is a 404 (fail closed), and
-  `as=jpeg` on a format whose rendition would not be JPEG (PNG/WebP) is a 404 —
-  the parameter names the pipeline's own output, it is not an on-demand
-  converter.
-- The image page displays the rendition (`<img src="…?as=jpeg">`) and its
+- `/photo.tif` (bare, no `public-original`) → a **styled explainer page**
+  (was a 303 + text body pre-0.30): why the exact bytes are not served, a
+  link to the rendition, and the `public-original` way through. A real page,
+  so a static host ships it as a plain file.
+- `/photo.tif/jpeg` → the clean JPEG rendition (`image/jpeg`).
+- `/photo.tif` with `public-original` → the exact bytes; container matches
+  the name, so the bare URL is honest by definition. `/jpeg` still serves
+  the clean rendition (it is derived, never a leak).
+- Gallery tiles are always JPEG renditions: a non-JPEG source's tile is
+  `/photo.tif/jpeg/thumb`; a JPEG source's tile is `/photo.jpg/thumb`. A
+  bare `/photo.tif/thumb` 301s to the honest `/jpeg/thumb`; a no-op
+  `/photo.jpg/jpeg` 301s to its parent (the closure model collapses no-op
+  rungs).
+- The rungs name the pipeline's own output, never an on-demand converter:
+  `/jpeg` on a PNG/WebP is a 404 (fail closed), rungs on non-image files are
+  404, and only the canonical rung order exists (`/thumb/jpeg` is a miss).
+- Every derived rendition carries `Content-Disposition: inline;
+  filename="photo.jpg"` (tiles: `photo-thumb.jpg`), so a save never lands as
+  "jpeg" from the rung name — and never as JPEG bytes under a `.tif` name,
+  which the query form silently did.
+- On a folder-post asset the rungs compose the same way
+  (`/{post}/photo.tif/jpeg/thumb`); a literal file always wins its own name
+  (rungs are recognized only when no real file answers the full path).
+- The image page displays the rendition (`<img src="…/jpeg">`) and its
   notice says so: "Shown as a JPEG rendition …".
 
 Transcode quality is author-side only, never a URL parameter: a visitor
@@ -376,7 +387,7 @@ benefit over a well-chosen constant. **`--jpeg-quality` (1-100, default 85,
 SHIPPED v0.27.0)** sets the full-view rendition quality; the value is part of
 the clean-store cache key, so changing it regenerates renditions on demand and
 can never serve a stale quality. Sizes stay fixed (full view: max edge 4096;
-tiles: max edge 600 at Q=80) — `?thumb` selects between exactly these two
+tiles: max edge 600 at Q=80) — the `/thumb` rung selects between exactly these two
 renditions, it is not a size dial, for the same reason quality is not one.
 
 #### The sandboxed transcode (v0.21.0, 2026-07-15)
@@ -420,9 +431,9 @@ a decoder exploit reads pixels, not files:
   dimensions cannot be read at all — is withheld before libvips runs
   (decompression-bomb defense; an iPhone panorama is ~63 MP).
 
-Thumbnails (`?thumb`, 600 px gallery tiles) ride the same pipeline and always
+Thumbnails (the `/thumb` rung, 600 px gallery tiles) ride the same pipeline and always
 strip, even for `-original` files — a tile is a derived preview; the exact
-bytes stay at the non-`?thumb` URL.
+bytes stay at the rung-free URL.
 
 #### Route guarantee — two choke points
 
