@@ -992,6 +992,11 @@ Content-hash dividends and quiet touches (DECIDED 2026-07-04):
 
 ## Platform portability (DECIDED 2026-07-16)
 
+**AMENDED 2026-08-30 — the deployment story moved to `staticdrop.md`
+(canonical): the site is built entirely on the Mac and shipped as static
+bytes; no dynamic server runs on the public host.** The portable binary
+below remains true for local preview and the optional VPS serving lane.
+
 **The core is one portable Rust binary: macOS-native authoring, Linux-native
 serving.** Authoring stays a Finder/Files.app gesture on Apple platforms;
 deployment targets include ordinary Linux servers with content arriving via
@@ -1051,8 +1056,9 @@ Developer ID + notarization stays open until then.
    `timeline-mockup.html` (cloud header, filter row, bookmarks, quality
    meter, ★ favorites). Replaces the interim glass cards in templates.
 5. **Metadata stripping** — before anything with photos goes public.
-6. **Feeds + sitemap + OG meta + security headers**, then deploy behind
-   Caddy; `rsync -avX` content up; go live.
+6. **Feeds + sitemap + OG meta + security headers**, then go live.
+   (Deployment redesigned 2026-08-30: static build shipped to object
+   storage/CDN, never content rsynced to a live server — `staticdrop.md`.)
 
 Done 2026-07-03: effects/variants/theme-switcher pruned from templates;
 unreferenced prototypes archived (git history keeps them).
@@ -1096,6 +1102,9 @@ dark-variant images, related entries, mini-TOC, print stylesheet.
 
 ## Design files
 
+- `staticdrop.md` — **static-publish architecture + macOS app (DESIGNED
+  2026-08-30, not yet built; canonical for deployment)**: build local,
+  ship bytes; closure model; manifest + adapters; the StaticDrop name.
 - `post-model.md` — **post-model refinement spec (2026-07-07, not yet built)**:
   slugs, timestamps, kinds, link posts, revisions/families, listings, scheme
   guard, EXIF. Extends `entry-model.md`.
