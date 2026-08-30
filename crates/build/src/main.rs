@@ -55,14 +55,27 @@ struct Args {
     unsandboxed_transcode: bool,
 }
 
+/// The provenance record on a published file: the content-relative source
+/// path and the tag on that file that authorized publishing it. Absent on
+/// generated pages (template output over already-public metadata). The push
+/// step refuses to upload a content-bearing file without this record.
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+struct ProvenanceEntry {
+    source: String,
+    tag: String,
+}
+
 /// One published file in the manifest: where its bytes live (the blob hash),
-/// what the reply looked like, and every header the host should reproduce.
+/// what the reply looked like, every header the host should reproduce, and
+/// the provenance that authorized it.
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 struct FileEntry {
     hash: String,
     size: u64,
     status: u16,
     headers: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provenance: Option<ProvenanceEntry>,
 }
 
 /// The host-neutral manifest: the entire build as data. Adapters (Caddyfile,
@@ -187,8 +200,13 @@ fn content_type_of(reply: &Reply) -> String {
         .unwrap_or_default()
 }
 
-/// Hash + persist a reply body into the blob store; return its manifest entry.
-fn store_blob(out: &std::path::Path, reply: &Reply) -> std::io::Result<FileEntry> {
+/// Hash + persist a reply body into the blob store; return its manifest entry
+/// with the reply's provenance recorded content-relative.
+fn store_blob(
+    out: &std::path::Path,
+    content_dir: &std::path::Path,
+    reply: &Reply,
+) -> std::io::Result<FileEntry> {
     let digest = Sha256::digest(&reply.body);
     let hex: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
     let hash = format!("sha256-{}", hex);
@@ -205,11 +223,23 @@ fn store_blob(out: &std::path::Path, reply: &Reply) -> std::io::Result<FileEntry
         .iter()
         .map(|(n, v)| (n.to_string(), v.clone()))
         .collect();
+    let provenance = match &reply.provenance {
+        page::Provenance::Generated => None,
+        page::Provenance::File { source, tag } => Some(ProvenanceEntry {
+            source: source
+                .strip_prefix(content_dir)
+                .unwrap_or(source)
+                .display()
+                .to_string(),
+            tag: tag.to_string(),
+        }),
+    };
     Ok(FileEntry {
         hash,
         size: reply.body.len() as u64,
         status: reply.status,
         headers,
+        provenance,
     })
 }
 
@@ -290,7 +320,7 @@ async fn main() {
         match reply.status {
             200 => {
                 let ct = content_type_of(&reply);
-                let entry = store_blob(&args.out, &reply).expect("write blob");
+                let entry = store_blob(&args.out, &content_dir, &reply).expect("write blob");
                 if ct.starts_with("text/html") {
                     let body = String::from_utf8_lossy(&reply.body).into_owned();
                     for href in extract_links(&body) {
@@ -322,7 +352,7 @@ async fn main() {
             415 => {
                 // A withheld-format reply is a real resource (the explanation
                 // text); it ships as a file, and the report names it.
-                let entry = store_blob(&args.out, &reply).expect("write blob");
+                let entry = store_blob(&args.out, &content_dir, &reply).expect("write blob");
                 withheld.insert(url.clone());
                 files.insert(url, entry);
             }
@@ -333,7 +363,7 @@ async fn main() {
     }
 
     // ---- Fallback + 410 ledger ---------------------------------------------
-    let fallback = store_blob(&args.out, &page::fallback_404()).expect("write fallback blob");
+    let fallback = store_blob(&args.out, &content_dir, &page::fallback_404()).expect("write fallback blob");
 
     // Once published, an address answers 410 when its content goes — unless it
     // now redirects (a rename keeps the address alive).

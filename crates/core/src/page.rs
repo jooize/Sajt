@@ -12,18 +12,38 @@ use crate::stats::{compute_cloud, ViewFilter};
 use crate::templates::{self, HeaderContext};
 use crate::url::{parse_url_path, ContentQuery};
 
+/// Where a reply's bytes came from — the record the build's provenance
+/// manifest is made of (staticdrop.md: "the build emits a provenance manifest
+/// naming, for every file it intends to upload, the source path and the
+/// specific `public` tag that authorized it, and refuses to upload any file
+/// without that provenance").
+#[derive(Debug, Clone, PartialEq)]
+pub enum Provenance {
+    /// Template output over already-public metadata (a timeline, a listing,
+    /// an explainer, the 404 shell) — no single content file's bytes.
+    Generated,
+    /// The content (or a derived rendition) of one specific file, published
+    /// under the named tag on that file itself.
+    File {
+        source: std::path::PathBuf,
+        tag: &'static str,
+    },
+}
+
 /// A finished reply, framework-free: status, headers (lowercase names, valid
-/// HTTP values), body. The one shape every page, byte stream, redirect, and
-/// error takes on its way to axum, a file on disk, or stdout.
+/// HTTP values), body, and the provenance of the bytes. The one shape every
+/// page, byte stream, redirect, and error takes on its way to axum, a file on
+/// disk, or stdout.
 #[derive(Debug)]
 pub struct Reply {
     pub status: u16,
     pub headers: Vec<(&'static str, String)>,
     pub body: Vec<u8>,
+    pub provenance: Provenance,
 }
 
 impl Reply {
-    /// A rendered HTML page (200).
+    /// A rendered HTML page (200) — template output, `Generated` provenance.
     pub fn html(body: String) -> Self {
         Self::html_status(200, body)
     }
@@ -34,6 +54,7 @@ impl Reply {
             status,
             headers: vec![("content-type", "text/html; charset=utf-8".to_string())],
             body: body.into_bytes(),
+            provenance: Provenance::Generated,
         }
     }
 
@@ -43,6 +64,7 @@ impl Reply {
             status: 301,
             headers: vec![("location", location.to_string())],
             body: Vec::new(),
+            provenance: Provenance::Generated,
         }
     }
 
@@ -52,7 +74,18 @@ impl Reply {
             status,
             headers: vec![("content-type", "text/plain; charset=utf-8".to_string())],
             body: body.as_bytes().to_vec(),
+            provenance: Provenance::Generated,
         }
+    }
+
+    /// Stamp this reply as carrying one specific file's (possibly derived)
+    /// content, authorized by the named tag on that file.
+    fn from_file(mut self, source: &std::path::Path, tag: &'static str) -> Self {
+        self.provenance = Provenance::File {
+            source: source.to_path_buf(),
+            tag,
+        };
+        self
     }
 
     /// The redirect target, when this reply is one.
@@ -217,6 +250,7 @@ pub fn static_asset(static_dir: &std::path::Path, path: &str) -> Reply {
                 ("cache-control", "public, max-age=31536000, immutable".to_string()),
             ],
             body: asset.body().to_string().into_bytes(),
+            provenance: Provenance::Generated,
         };
     }
 
@@ -249,6 +283,7 @@ pub fn static_asset(static_dir: &std::path::Path, path: &str) -> Reply {
             ("cache-control", "public, max-age=31536000, immutable".to_string()),
         ],
         body: content,
+        provenance: Provenance::Generated,
     }
 }
 
@@ -610,7 +645,10 @@ async fn try_asset(
         if thumb || as_jpeg {
             return Some(not_found()); // renditions exist for images only
         }
-        return Some(sandbox_html_response(bytes, embed, document_content_type(ext)));
+        return Some(
+            sandbox_html_response(bytes, embed, document_content_type(ext))
+                .from_file(&canon_file, "public"),
+        );
     }
     // In-folder assets go through the same privacy gate as a primary (post-model.md
     // §8): images stripped/transcoded, author-readable text raw, everything else
@@ -622,6 +660,9 @@ async fn try_asset(
         .and_then(|s| s.to_str())
         .unwrap_or("file")
         .to_string();
+    // The tag that authorizes the raw tail below; the Withhold arm upgrades it
+    // when serving exact bytes is the author's explicit public-original choice.
+    let mut raw_tag = "public";
     match crate::media::classify(ext, &bytes) {
         crate::media::Disposition::Image => {
             let is_original = file_serves_original(&canon_file);
@@ -631,6 +672,7 @@ async fn try_asset(
             return Some(
                 serve_image(ImageRequest {
                     bytes,
+                    source: &canon_file,
                     ext,
                     is_original,
                     thumb,
@@ -652,6 +694,7 @@ async fn try_asset(
             if !file_serves_original(&canon_file) {
                 return Some(metadata_withheld());
             }
+            raw_tag = "public-original";
             tracing::warn!(
                 "Serving {} exact bytes (public-original) — any embedded metadata is published",
                 canon_file.display()
@@ -665,6 +708,7 @@ async fn try_asset(
     }
     let mime = raw_content_type(ext);
     Some(Reply {
+        provenance: Provenance::File { source: canon_file.clone(), tag: raw_tag },
         status: 200,
         headers: vec![
             ("content-type", mime),
@@ -908,11 +952,13 @@ pub fn embed_asset(store: &ContentStore, key: &str, asset_name: &str) -> Reply {
     // its content type, so a hostile `og:image` could land an HTML/XHTML document
     // here. Serve any such document jailed rather than as a trusted-origin page.
     if is_sandboxed_document(ext) {
-        return sandbox_html_response(bytes, false, document_content_type(ext));
+        return sandbox_html_response(bytes, false, document_content_type(ext))
+            .from_file(&entry.path, "public");
     }
     let mime = raw_content_type(ext);
 
     Reply {
+        provenance: Provenance::File { source: entry.path.clone(), tag: "public" },
         status: 200,
         headers: vec![
             ("content-type", mime),
@@ -955,7 +1001,8 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
             },
             None => None,
         };
-        return Reply::html(templates::listing_page(entry, listing, &all, intro_html.as_deref()));
+        return Reply::html(templates::listing_page(entry, listing, &all, intro_html.as_deref()))
+            .from_file(&entry.path, "public");
     }
 
     // The next-older entry feeds the Continue block at the foot of the post.
@@ -971,9 +1018,9 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
     // sandboxed iframe; the raw bytes (C) come from that URL (serve_raw_bytes).
     if is_sandboxed_document(&entry.extension) {
         return if fullscreen {
-            Reply::html(templates::standalone_fullscreen_page(entry, &all))
+            Reply::html(templates::standalone_fullscreen_page(entry, &all)).from_file(&entry.path, "public")
         } else {
-            Reply::html(templates::standalone_embed_page(entry, &all, next))
+            Reply::html(templates::standalone_embed_page(entry, &all, next)).from_file(&entry.path, "public")
         };
     }
 
@@ -989,14 +1036,14 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
                 let cache_dir =
                     crate::embed::cache_dir_for(&store.cache_dir, &store.content_dir, &entry.path);
                 let card_html = crate::embed::render_embed_card(embed_data, &cache_dir);
-                return Reply::html(templates::entry_page(entry, &card_html, &all, next));
+                return Reply::html(templates::entry_page(entry, &card_html, &all, next)).from_file(&entry.path, "public");
             }
         }
         // A link post with no usable embed (fetch failed / upstream deleted / not
         // yet fetched): render the bare destination cite rather than fall through to
         // a raw `.webloc`/`.url` byte download, so the page stays a working link.
         let body = templates::bare_link_body(entry);
-        return Reply::html(templates::entry_page(entry, &body, &all, next));
+        return Reply::html(templates::entry_page(entry, &body, &all, next)).from_file(&entry.path, "public");
     }
 
     let content = match std::fs::read(&entry.path) {
@@ -1012,17 +1059,17 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
             // rel="noreferrer" (post-model.md §7).
             let html = crate::embed::expand_inline_embeds(&html, &store.embed_cache);
             let html = crate::outbound::sanitize_body_links(&html);
-            Reply::html(templates::entry_page(entry, &html, &all, next))
+            Reply::html(templates::entry_page(entry, &html, &all, next)).from_file(&entry.path, "public")
         }
         Ok(RenderedContent::Standalone(html)) => {
-            Reply::html(html)
+            Reply::html(html).from_file(&entry.path, "public")
         }
         Ok(RenderedContent::PreformattedText(text)) => {
             let pre = format!("<pre>{}</pre>", html_escape_content(&text));
-            Reply::html(templates::entry_page(entry, &pre, &all, next))
+            Reply::html(templates::entry_page(entry, &pre, &all, next)).from_file(&entry.path, "public")
         }
         Ok(RenderedContent::Embed(card_html)) => {
-            Reply::html(templates::entry_page(entry, &card_html, &all, next))
+            Reply::html(templates::entry_page(entry, &card_html, &all, next)).from_file(&entry.path, "public")
         }
         Ok(RenderedContent::Image { mime }) => {
             // The exact-bytes opt-in is per file; the loud "publishes your
@@ -1037,6 +1084,7 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
                 );
             }
             Reply::html(templates::image_page(entry, &mime, is_original, publishes_metadata, &all, next))
+                .from_file(&entry.path, "public")
         }
         Ok(RenderedContent::Download { .. }) => {
             let raw_href = templates::canonical_raw_href(entry, &all);
@@ -1045,7 +1093,7 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
         Err(e) => {
             tracing::error!("Render error for {}: {}", entry.path.display(), e);
             let body = format!("<p>Rendering error: {}</p>", html_escape_content(&e));
-            Reply::html(templates::entry_page(entry, &body, &all, next))
+            Reply::html(templates::entry_page(entry, &body, &all, next)).from_file(&entry.path, "public")
         }
     }
 }
@@ -1103,7 +1151,8 @@ async fn serve_raw_bytes(
         if as_jpeg || thumb {
             return not_found(); // renditions exist for images only
         }
-        return sandbox_html_response(content, embed, document_content_type(&entry.extension));
+        return sandbox_html_response(content, embed, document_content_type(&entry.extension))
+            .from_file(&entry.path, "public");
     }
 
     // Privacy gate (post-model.md §8): an image is stripped/transcoded (unless
@@ -1111,11 +1160,15 @@ async fn serve_raw_bytes(
     // as-is; every other format is withheld — the boundary is an allowlist, so a
     // format nobody listed is a 415, never a metadata leak. The per-file
     // `public-original` tag serves the exact bytes of any withheld format.
+    // The tag that authorizes the raw tail below; the Withhold arm upgrades it
+    // when serving exact bytes is the author's explicit public-original choice.
+    let mut raw_tag = "public";
     match crate::media::classify(&entry.extension, &content) {
         crate::media::Disposition::Image => {
             let is_original = file_serves_original(&entry.path);
             return serve_image(ImageRequest {
                 bytes: content,
+                source: &entry.path,
                 ext: &entry.extension,
                 is_original,
                 thumb,
@@ -1136,6 +1189,7 @@ async fn serve_raw_bytes(
             if !file_serves_original(&entry.path) {
                 return metadata_withheld();
             }
+            raw_tag = "public-original";
             tracing::warn!(
                 "Serving {} exact bytes (public-original) — any embedded metadata is published",
                 entry.path.display()
@@ -1155,6 +1209,7 @@ async fn serve_raw_bytes(
     let disposition = format!(r#"inline; filename="{}""#, filename);
 
     Reply {
+        provenance: Provenance::File { source: entry.path.clone(), tag: raw_tag },
         status: 200,
         headers: vec![
             ("content-type", mime),
@@ -1189,10 +1244,10 @@ fn serve_pdf(bytes: Vec<u8>, is_original: bool, path: &std::path::Path, stem: &s
             "Serving {} exact bytes (public-original) — any embedded metadata is published",
             path.display()
         );
-        return clean_bytes_response(bytes, "application/pdf", &name);
+        return clean_bytes_response(bytes, "application/pdf", &name, path, "public-original");
     }
     match crate::media::strip_pdf(&bytes) {
-        Some(clean) => clean_bytes_response(clean, "application/pdf", &name),
+        Some(clean) => clean_bytes_response(clean, "application/pdf", &name, path, "public"),
         None => metadata_withheld(),
     }
 }
@@ -1209,10 +1264,10 @@ fn serve_svg(bytes: Vec<u8>, is_original: bool, path: &std::path::Path, stem: &s
             "Serving {} exact bytes (public-original) — any embedded metadata is published",
             path.display()
         );
-        return clean_bytes_response(bytes, "image/svg+xml", &name);
+        return clean_bytes_response(bytes, "image/svg+xml", &name, path, "public-original");
     }
     match crate::media::strip_svg(&bytes) {
-        Some(clean) => clean_bytes_response(clean, "image/svg+xml", &name),
+        Some(clean) => clean_bytes_response(clean, "image/svg+xml", &name, path, "public"),
         None => metadata_withheld(),
     }
 }
@@ -1224,6 +1279,7 @@ fn serve_svg(bytes: Vec<u8>, is_original: bool, path: &std::path::Path, stem: &s
 /// so `/photo.tif/jpeg` saves as `photo.jpg`, never as `jpeg`.
 struct ImageRequest<'a> {
     bytes: Vec<u8>,
+    source: &'a std::path::Path,
     ext: &'a str,
     is_original: bool,
     thumb: bool,
@@ -1264,7 +1320,7 @@ async fn serve_image(req: ImageRequest<'_>) -> Reply {
         return match crate::media::thumbnail(req.ext, &req.bytes, req.cache_dir).await {
             crate::media::Prepared::Ready(clean) => {
                 let content_type = clean.content_type();
-                clean_bytes_response(clean.into_bytes(), content_type, &name)
+                clean_bytes_response(clean.into_bytes(), content_type, &name, req.source, "public")
             }
             crate::media::Prepared::Withheld => metadata_withheld(),
         };
@@ -1282,7 +1338,7 @@ async fn serve_image(req: ImageRequest<'_>) -> Reply {
     // serves the clean rendition (a derived representation, never a leak).
     if req.is_original && !req.as_jpeg {
         let name = format!("{}.{}", req.save_stem, req.ext);
-        return clean_bytes_response(req.bytes, &raw_content_type(req.ext), &name);
+        return clean_bytes_response(req.bytes, &raw_content_type(req.ext), &name, req.source, "public-original");
     }
 
     // The bare URL of a transcode-only format never serves JPEG bytes under a
@@ -1300,7 +1356,7 @@ async fn serve_image(req: ImageRequest<'_>) -> Reply {
     match crate::media::prepare(req.ext, &req.bytes, req.cache_dir).await {
         crate::media::Prepared::Ready(clean) => {
             let content_type = clean.content_type();
-            clean_bytes_response(clean.into_bytes(), content_type, &name)
+            clean_bytes_response(clean.into_bytes(), content_type, &name, req.source, "public")
         }
         crate::media::Prepared::Withheld => metadata_withheld(),
     }
@@ -1313,10 +1369,17 @@ async fn serve_image(req: ImageRequest<'_>) -> Reply {
 /// rung (`jpeg`, `thumb`), so the filename must come from the header, not the
 /// address. The strips are deterministic, so identical source bytes always
 /// yield the same ETag.
-fn clean_bytes_response(bytes: Vec<u8>, content_type: &str, filename: &str) -> Reply {
+fn clean_bytes_response(
+    bytes: Vec<u8>,
+    content_type: &str,
+    filename: &str,
+    source: &std::path::Path,
+    tag: &'static str,
+) -> Reply {
     let etag = format!("\"{}\"", crate::media::content_hash(&bytes));
     let disposition = format!(r#"inline; filename="{}""#, sanitize_filename(filename));
     Reply {
+        provenance: Provenance::File { source: source.to_path_buf(), tag },
         status: 200,
         headers: vec![
             ("content-type", content_type.to_string()),
@@ -1434,7 +1497,10 @@ fn raw_content_type(ext: &str) -> String {
 /// middleware (and, on the strict XML type, keeps the browser XML-parsing it).
 fn sandbox_html_response(bytes: Vec<u8>, embed: bool, content_type: &'static str) -> Reply {
     let body = if embed { inject_reporter(bytes) } else { bytes };
+    // Callers stamp File provenance; the default only stands for the
+    // never-reached fallback paths.
     Reply {
+        provenance: Provenance::Generated,
         status: 200,
         headers: vec![
             ("content-type", content_type.to_string()),

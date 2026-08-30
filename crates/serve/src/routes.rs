@@ -119,6 +119,7 @@ mod tests {
     #[test]
     fn reply_conversion_preserves_status_and_headers() {
         let reply = Reply {
+            provenance: staticdrop_core::page::Provenance::Generated,
             status: 301,
             headers: vec![("location", "/2026/+design/notable".to_string())],
             body: Vec::new(),
@@ -134,6 +135,7 @@ mod tests {
     #[test]
     fn invalid_header_value_fails_closed() {
         let reply = Reply {
+            provenance: staticdrop_core::page::Provenance::Generated,
             status: 200,
             headers: vec![("location", "bad\nvalue".to_string())],
             body: Vec::new(),
