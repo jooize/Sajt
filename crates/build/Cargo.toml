@@ -1,0 +1,22 @@
+[package]
+name = "staticdrop-build"
+version.workspace = true
+edition.workspace = true
+
+# The closure builder (staticdrop.md): walk the transitive closure of the
+# site's own link graph through staticdrop-core's page layer, write every
+# reply to a content-addressed blob store, and emit the host-neutral manifest
+# plus a build report. No web framework, no network — a pure function of the
+# content tree, run on the authoring machine.
+[dependencies]
+staticdrop-core.workspace = true
+tokio.workspace = true
+clap.workspace = true
+scraper.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+directories.workspace = true

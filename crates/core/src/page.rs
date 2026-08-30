@@ -115,6 +115,35 @@ fn active_tag(query: &ContentQuery) -> Option<&str> {
     }
 }
 
+/// The complete URL space as one dispatcher, mirroring the server's router:
+/// `/static/…` and `/_embed/…` go to their dedicated resolvers, everything
+/// else to `respond`. The closure builder walks the site through this one
+/// function, so what it emits is byte-for-byte what the preview serves.
+pub async fn route(
+    store: &ContentStore,
+    static_dir: &std::path::Path,
+    path: &str,
+    flags: &RequestFlags,
+) -> Reply {
+    let bare = path.trim_start_matches('/');
+    if let Some(rest) = bare.strip_prefix("static/") {
+        return static_asset(static_dir, rest);
+    }
+    if let Some(rest) = bare.strip_prefix("_embed/") {
+        return match rest.split_once('/') {
+            Some((key, name)) if !name.contains('/') => embed_asset(store, key, name),
+            _ => not_found(),
+        };
+    }
+    respond(store, path, flags).await
+}
+
+/// The fallback 404 page — the shell every out-of-closure URL lands on. The
+/// builder ships it as the static host's custom error page (rung 4).
+pub fn fallback_404() -> Reply {
+    not_found()
+}
+
 /// The whole site as one function: the decoded request `path` (leading slash
 /// optional) plus `flags` resolve against the store to a finished `Reply`.
 /// Every route — timeline, scopes, posts, raw files, renditions, assets,

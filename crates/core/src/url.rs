@@ -137,6 +137,28 @@ impl ContentQuery {
     }
 }
 
+/// Minimal percent-decoding for callers that receive raw URLs (the `get`
+/// subcommand, the closure builder; the server gets this from axum). Invalid
+/// escapes pass through literally; invalid UTF-8 is replaced, never trusted.
+pub fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+            if let Some(b) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Append one path segment, collapsing the root's slash ("/" + "x" → "/x").
 fn push_segment(path: &mut String, segment: &str) {
     if !path.ends_with('/') {

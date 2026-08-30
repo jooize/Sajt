@@ -2086,7 +2086,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "staticdrop"
-version = "0.31.0"
+version = "0.32.0"
 dependencies = [
  "axum",
  "chrono",
@@ -2104,8 +2104,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "staticdrop-build"
+version = "0.32.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "directories",
+ "scraper",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "staticdrop-core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "staticdrop-core"
-version = "0.31.0"
+version = "0.32.0"
 dependencies = [
  "ammonia",
  "base64",
