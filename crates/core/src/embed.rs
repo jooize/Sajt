@@ -910,9 +910,30 @@ const JSON_MAX_BYTES: usize = 1024 * 1024;
 /// OG images and artwork (and, later, favicons).
 const MEDIA_MAX_BYTES: usize = 8 * 1024 * 1024;
 
+/// Contact URL for the fetch UA, from the site config's domain
+/// (`config::SiteConfig`). Unset, the engine stays unbranded.
+static UA_CONTACT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Record the configured domain for the fetch UA's contact URL. Call once at
+/// startup, before any embed refresh.
+pub fn init_contact(domain: &str) {
+    let _ = UA_CONTACT.set(format!("https://{}", domain));
+}
+
 /// Generic UA; some sites gate meta tags on it. We never send cookies, auth, or
-/// anything that identifies the operator or the reader.
-const FETCH_UA: &str = "Mozilla/5.0 (compatible; staticdrop/0.28; +https://esko.bar)";
+/// anything that identifies the operator or the reader — the contact URL names
+/// the site's own domain, which the fetched platform already sees in the embeds
+/// it renders for us.
+fn fetch_ua() -> String {
+    match UA_CONTACT.get() {
+        Some(contact) => format!(
+            "Mozilla/5.0 (compatible; staticdrop/{}; +{})",
+            env!("CARGO_PKG_VERSION"),
+            contact
+        ),
+        None => format!("Mozilla/5.0 (compatible; staticdrop/{})", env!("CARGO_PKG_VERSION")),
+    }
+}
 
 /// Whether `ip` is a globally-routable public address. Fail closed: every
 /// non-global range a server-side fetch could be steered into (loopback, RFC1918
@@ -1098,7 +1119,7 @@ async fn guarded_fetch(
             .timeout(FETCH_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
             .resolve(&host, pinned)
-            .user_agent(FETCH_UA)
+            .user_agent(fetch_ua())
             .build()
             .map_err(|e| format!("client build failed: {e}"))?;
         let mut req = match method {

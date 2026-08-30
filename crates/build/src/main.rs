@@ -47,10 +47,15 @@ struct CaddyfileArgs {
     #[arg(long, default_value = "./build/manifest.json")]
     manifest: PathBuf,
 
-    /// Site address line for the generated file. The default is the parity
-    /// loop's local address; pass the real domain for production.
-    #[arg(long, default_value = "http://localhost:8080")]
-    address: String,
+    /// Site configuration file; its domain names the generated site block.
+    #[arg(long, default_value = "./staticdrop.toml")]
+    config: PathBuf,
+
+    /// Site address line for the generated file, overriding the config
+    /// domain (e.g. http://localhost:8080 for the local parity loop).
+    /// Without either, the parity-loop address is the default.
+    #[arg(long)]
+    address: Option<String>,
 
     /// Where to write the generated Caddyfile.
     #[arg(long, default_value = "./build/Caddyfile")]
@@ -85,6 +90,11 @@ struct BuildArgs {
     /// Directory containing content files
     #[arg(long, default_value = "./content")]
     content_dir: PathBuf,
+
+    /// Site configuration file (domain, …). Missing is fine; unparseable is
+    /// a build error.
+    #[arg(long, default_value = "./staticdrop.toml")]
+    config: PathBuf,
 
     /// Root for disposable caches (embeds, clean media store), shared with the
     /// preview server so renditions are built once. Defaults to the platform
@@ -300,11 +310,22 @@ fn render_caddyfile(args: CaddyfileArgs) {
         eprintln!("{}", e);
         std::process::exit(1);
     });
+    let config = staticdrop_core::config::load(&args.config).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    });
+    // Explicit flag > config domain (Caddy provisions HTTPS for a bare
+    // domain) > the local parity-loop address.
+    let address = args
+        .address
+        .clone()
+        .or_else(|| config.domain.clone())
+        .unwrap_or_else(|| "http://localhost:8080".to_string());
     let root = args
         .root
         .unwrap_or_else(|| args.manifest.parent().unwrap_or(std::path::Path::new(".")).to_path_buf());
     let root = root.canonicalize().unwrap_or(root);
-    let text = caddyfile::render(&manifest, &args.address, &root.display().to_string())
+    let text = caddyfile::render(&manifest, &address, &root.display().to_string())
         .unwrap_or_else(|e| {
             eprintln!("Cannot render Caddyfile: {}", e);
             std::process::exit(1);
@@ -351,6 +372,14 @@ async fn run_verify(args: VerifyArgs) {
 }
 
 async fn build(args: BuildArgs) {
+    let config = staticdrop_core::config::load(&args.config).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    });
+    if let Some(domain) = &config.domain {
+        staticdrop_core::embed::init_contact(domain);
+    }
+
     let content_dir = args
         .content_dir
         .canonicalize()

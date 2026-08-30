@@ -8,6 +8,7 @@
 //! from the preview server.
 
 pub mod assets;
+pub mod config;
 pub mod content;
 pub mod embed;
 pub mod entry;

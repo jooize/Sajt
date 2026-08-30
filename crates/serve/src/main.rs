@@ -19,6 +19,12 @@ struct Args {
     #[arg(long, default_value = "./content")]
     content_dir: PathBuf,
 
+    /// Site configuration file (domain, …). A missing file is fine — the
+    /// engine runs unconfigured; a file that exists but does not parse is a
+    /// startup error.
+    #[arg(long, default_value = "./staticdrop.toml")]
+    config: PathBuf,
+
     /// Root for disposable caches (embeds, etc.), kept OUTSIDE the content tree
     /// so the server never writes into content. Defaults to the platform cache
     /// dir (e.g. macOS ~/Library/Caches/bar.esko.staticdrop).
@@ -154,6 +160,15 @@ async fn main() {
         tracing_subscriber::fmt().with_writer(std::io::stderr).init();
     } else {
         tracing_subscriber::fmt::init();
+    }
+
+    // Site config first: everything below may derive identity from it.
+    let config = staticdrop_core::config::load(&args.config).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    });
+    if let Some(domain) = &config.domain {
+        staticdrop_core::embed::init_contact(domain);
     }
 
     // Canonicalize content dir (or use as-is if it doesn't exist yet)

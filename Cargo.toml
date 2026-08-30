@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/core", "crates/serve", "crates/build"]
 
 [workspace.package]
-version = "0.35.0"
+version = "0.36.0"
 edition = "2024"
 
 # One version of every dependency for the whole workspace, so crates/build and
@@ -24,6 +24,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 ammonia = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
 json5 = "0.4"
 scraper = "0.22"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
