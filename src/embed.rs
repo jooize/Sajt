@@ -912,7 +912,7 @@ const MEDIA_MAX_BYTES: usize = 8 * 1024 * 1024;
 
 /// Generic UA; some sites gate meta tags on it. We never send cookies, auth, or
 /// anything that identifies the operator or the reader.
-const FETCH_UA: &str = "Mozilla/5.0 (compatible; esko-bar/1.0; +https://esko.bar)";
+const FETCH_UA: &str = "Mozilla/5.0 (compatible; staticdrop/0.28; +https://esko.bar)";
 
 /// Whether `ip` is a globally-routable public address. Fail closed: every
 /// non-global range a server-side fetch could be steered into (loopback, RFC1918

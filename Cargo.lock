@@ -555,39 +555,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "esko-bar"
-version = "0.27.0"
-dependencies = [
- "ammonia",
- "axum",
- "base64",
- "chrono",
- "clap",
- "directories",
- "imagesize",
- "img-parts",
- "json5",
- "kamadak-exif",
- "libc",
- "lopdf",
- "mime_guess",
- "notify",
- "plist",
- "quick-xml 0.41.0",
- "reqwest",
- "scraper",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "unicode-normalization",
- "xattr",
-]
-
-[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2116,6 +2083,39 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "staticdrop"
+version = "0.28.0"
+dependencies = [
+ "ammonia",
+ "axum",
+ "base64",
+ "chrono",
+ "clap",
+ "directories",
+ "imagesize",
+ "img-parts",
+ "json5",
+ "kamadak-exif",
+ "libc",
+ "lopdf",
+ "mime_guess",
+ "notify",
+ "plist",
+ "quick-xml 0.41.0",
+ "reqwest",
+ "scraper",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-normalization",
+ "xattr",
+]
 
 [[package]]
 name = "string_cache"

@@ -1092,7 +1092,7 @@ article[data-error] code { font-family: var(--mono); background: light-dark(rgba
 pub(crate) const BOOT_JS: &str = r##"
 (function () {
   try {
-    var NS = "site", d = document.documentElement, s = window.localStorage;
+    var NS = "staticdrop", d = document.documentElement, s = window.localStorage;
     var w = parseFloat(s.getItem(NS + "-width"));
     if (w > 0) {
       var m = Math.min(1160, window.innerWidth - 64);
@@ -1107,10 +1107,7 @@ pub(crate) const BOOT_JS: &str = r##"
 pub(crate) const JS: &str = r##"
 (function () {
   var store = window.localStorage;
-  /* Provisional key namespace: this is a generic site engine, so the client
-     storage keys avoid a brand. Rename NS once the engine is named (pre-1.0,
-     no migration needed). */
-  var NS = "site";
+  var NS = "staticdrop";
   var WIDTH = NS + "-width", SAVED = NS + "-saved", TYPE = NS + "-type", AUTOLOAD = NS + "-autoload";
   var body = document.body, page = body.dataset.page;
   var help = document.getElementById("help");

@@ -27,7 +27,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 #[derive(Parser)]
-#[command(name = "esko-bar", about = "Personal content server")]
+#[command(name = "staticdrop", about = "StaticDrop content server")]
 struct Args {
     /// Directory containing content files
     #[arg(long, default_value = "./content")]
@@ -35,7 +35,7 @@ struct Args {
 
     /// Root for disposable caches (embeds, etc.), kept OUTSIDE the content tree
     /// so the server never writes into content. Defaults to the platform cache
-    /// dir (e.g. macOS ~/Library/Caches/bar.esko.esko-bar).
+    /// dir (e.g. macOS ~/Library/Caches/bar.esko.staticdrop).
     #[arg(long)]
     cache_dir: Option<PathBuf>,
 
@@ -97,7 +97,7 @@ enum Command {
 /// Platform cache directory used when `--cache-dir` isn't given. Falls back to a
 /// project-local `./.cache` only if the OS can't provide one.
 fn default_cache_dir() -> PathBuf {
-    directories::ProjectDirs::from("bar", "esko", "esko-bar")
+    directories::ProjectDirs::from("bar", "esko", "staticdrop")
         .map(|dirs| dirs.cache_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from("./.cache"))
 }

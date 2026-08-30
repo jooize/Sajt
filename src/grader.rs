@@ -824,7 +824,7 @@ fn print_notice(port: u16, content_dir: &Path, ledger: &Path) {
 pub async fn run(content_dir: PathBuf, port: u16) {
     // A disposable cache root OUTSIDE the content tree, so scanning never writes
     // into content. Fail closed if it would land inside the content tree.
-    let cache_dir = std::env::temp_dir().join("esko-bar-grader-cache");
+    let cache_dir = std::env::temp_dir().join("staticdrop-grader-cache");
     if let Err(e) = std::fs::create_dir_all(&cache_dir) {
         tracing::warn!("Could not create grader cache dir {}: {}", cache_dir.display(), e);
     }
