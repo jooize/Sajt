@@ -1,0 +1,22 @@
+[package]
+name = "staticdrop"
+version.workspace = true
+edition.workspace = true
+
+# The axum skin: router, handlers, watcher wiring, the local-only grading tool,
+# and the one-shot migrate subcommand. All content logic lives in
+# staticdrop-core; this crate only speaks HTTP.
+[dependencies]
+staticdrop-core.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+chrono.workspace = true
+clap.workspace = true
+mime_guess.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+notify.workspace = true
+directories.workspace = true

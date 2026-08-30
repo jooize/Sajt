@@ -32,10 +32,10 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
-use crate::content::ContentStore;
-use crate::entry::Entry;
-use crate::render::{render_entry, RenderedContent};
-use crate::templates;
+use staticdrop_core::content::ContentStore;
+use staticdrop_core::entry::Entry;
+use staticdrop_core::render::{render_entry, RenderedContent};
+use staticdrop_core::templates;
 
 /// The single file this tool ever writes, relative to the content root. Must
 /// match `grade::LEDGER_STEM` + `.jsonl` — the exact name the public server
@@ -966,7 +966,7 @@ mod tests {
         assert_eq!(read[0], r#"{"winner":"a","loser":"b","at":"2026-07-06T18:05:00Z"}"#);
         // Every emitted line parses back as a grade::Judgement (format contract).
         for line in &read {
-            let j: crate::grade::Judgement = serde_json::from_str(line).unwrap();
+            let j: staticdrop_core::grade::Judgement = serde_json::from_str(line).unwrap();
             assert!(!j.winner.is_empty() && !j.loser.is_empty() && j.at.is_some());
         }
 

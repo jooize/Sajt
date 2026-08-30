@@ -6,12 +6,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::content::ContentStore;
-use crate::entry::{Entry, Revision};
-use crate::render::{render_entry, RenderedContent};
-use crate::stats::{compute_cloud, ViewFilter};
-use crate::templates::{self, HeaderContext};
-use crate::url::{parse_url_path, ContentQuery};
+use staticdrop_core::content::ContentStore;
+use staticdrop_core::entry::{Entry, Revision};
+use staticdrop_core::render::{render_entry, RenderedContent};
+use staticdrop_core::stats::{compute_cloud, ViewFilter};
+use staticdrop_core::templates::{self, HeaderContext};
+use staticdrop_core::url::{parse_url_path, ContentQuery};
 
 pub type AppState = Arc<RwLock<ContentStore>>;
 
@@ -118,7 +118,7 @@ pub async fn serve_static(Path(path): Path<String>) -> Response {
     // Generated assets (site.css / site.js / boot.js) are built from the
     // compile-time consts, not read from disk. Their URLs carry a content-hash
     // `?v=` token, so they are safe to serve `immutable`.
-    if let Some(asset) = crate::assets::get(&path) {
+    if let Some(asset) = staticdrop_core::assets::get(&path) {
         return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, HeaderValue::from_static(asset.mime()))
@@ -412,7 +412,7 @@ async fn try_asset(
     // needs its own `public` tag, and no component of its path may be `private`.
     // A hidden or untagged asset is treated as absent (fall through to a normal
     // 404), so it is indistinguishable from a missing one — no existence oracle.
-    if !crate::tags::path_visible(content_dir, &canon_file) {
+    if !staticdrop_core::tags::path_visible(content_dir, &canon_file) {
         return None;
     }
 
@@ -429,18 +429,18 @@ async fn try_asset(
     // withheld. The `public-original` opt-in is per file here, read from the
     // asset's own tags; on a withheld format it is the universal exact-bytes
     // escape (the author explicitly publishes whatever the file embeds).
-    match crate::media::classify(ext, &bytes) {
-        crate::media::Disposition::Image => {
+    match staticdrop_core::media::classify(ext, &bytes) {
+        staticdrop_core::media::Disposition::Image => {
             let is_original = file_serves_original(&canon_file);
             return Some(serve_image(bytes, ext, is_original, thumb, as_jpeg, raw_href, cache_dir).await);
         }
-        crate::media::Disposition::Pdf => {
+        staticdrop_core::media::Disposition::Pdf => {
             return Some(serve_pdf(bytes, file_serves_original(&canon_file), &canon_file));
         }
-        crate::media::Disposition::Svg => {
+        staticdrop_core::media::Disposition::Svg => {
             return Some(serve_svg(bytes, file_serves_original(&canon_file), &canon_file));
         }
-        crate::media::Disposition::Withhold => {
+        staticdrop_core::media::Disposition::Withhold => {
             if !file_serves_original(&canon_file) {
                 return Some(metadata_withheld());
             }
@@ -449,7 +449,7 @@ async fn try_asset(
                 canon_file.display()
             );
         }
-        crate::media::Disposition::Raw => {}
+        staticdrop_core::media::Disposition::Raw => {}
     }
     let mime = raw_content_type(ext);
     Some(
@@ -506,7 +506,7 @@ fn try_folder_listing(
             return None; // a file is an asset (try_asset), not a listing
         }
         // Fail-closed: every component (the post, each subfolder) must be public.
-        if !crate::tags::path_visible(content_dir, &canon_target) {
+        if !staticdrop_core::tags::path_visible(content_dir, &canon_target) {
             return None;
         }
         Some(render_nested_listing(&canon_target, first, &segments, all_entries))
@@ -521,7 +521,7 @@ fn render_nested_listing(
     segments: &[&str],
     all_entries: &[&Entry],
 ) -> Response {
-    let listing = crate::content::build_dir_listing(canon_target);
+    let listing = staticdrop_core::content::build_dir_listing(canon_target);
     let title = canon_target
         .file_name()
         .and_then(|n| n.to_str())
@@ -541,7 +541,7 @@ fn find_revision<'a>(
 ) -> Option<(&'a Entry, &'a Revision)> {
     let label = query.label.as_ref()?;
     let date_prefix = query.date_prefix.as_ref()?;
-    let want = crate::slug::slug(label)?;
+    let want = staticdrop_core::slug::slug(label)?;
 
     let mut found: Option<(&Entry, &Revision)> = None;
     let mut count = 0usize;
@@ -572,7 +572,7 @@ fn find_revision<'a>(
 async fn serve_revision(parent: &Entry, rev: &Revision, store: &ContentStore) -> Response {
     let mut e = parent.clone();
     e.path = rev.path.clone();
-    e.timestamp = crate::postdate::PostDate::from_mtime(rev.date);
+    e.timestamp = staticdrop_core::postdate::PostDate::from_mtime(rev.date);
     e.edited = None;
     e.revisions = Vec::new();
     e.aliases = Vec::new();
@@ -674,14 +674,14 @@ pub async fn serve_embed_asset(
     let entry = store
         .entries
         .iter()
-        .find(|e| crate::embed::cache_key(&store.content_dir, &e.path) == key);
+        .find(|e| staticdrop_core::embed::cache_key(&store.content_dir, &e.path) == key);
     let entry = match entry {
         Some(e) => e,
         None => return not_found(),
     };
 
     let cache_dir =
-        crate::embed::cache_dir_for(&store.cache_dir, &store.content_dir, &entry.path);
+        staticdrop_core::embed::cache_dir_for(&store.cache_dir, &store.content_dir, &entry.path);
     let asset_path = cache_dir.join(&asset_name);
 
     // Defense in depth: ensure the resolved path still sits inside cache_dir.
@@ -750,8 +750,8 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
             Some(p) => match std::fs::read(p) {
                 Ok(bytes) => match render_entry(&listing.intro_ext, &bytes).await {
                     Ok(RenderedContent::Html(h)) => {
-                        let h = crate::embed::expand_inline_embeds(&h, &store.embed_cache);
-                        Some(crate::outbound::sanitize_body_links(&h))
+                        let h = staticdrop_core::embed::expand_inline_embeds(&h, &store.embed_cache);
+                        Some(staticdrop_core::outbound::sanitize_body_links(&h))
                     }
                     Ok(RenderedContent::PreformattedText(t)) => {
                         Some(format!("<pre>{}</pre>", html_escape_content(&t)))
@@ -795,8 +795,8 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
         if let Some(embed_data) = store.embed_cache.get(&entry.path) {
             if !embed_data.is_upstream_deleted() {
                 let cache_dir =
-                    crate::embed::cache_dir_for(&store.cache_dir, &store.content_dir, &entry.path);
-                let card_html = crate::embed::render_embed_card(embed_data, &cache_dir);
+                    staticdrop_core::embed::cache_dir_for(&store.cache_dir, &store.content_dir, &entry.path);
+                let card_html = staticdrop_core::embed::render_embed_card(embed_data, &cache_dir);
                 return Html(templates::entry_page(entry, &card_html, &all, next)).into_response();
             }
         }
@@ -818,8 +818,8 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
             // scheme guard as the last transform before the body enters the shell:
             // no unsafe-scheme anchor can survive, and every external link carries
             // rel="noreferrer" (post-model.md §7).
-            let html = crate::embed::expand_inline_embeds(&html, &store.embed_cache);
-            let html = crate::outbound::sanitize_body_links(&html);
+            let html = staticdrop_core::embed::expand_inline_embeds(&html, &store.embed_cache);
+            let html = staticdrop_core::outbound::sanitize_body_links(&html);
             Html(templates::entry_page(entry, &html, &all, next)).into_response()
         }
         Ok(RenderedContent::Standalone(html)) => {
@@ -837,7 +837,7 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
             // location/camera metadata" warning fires only when an `original`
             // image actually carries something sensitive to leak.
             let is_original = file_serves_original(&entry.path);
-            let publishes_metadata = is_original && crate::media::has_sensitive_metadata(&content);
+            let publishes_metadata = is_original && staticdrop_core::media::has_sensitive_metadata(&content);
             if publishes_metadata {
                 tracing::warn!(
                     "Serving {} with embedded metadata intact (public-original tag)",
@@ -905,19 +905,19 @@ async fn serve_raw_bytes(
     // as-is; every other format is withheld — the boundary is an allowlist, so a
     // format nobody listed is a 415, never a metadata leak. The per-file
     // `public-original` tag serves the exact bytes of any withheld format.
-    match crate::media::classify(&entry.extension, &content) {
-        crate::media::Disposition::Image => {
+    match staticdrop_core::media::classify(&entry.extension, &content) {
+        staticdrop_core::media::Disposition::Image => {
             let is_original = file_serves_original(&entry.path);
             return serve_image(content, &entry.extension, is_original, false, as_jpeg, raw_href, cache_dir)
                 .await;
         }
-        crate::media::Disposition::Pdf => {
+        staticdrop_core::media::Disposition::Pdf => {
             return serve_pdf(content, file_serves_original(&entry.path), &entry.path);
         }
-        crate::media::Disposition::Svg => {
+        staticdrop_core::media::Disposition::Svg => {
             return serve_svg(content, file_serves_original(&entry.path), &entry.path);
         }
-        crate::media::Disposition::Withhold => {
+        staticdrop_core::media::Disposition::Withhold => {
             if !file_serves_original(&entry.path) {
                 return metadata_withheld();
             }
@@ -926,7 +926,7 @@ async fn serve_raw_bytes(
                 entry.path.display()
             );
         }
-        crate::media::Disposition::Raw => {}
+        staticdrop_core::media::Disposition::Raw => {}
     }
 
     let mime = raw_content_type(&entry.extension);
@@ -955,9 +955,9 @@ async fn serve_raw_bytes(
 /// the file's own Finder tags, never inherited from a parent folder (post-model.md
 /// §8). A tag that re-exposes embedded GPS must never cascade.
 fn file_serves_original(path: &std::path::Path) -> bool {
-    crate::tags::read_tags_colored(path)
+    staticdrop_core::tags::read_tags_colored(path)
         .iter()
-        .any(crate::tags::Tag::is_original)
+        .any(staticdrop_core::tags::Tag::is_original)
 }
 
 /// Serve a PDF with its document metadata stripped (`media::strip_pdf`), or the
@@ -972,7 +972,7 @@ fn serve_pdf(bytes: Vec<u8>, is_original: bool, path: &std::path::Path) -> Respo
         );
         return clean_bytes_response(bytes, "application/pdf");
     }
-    match crate::media::strip_pdf(&bytes) {
+    match staticdrop_core::media::strip_pdf(&bytes) {
         Some(clean) => clean_bytes_response(clean, "application/pdf"),
         None => metadata_withheld(),
     }
@@ -991,7 +991,7 @@ fn serve_svg(bytes: Vec<u8>, is_original: bool, path: &std::path::Path) -> Respo
         );
         return clean_bytes_response(bytes, "image/svg+xml");
     }
-    match crate::media::strip_svg(&bytes) {
+    match staticdrop_core::media::strip_svg(&bytes) {
         Some(clean) => clean_bytes_response(clean, "image/svg+xml"),
         None => metadata_withheld(),
     }
@@ -1006,7 +1006,7 @@ async fn serve_image(
     raw_href: &str,
     cache_dir: &std::path::Path,
 ) -> Response {
-    let norm = crate::entry::normalize_ext(ext);
+    let norm = staticdrop_core::entry::normalize_ext(ext);
     let source_is_jpeg = matches!(norm.as_str(), "jpg" | "jpeg");
 
     // A gallery-tile thumbnail is a derived preview: always stripped/resized,
@@ -1017,19 +1017,19 @@ async fn serve_image(
         if !source_is_jpeg && !as_jpeg {
             return jpeg_rendition_redirect(raw_href, true);
         }
-        return match crate::media::thumbnail(ext, &bytes, cache_dir).await {
-            crate::media::Prepared::Ready(clean) => {
+        return match staticdrop_core::media::thumbnail(ext, &bytes, cache_dir).await {
+            staticdrop_core::media::Prepared::Ready(clean) => {
                 let content_type = clean.content_type();
                 clean_bytes_response(clean.into_bytes(), content_type)
             }
-            crate::media::Prepared::Withheld => metadata_withheld(),
+            staticdrop_core::media::Prepared::Withheld => metadata_withheld(),
         };
     }
 
     // `?as=jpeg` exists only where a JPEG rendition is the pipeline's own
     // output (transcode-only formats, or a JPEG source). No on-demand format
     // conversion for PNG/WebP — fail closed on the unexpected.
-    if as_jpeg && !source_is_jpeg && !crate::media::is_transcode_only_ext(ext) {
+    if as_jpeg && !source_is_jpeg && !staticdrop_core::media::is_transcode_only_ext(ext) {
         return not_found();
     }
 
@@ -1042,16 +1042,16 @@ async fn serve_image(
 
     // The bare URL of a transcode-only format never serves JPEG bytes under a
     // foreign extension: answer with the honest address instead.
-    if crate::media::is_transcode_only_ext(ext) && !as_jpeg {
+    if staticdrop_core::media::is_transcode_only_ext(ext) && !as_jpeg {
         return jpeg_rendition_redirect(raw_href, false);
     }
 
-    match crate::media::prepare(ext, &bytes, cache_dir).await {
-        crate::media::Prepared::Ready(clean) => {
+    match staticdrop_core::media::prepare(ext, &bytes, cache_dir).await {
+        staticdrop_core::media::Prepared::Ready(clean) => {
             let content_type = clean.content_type();
             clean_bytes_response(clean.into_bytes(), content_type)
         }
-        crate::media::Prepared::Withheld => metadata_withheld(),
+        staticdrop_core::media::Prepared::Withheld => metadata_withheld(),
     }
 }
 
@@ -1087,7 +1087,7 @@ fn jpeg_rendition_redirect(raw_href: &str, thumb: bool) -> Response {
 /// window. The strips are deterministic, so identical source bytes always
 /// yield the same ETag.
 fn clean_bytes_response(bytes: Vec<u8>, content_type: &str) -> Response {
-    let etag = format!("\"{}\"", crate::media::content_hash(&bytes));
+    let etag = format!("\"{}\"", staticdrop_core::media::content_hash(&bytes));
     Response::builder()
         .status(StatusCode::OK)
         .header(
@@ -1128,7 +1128,7 @@ fn metadata_withheld() -> Response {
 /// (`.xml`, `.mathml`, ...) are not served functional-jailed here; the header
 /// middleware still hard-jails them via the fail-closed default.
 fn is_sandboxed_document(ext: &str) -> bool {
-    crate::entry::is_html_document(ext)
+    staticdrop_core::entry::is_html_document(ext)
 }
 
 /// The height reporter injected into the `?embed` copy of a standalone document.
@@ -1213,7 +1213,7 @@ fn sandbox_html_response(bytes: Vec<u8>, embed: bool, content_type: &'static str
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
-        .header(header::CONTENT_SECURITY_POLICY, crate::security::STANDALONE_CSP)
+        .header(header::CONTENT_SECURITY_POLICY, staticdrop_core::security::STANDALONE_CSP)
         .header(header::CACHE_CONTROL, "public, max-age=3600")
         .body(Body::from(body))
         .unwrap_or_else(|_| not_found())
@@ -1248,7 +1248,7 @@ fn not_found_response(body: String) -> Response {
         .unwrap()
 }
 
-fn build_filter_description(query: &crate::url::ContentQuery) -> String {
+fn build_filter_description(query: &staticdrop_core::url::ContentQuery) -> String {
     let mut parts = Vec::new();
     if let Some(ref dp) = query.date_prefix {
         parts.push(human_date(dp));

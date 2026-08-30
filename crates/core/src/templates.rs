@@ -9,7 +9,7 @@ use crate::stats::{compute_cloud, CloudStats, TagStat, ViewFilter};
 // state classes .selected/.near/.empty aside), light-dark() theming.
 // ============================================================================
 
-pub(crate) const CSS: &str = r##"
+pub const CSS: &str = r##"
 :root {
   color-scheme: light dark;
 
@@ -1089,7 +1089,7 @@ article[data-error] code { font-family: var(--mono); background: light-dark(rgba
 /// inline script, and we take no nonce). Setting styles via the CSSOM `.style`
 /// property is script-driven, not an inline `style` attribute, so it is clean
 /// under `style-src 'self'`. Keep the `NS` prefix in sync with the JS below.
-pub(crate) const BOOT_JS: &str = r##"
+pub const BOOT_JS: &str = r##"
 (function () {
   try {
     var NS = "staticdrop", d = document.documentElement, s = window.localStorage;
@@ -1104,7 +1104,7 @@ pub(crate) const BOOT_JS: &str = r##"
 })();
 "##;
 
-pub(crate) const JS: &str = r##"
+pub const JS: &str = r##"
 (function () {
   var store = window.localStorage;
   var NS = "staticdrop";
@@ -2212,7 +2212,7 @@ fn canonical_href(entry: &Entry, all_entries: &[&Entry]) -> String {
 
 /// The raw-bytes href for an entry: canonical path + extension, so the parser
 /// reads the extension back off the last segment. Folders have none.
-pub(crate) fn canonical_raw_href(entry: &Entry, all_entries: &[&Entry]) -> String {
+pub fn canonical_raw_href(entry: &Entry, all_entries: &[&Entry]) -> String {
     let ext = (!entry.extension.is_empty()).then_some(entry.extension.as_str());
     compose_href(&canonical(entry, all_entries).path, ext)
 }
@@ -2993,7 +2993,7 @@ pub fn standalone_fullscreen_page(entry: &Entry, all_entries: &[&Entry]) -> Stri
 /// cloud, crumbs, continue nav, footer). `inner_html` is trusted rendered
 /// content from the same pipeline `render::render_entry` feeds the live site,
 /// and is inserted as-is (exactly like `entry_page`'s content).
-pub(crate) fn post_body_fragment(entry: &Entry, inner_html: &str) -> String {
+pub fn post_body_fragment(entry: &Entry, inner_html: &str) -> String {
     format!(
         r#"<main><article>
 {post_header}

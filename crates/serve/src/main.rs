@@ -1,24 +1,10 @@
-mod assets;
-mod content;
-mod embed;
-mod entry;
-mod grade;
 mod grader;
-mod media;
 mod migrate;
-mod outbound;
-mod postdate;
-mod render;
 mod routes;
-mod sanitize;
 mod security;
-mod slug;
-mod stats;
-mod tags;
-mod templates;
-mod url;
 
 use clap::{Parser, Subcommand};
+use staticdrop_core::{content, embed, media};
 use notify::Watcher;
 use std::net::SocketAddr;
 use std::path::PathBuf;

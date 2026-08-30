@@ -1,9 +1,15 @@
-[package]
-name = "staticdrop"
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/serve"]
+
+[workspace.package]
 version = "0.28.0"
 edition = "2024"
 
-[dependencies]
+# One version of every dependency for the whole workspace, so crates/build and
+# crates/push (staticdrop.md) can never drift from what crates/serve links.
+[workspace.dependencies]
+staticdrop-core = { path = "crates/core" }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["set-header", "trace", "catch-panic"] }
@@ -24,20 +30,10 @@ notify = { version = "8", default-features = false, features = ["macos_fsevent"]
 directories = "6"
 sha2 = "0.10"
 unicode-normalization = "0.1"
-# Image metadata stripping (post-model.md §8): container-level surgery that drops
-# EXIF/XMP/IPTC/comment segments while keeping pixels byte-exact and the ICC
-# profile. `kamadak-exif` reads the orientation tag robustly (untrusted input, so
-# a parser that never panics) before we drop the EXIF that carried it.
 img-parts = "0.4"
 kamadak-exif = "0.6"
-# Set RLIMIT_CPU on the libvips transcode subprocess (a pre-exec backstop against
-# a runaway decode of an attacker-controlled image, on top of the wall-clock
-# timeout). Unix only; the code is `#[cfg(unix)]`-gated.
 libc = "0.2"
 lopdf = { version = "0.44.0", default-features = false }
-# Pre-decode dimensions gate (decompression-bomb defense): a pure-Rust header
-# parse for every raster format we transcode, so an image declaring absurd
-# dimensions is withheld before libvips ever decodes it.
 imagesize = "0.15"
 quick-xml = "0.41"
 base64 = "0.22.1"

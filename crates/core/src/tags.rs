@@ -71,14 +71,14 @@ pub fn path_visible(root: &Path, path: &Path) -> bool {
 /// that way). The first name that exists wins; the payload parses identically
 /// everywhere. Reading stops at the first hit, so on macOS this costs exactly
 /// the one native lookup for tagged files.
-pub(crate) const USER_TAGS_XATTR_NAMES: &[&str] = &[
+pub const USER_TAGS_XATTR_NAMES: &[&str] = &[
     "com.apple.metadata:_kMDItemUserTags",
     "user.com.apple.metadata:_kMDItemUserTags",
     "user.rsync.%com.apple.metadata:_kMDItemUserTags",
 ];
 
 /// Names for the Finder comment xattr — same platform mapping as the tag attr.
-pub(crate) const FINDER_COMMENT_XATTR_NAMES: &[&str] = &[
+pub const FINDER_COMMENT_XATTR_NAMES: &[&str] = &[
     "com.apple.metadata:kMDItemFinderComment",
     "user.com.apple.metadata:kMDItemFinderComment",
     "user.rsync.%com.apple.metadata:kMDItemFinderComment",

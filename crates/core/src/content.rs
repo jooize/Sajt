@@ -1112,7 +1112,7 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
 /// browsable index of its public files and public sub-subfolders. Markers,
 /// dotfiles, cache dirs, and `copy [n]` snapshots are excluded; the caller has
 /// already confirmed the whole path is `public` via `path_visible`.
-pub(crate) fn build_dir_listing(dir: &Path) -> Listing {
+pub fn build_dir_listing(dir: &Path) -> Listing {
     let mut plain: Vec<FileChild> = Vec::new();
     let mut subdirs: Vec<ListItem> = Vec::new();
     let read = match std::fs::read_dir(dir) {

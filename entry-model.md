@@ -221,7 +221,7 @@ rule).
 
 ## URLs (already implemented)
 
-The slash-hierarchy grammar is live (`src/url.rs`): `/2026/03/25`, `/+tag`,
+The slash-hierarchy grammar is live (`crates/core/src/url.rs`): `/2026/03/25`, `/+tag`,
 newest owns `/label`, older same-label versions at `/2026/03/25/label`,
 a time path segment (`/2026/03/25/191430`) for same-day collisions,
 `?grade=` / `&favorites` / `&q` for view
