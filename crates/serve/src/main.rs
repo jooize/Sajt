@@ -78,6 +78,63 @@ enum Command {
         #[arg(long, default_value_t = 1236)]
         port: u16,
     },
+    /// Resolve one URL against the content tree and print the reply — the
+    /// whole site as a function, no server. The body goes to stdout; the
+    /// status line and headers go to stderr. Exit code 0 below 400, 1 from
+    /// 400 up. Accepts a path with an optional query
+    /// (`/2026/+design/notable`, `/photo.tif/jpeg`, `/?search=rust`).
+    Get {
+        /// URL path (and optional `?search=`/`?embed`/`?fullscreen` query).
+        url: String,
+    },
+}
+
+/// Split a `get` URL into the decoded path and its request flags. The query
+/// understands exactly what the server's handlers do: `search=` (with `+` as
+/// space), `embed`, and `fullscreen`.
+fn split_request(url: &str) -> (String, staticdrop_core::page::RequestFlags) {
+    let (path, query) = match url.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (url, None),
+    };
+    let mut flags = staticdrop_core::page::RequestFlags::default();
+    if let Some(q) = query {
+        for pair in q.split('&') {
+            let (k, v) = match pair.split_once('=') {
+                Some((k, v)) => (k, Some(v)),
+                None => (pair, None),
+            };
+            match k {
+                "embed" => flags.embed = true,
+                "fullscreen" => flags.fullscreen = true,
+                "search" => flags.search = v.map(|v| percent_decode(&v.replace('+', " "))),
+                _ => {}
+            }
+        }
+    }
+    (percent_decode(path), flags)
+}
+
+/// Minimal percent-decoding for the `get` subcommand (the server side gets
+/// this from axum). Invalid escapes pass through literally; invalid UTF-8 is
+/// replaced rather than trusted.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+            if let Some(b) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Platform cache directory used when `--cache-dir` isn't given. Falls back to a
@@ -90,9 +147,14 @@ fn default_cache_dir() -> PathBuf {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
-
     let args = Args::parse();
+
+    // `get` prints the reply body on stdout, so logs must stay off it.
+    if matches!(args.command, Some(Command::Get { .. })) {
+        tracing_subscriber::fmt().with_writer(std::io::stderr).init();
+    } else {
+        tracing_subscriber::fmt::init();
+    }
 
     // Canonicalize content dir (or use as-is if it doesn't exist yet)
     let content_dir = args
@@ -153,6 +215,20 @@ async fn main() {
 
     // Resolve link embeds (fetches uncached, reads cached)
     store.resolve_embeds().await;
+
+    // One-shot URL resolution: the page layer as a CLI. Runs after the same
+    // scan + embed resolve the server does, so the bytes match a live request.
+    if let Some(Command::Get { ref url }) = args.command {
+        let (path, flags) = split_request(url);
+        let reply = staticdrop_core::page::respond(&store, &path, &flags).await;
+        eprintln!("HTTP {}", reply.status);
+        for (name, value) in &reply.headers {
+            eprintln!("{}: {}", name, value);
+        }
+        use std::io::Write;
+        std::io::stdout().write_all(&reply.body).expect("write body to stdout");
+        std::process::exit(if reply.status < 400 { 0 } else { 1 });
+    }
 
     let state = Arc::new(RwLock::new(store));
 

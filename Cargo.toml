@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/core", "crates/serve"]
 
 [workspace.package]
-version = "0.30.0"
+version = "0.31.0"
 edition = "2024"
 
 # One version of every dependency for the whole workspace, so crates/build and

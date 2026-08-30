@@ -14,6 +14,7 @@ pub mod entry;
 pub mod grade;
 pub mod media;
 pub mod outbound;
+pub mod page;
 pub mod postdate;
 pub mod render;
 pub mod sanitize;
