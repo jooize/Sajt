@@ -15,17 +15,17 @@ use staticdrop_core::url::{parse_url_path, ContentQuery};
 
 pub type AppState = Arc<RwLock<ContentStore>>;
 
-/// Parse the query string into a view filter (grade / favorites / search).
-/// `?favorites` is presence-based: bare, empty, or any value but 0/false.
-fn view_from_query(params: &HashMap<String, String>) -> ViewFilter {
-    let fav = params
-        .get("favorites")
-        .map_or(false, |v| v != "0" && v != "false");
-    ViewFilter::from_params(
-        params.get("grade").map(String::as_str),
-        fav,
-        params.get("q").map(String::as_str),
-    )
+/// The `?search=` parameter, the one view input that stays a query string.
+fn search_param(params: &HashMap<String, String>) -> Option<&str> {
+    params.get("search").map(String::as_str)
+}
+
+/// Assemble the view filter: grade/favorites come off the parsed path (the
+/// reserved `/notable` and `/favorites` segments), search off the query.
+/// Query spellings of grade/favorites are not accepted — not even as
+/// redirect inputs (staticdrop.md: no legacy to absorb).
+fn view_of(query: &ContentQuery, params: &HashMap<String, String>) -> ViewFilter {
+    ViewFilter::new(query.notable, query.favorites, search_param(params))
 }
 
 /// Human-readable filter description for the page title.
@@ -69,7 +69,7 @@ pub async fn index(
 ) -> impl IntoResponse {
     let store = store.read().await;
     let all: Vec<&Entry> = store.entries.iter().collect();
-    let view = view_from_query(&params);
+    let view = ViewFilter::new(false, false, search_param(&params));
 
     let display: Vec<&Entry> = all.iter().copied().filter(|e| view.matches(e)).collect();
 
@@ -94,23 +94,29 @@ pub async fn saved(
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let store = store.read().await;
-    let all: Vec<&Entry> = store.entries.iter().collect();
-    let view = view_from_query(&params);
+    let view = ViewFilter::new(false, false, search_param(&params));
+    Html(saved_page(&store, &view))
+}
 
+/// Render the saved-bookmarks page for a view. Shared by the bare `/saved`
+/// route and the view-suffixed paths (`/saved/notable`, …) that land in the
+/// catch-all.
+fn saved_page(store: &ContentStore, view: &ViewFilter) -> String {
+    let all: Vec<&Entry> = store.entries.iter().collect();
     let display: Vec<&Entry> = all.iter().copied().filter(|e| view.matches(e)).collect();
 
     let cloud = compute_cloud(&all);
     let ctx = HeaderContext {
         cloud: &cloud,
         active_tag: None,
-        view: &view,
+        view,
         base_path: "/saved",
         date_scope: None,
         path_tags: "",
         saved_view: true,
     };
-    let title = filter_title("", &view, true);
-    Html(templates::timeline_page(&display, &all, &ctx, &title))
+    let title = filter_title("", view, true);
+    templates::timeline_page(&display, &all, &ctx, &title)
 }
 
 /// GET /static/{*path} — serve static assets with aggressive caching.
@@ -169,6 +175,32 @@ pub async fn catch_all(
         return not_found();
     }
 
+    // `/saved` with a view suffix (`/saved/notable`, …) or a stray trailing
+    // slash. `saved` is a reserved word like the view segments: it never
+    // resolves as a post name, so nothing here shadows content.
+    if path == "saved/" || path.starts_with("saved/") {
+        let store = store.read().await;
+        let rest = &path["saved".len()..];
+        let q = parse_url_path(rest);
+        // Only view words may follow /saved — anything else is a miss.
+        if q.date_prefix.is_some()
+            || !q.and_tags.is_empty()
+            || !q.or_tags.is_empty()
+            || q.label.is_some()
+            || q.time.is_some()
+            || q.raw_extension.is_some()
+        {
+            return not_found();
+        }
+        let view = view_of(&q, &params);
+        let canon = format!("/saved{}", view.path_suffix());
+        let requested = format!("/{}", path);
+        if requested != canon {
+            return redirect(&with_search(&templates::encode_path(&canon), &view));
+        }
+        return Html(saved_page(&store, &view)).into_response();
+    }
+
     // Standalone-HTML view selectors (post-model.md §4 / the A/B/C model): `?embed`
     // appends the height reporter to the raw asset; `?fullscreen` hands a standalone
     // post the whole viewport. Both are presence flags, like `?favorites`.
@@ -207,16 +239,17 @@ pub async fn catch_all(
     }
 
     // The time-of-day disambiguator is a URL path segment now (`/2026/07/04/191430`),
-    // parsed straight off the path — no `?time=` query string.
+    // parsed straight off the path — no `?time=` query string. View axes
+    // (`/notable`, `/favorites`) are path segments too.
     let query = parse_url_path(&format!("/{}", path));
-    let view = view_from_query(&params);
+    let view = view_of(&query, &params);
     let requested = format!("/{}", path);
 
     // Bare `/name`: one flat namespace, the OLDEST claim (a label or an
     // `alias <name>/` marker) owns it, so a URL's meaning never changes.
     if is_bare_label(&query) {
         if let Some(owner) = templates::name_owner(query.label.as_deref().unwrap(), &all_entries) {
-            return serve_resolved(owner, &all_entries, &store, &requested, &view, fullscreen).await;
+            return serve_resolved(owner, &all_entries, &store, &requested, fullscreen).await;
         }
     }
 
@@ -232,14 +265,32 @@ pub async fn catch_all(
         return serve_raw_file(&matching, raw_ext, &store.cache_dir, embed, as_jpeg, &raw_href).await;
     }
 
-    // Listing: a trailing slash, or a date-only / tag-only filter with no label
-    // and no `?time=` narrowing it to one entry. With a time present we fall
-    // through to entry resolution (that's how an unlabeled entry is addressed).
+    // Listing: a trailing slash, or a date / tag / view filter with no label
+    // and no time segment narrowing it to one entry. With a time present we
+    // fall through to entry resolution (that's how an unlabeled entry is
+    // addressed). A pure scope listing is 301-normalized onto the canonical
+    // spelling (date, then tags, then view; tags sorted; no trailing slash),
+    // so every ordering of the same filter has exactly one address.
     let is_scope_listing = query.label.is_none()
         && query.time.is_none()
-        && (query.date_prefix.is_some() || !query.and_tags.is_empty() || !query.or_tags.is_empty());
+        && (query.date_prefix.is_some()
+            || !query.and_tags.is_empty()
+            || !query.or_tags.is_empty()
+            || query.notable
+            || query.favorites);
     if (query.is_listing && query.time.is_none()) || is_scope_listing {
-        return render_listing(&matching, &all_entries, &query, &view, &path);
+        let base = if query.label.is_none() {
+            let canon = query.canonical_scope_path();
+            if requested != canon {
+                return redirect(&with_search(&templates::encode_path(&canon), &view));
+            }
+            query.scope_base_path()
+        } else {
+            // A label listing (`/name/`) keeps its requested base; only the
+            // view words are stripped so header links do not double them.
+            strip_view_segments(&requested)
+        };
+        return render_listing(&matching, &all_entries, &query, &view, &base);
     }
 
     // Resolve the request to one current entry:
@@ -255,7 +306,7 @@ pub async fn catch_all(
     };
 
     if let Some(entry) = target {
-        return serve_resolved(entry, &all_entries, &store, &requested, &view, fullscreen).await;
+        return serve_resolved(entry, &all_entries, &store, &requested, fullscreen).await;
     }
 
     // An archived revision addressed at its date path (+ time segment).
@@ -275,7 +326,8 @@ pub async fn catch_all(
             .filter(|e| day_q.matches(&e.timestamp, &e.slug, &e.tag_names()))
             .collect();
         if !day.is_empty() {
-            return render_listing(&day, &all_entries, &day_q, &view, &path);
+            let base = day_q.scope_base_path();
+            return render_listing(&day, &all_entries, &day_q, &view, &base);
         }
     }
 
@@ -292,7 +344,28 @@ pub async fn catch_all(
     }
 
     // Multiple matches — show as listing
-    render_listing(&matching, &all_entries, &query, &view, &path)
+    let base = strip_view_segments(&requested);
+    render_listing(&matching, &all_entries, &query, &view, &base)
+}
+
+/// Drop the reserved view words from a path, so a label-listing base composes
+/// header links without doubling them.
+fn strip_view_segments(path: &str) -> String {
+    let kept: Vec<&str> = path
+        .split('/')
+        .filter(|s| !s.is_empty() && *s != "notable" && *s != "favorites")
+        .collect();
+    if kept.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", kept.join("/"))
+    }
+}
+
+/// A location with the view's `?search=` preserved (the path already carries
+/// the view segments).
+fn with_search(encoded_path: &str, view: &ViewFilter) -> String {
+    format!("{}{}", encoded_path, templates::search_query_suffix(view))
 }
 
 /// Whether a request is a bare `/name` (no date, time, extension, tag, or
@@ -320,19 +393,19 @@ fn oldest_of<'a>(entries: &[&'a Entry]) -> Option<&'a Entry> {
 }
 
 /// Serve an entry once it is resolved: 301 to its canonical address if the
-/// request is not already there, otherwise render it (or its error page). Every
-/// non-canonical URL collapses onto the one canonical address, query preserved.
+/// request is not already there, otherwise render it (or its error page).
+/// Every non-canonical URL collapses onto the one bare canonical address —
+/// view state is a listing concern and never rides a post URL.
 async fn serve_resolved(
     entry: &Entry,
     all_entries: &[&Entry],
     store: &ContentStore,
     requested: &str,
-    view: &ViewFilter,
     fullscreen: bool,
 ) -> Response {
     let canon = templates::canonical(entry, all_entries);
     if requested != canon.path {
-        return redirect(&templates::canonical_location(entry, all_entries, view));
+        return redirect(&templates::canonical_location(entry, all_entries));
     }
     if entry.error.is_some() {
         return error_response(entry, all_entries);
@@ -588,19 +661,20 @@ async fn serve_revision(parent: &Entry, rev: &Revision, store: &ContentStore) ->
 
 /// Render a filtered timeline listing: apply the view filter, build the shared
 /// header reflecting the active topic and view, and hand off to the template.
+/// `base_path` is the scope's canonical base (date/tags, no view words) that
+/// the header controls compose view links onto.
 fn render_listing(
     matching: &[&Entry],
     all_entries: &[&Entry],
     query: &ContentQuery,
     view: &ViewFilter,
-    path: &str,
+    base_path: &str,
 ) -> Response {
     let display: Vec<&Entry> = matching.iter().copied().filter(|e| view.matches(e)).collect();
     let cloud = compute_cloud(all_entries);
-    let base_path = format!("/{}", path);
     // The tag-only portion of the path, so month links can graft a date onto the
     // active topic and the date chip can clear back to just the tags.
-    let path_tags = tag_suffix(path);
+    let path_tags = tag_suffix(base_path);
     let date_scope = query.date_prefix.as_deref().map(|prefix| templates::DateScope {
         label: human_date(prefix),
         clear_path: if path_tags.is_empty() { "/".to_string() } else { path_tags.clone() },
@@ -609,7 +683,7 @@ fn render_listing(
         cloud: &cloud,
         active_tag: active_tag(query),
         view,
-        base_path: &base_path,
+        base_path,
         date_scope,
         path_tags: &path_tags,
         saved_view: false,

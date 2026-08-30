@@ -21,6 +21,10 @@ pub struct ContentQuery {
     pub is_listing: bool,
     /// Raw file extension requested (e.g., "jpg", "md") — serve raw bytes
     pub raw_extension: Option<String>,
+    /// View axis: notable-only (the reserved `/notable` path segment).
+    pub notable: bool,
+    /// View axis: favorites-only (the reserved `/favorites` path segment).
+    pub favorites: bool,
 }
 
 impl ContentQuery {
@@ -73,27 +77,89 @@ impl ContentQuery {
 
         true
     }
+
+    /// The canonical path for a scope (a listing filtered by date, tags, and
+    /// view — no label): date rungs, then one tag segment, then the view
+    /// suffix. Tags are sorted case-insensitively, so every ordering of the
+    /// same filter names one address ("sorting is complete at every depth" —
+    /// staticdrop.md rung 3). `/` when nothing filters.
+    pub fn canonical_scope_path(&self) -> String {
+        let mut out = self.scope_base_path();
+        if self.notable {
+            push_segment(&mut out, "notable");
+        }
+        if self.favorites {
+            push_segment(&mut out, "favorites");
+        }
+        out
+    }
+
+    /// The canonical scope path WITHOUT the view suffix — the base the header
+    /// controls compose view links onto.
+    pub fn scope_base_path(&self) -> String {
+        let mut out = String::from("/");
+        if let Some(ref prefix) = self.date_prefix {
+            for rung in prefix.split('-') {
+                // A BCE year is "-3000": splitting on '-' yields an empty first
+                // chunk, so re-join it with its sign.
+                if rung.is_empty() {
+                    continue;
+                }
+                let seg = if prefix.starts_with('-') && out == "/" {
+                    format!("-{}", rung)
+                } else {
+                    rung.to_string()
+                };
+                push_segment(&mut out, &seg);
+            }
+        }
+        if let Some(ref time) = self.time {
+            push_segment(&mut out, time);
+        }
+        if !self.and_tags.is_empty() {
+            let mut tags = self.and_tags.clone();
+            tags.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| a.cmp(b)));
+            push_segment(&mut out, &format!("+{}", tags.join("+")));
+        }
+        if !self.or_tags.is_empty() {
+            let mut tags = self.or_tags.clone();
+            tags.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| a.cmp(b)));
+            push_segment(&mut out, &format!("+{}", tags.join(",")));
+        }
+        out
+    }
+}
+
+/// Append one path segment, collapsing the root's slash ("/" + "x" → "/x").
+fn push_segment(path: &mut String, segment: &str) {
+    if !path.ends_with('/') {
+        path.push('/');
+    }
+    path.push_str(segment);
 }
 
 /// Parse a URL path into a ContentQuery.
 ///
-/// Dates are a slash hierarchy consumed from the front of the path; tags and a
-/// label follow. There is no hyphenated-date form and no `T`-timestamp segment —
-/// sub-day disambiguation is carried by `?time=` (set separately by the caller).
+/// Segments are classified independently of position, so **every ordering of
+/// the same filters parses to the same query** (staticdrop.md: "all orderings
+/// are accepted; non-canonical orderings 301" — the caller compares against
+/// `canonical_scope_path` and redirects). Classification per segment:
+///
+/// - `notable` / `favorites` (whole segment) → view flags. Reserved words: a
+///   post with that name stays reachable at its date address.
+/// - `+…` → tag segment (`+a+b` AND, `+a,b` OR).
+/// - Date rungs by a state machine (year, then month, then day, then a
+///   numeric time-of-day disambiguator), wherever they appear.
+/// - Anything else → the label. A trailing `.ext` on a date rung or label
+///   records a raw-file request.
 ///
 /// Examples:
 ///   `/`                       → timeline (all entries)
-///   `/2026`                   → year filter
-///   `/2026/03`                → year + month filter
 ///   `/2026/03/25/`            → that day (listing)
-///   `/2026/03/25/sunset`      → date + label
 ///   `/2026/03/25/sunset.jpg`  → date + raw file request
 ///   `/2026/03/04.txt`         → date + raw file for an unlabeled entry
-///   `/sunset`                 → bare label
-///   `/+amusing`               → tag filter
-///   `/+amusing+personal`      → AND tags
+///   `/2026/+design/notable`   → date + tag + view (canonical order)
 ///   `/+amusing,personal`      → OR tags
-///   `/2026/03/+amusing`       → date + tag
 pub fn parse_url_path(path: &str) -> ContentQuery {
     let mut query = ContentQuery::default();
 
@@ -110,83 +176,99 @@ pub fn parse_url_path(path: &str) -> ContentQuery {
     }
 
     let path = path.trim_end_matches('/');
-    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
-    // --- Consume the leading date hierarchy: year [/ month [/ day]] ---
-    // Each rung may carry a file extension (`04.txt`), which ends the date and
-    // records a raw-file request for an otherwise unlabeled entry.
-    let mut idx = 0;
-    let mut date = String::new();
-    let mut has_day = false;
+    // Date state machine: rungs unlock in order, but other segment kinds may
+    // interleave. An extension on a rung ends the hierarchy (`/2026/03/04.txt`).
+    let mut year: Option<String> = None;
+    let mut month: Option<String> = None;
+    let mut day: Option<String> = None;
+    let mut dates_done = false;
 
-    if let Some(seg) = segments.get(idx) {
-        let (name, ext) = split_ext(seg);
-        if is_year(name) {
-            date.push_str(name);
-            idx += 1;
-            if let Some(e) = ext {
-                query.raw_extension = Some(e.to_string());
-            } else if let Some(seg) = segments.get(idx) {
-                let (name, ext) = split_ext(seg);
-                if in_range(name, 1, 12) {
-                    date.push('-');
-                    date.push_str(name);
-                    idx += 1;
-                    if let Some(e) = ext {
-                        query.raw_extension = Some(e.to_string());
-                    } else if let Some(seg) = segments.get(idx) {
-                        let (name, ext) = split_ext(seg);
-                        if in_range(name, 1, 31) {
-                            date.push('-');
-                            date.push_str(name);
-                            idx += 1;
-                            has_day = true;
-                            if let Some(e) = ext {
-                                query.raw_extension = Some(e.to_string());
-                            }
-                        }
-                    }
-                }
-            }
+    for segment in path.split('/').filter(|s| !s.is_empty()) {
+        // Reserved view words (whole segment only — `notable.txt` is a file).
+        if segment == "notable" {
+            query.notable = true;
+            continue;
         }
-    }
+        if segment == "favorites" {
+            query.favorites = true;
+            continue;
+        }
 
-    if !date.is_empty() {
-        query.date_prefix = Some(date);
-    }
+        if let Some(rest) = segment.strip_prefix('+') {
+            parse_tag_segment(rest, &mut query);
+            continue;
+        }
 
-    // After a full Y/M/D, a purely-numeric segment is the time-of-day disambiguator
-    // (`/2026/07/04/191430`, or a left-anchored prefix) — a path segment now, not
-    // `?time=`. It may carry a raw-file extension for an unlabeled entry.
-    if has_day && query.raw_extension.is_none() {
-        if let Some(seg) = segments.get(idx) {
-            let (name, ext) = split_ext(seg);
-            if !name.is_empty() && name.len() <= 6 && name.bytes().all(|b| b.is_ascii_digit()) {
-                query.time = Some(name.to_string());
-                idx += 1;
+        let (name, ext) = split_ext(segment);
+        if !dates_done {
+            if year.is_none() && is_year(name) {
+                year = Some(name.to_string());
                 if let Some(e) = ext {
                     query.raw_extension = Some(e.to_string());
+                    dates_done = true;
                 }
+                continue;
+            }
+            if year.is_some() && month.is_none() && in_range(name, 1, 12) {
+                month = Some(name.to_string());
+                if let Some(e) = ext {
+                    query.raw_extension = Some(e.to_string());
+                    dates_done = true;
+                }
+                continue;
+            }
+            if month.is_some() && day.is_none() && in_range(name, 1, 31) {
+                day = Some(name.to_string());
+                if let Some(e) = ext {
+                    query.raw_extension = Some(e.to_string());
+                    dates_done = true;
+                }
+                continue;
+            }
+            // After a full Y/M/D, a purely-numeric segment is the time-of-day
+            // disambiguator (`/2026/07/04/191430`, or a left-anchored prefix).
+            if day.is_some()
+                && query.time.is_none()
+                && !name.is_empty()
+                && name.len() <= 6
+                && name.bytes().all(|b| b.is_ascii_digit())
+            {
+                query.time = Some(name.to_string());
+                if let Some(e) = ext {
+                    query.raw_extension = Some(e.to_string());
+                    dates_done = true;
+                }
+                continue;
+            }
+        }
+
+        // The label; a trailing extension makes it a raw-file request.
+        match ext {
+            Some(e) if !name.is_empty() => {
+                query.label = Some(name.to_string());
+                query.raw_extension = Some(e.to_string());
+            }
+            _ => {
+                query.label = Some(segment.to_string());
             }
         }
     }
 
-    // --- Remaining segments: tags (`+…`) and a single label ---
-    for segment in &segments[idx..] {
-        if segment.starts_with('+') {
-            parse_tag_segment(&segment[1..], &mut query);
-        } else if let Some(dot_pos) = segment.rfind('.') {
-            let name = &segment[..dot_pos];
-            let ext = &segment[dot_pos + 1..];
-            if !ext.is_empty() && !name.is_empty() {
-                query.label = Some(name.to_string());
-                query.raw_extension = Some(ext.to_string());
-            } else {
-                query.label = Some(segment.to_string());
+    let mut date = String::new();
+    if let Some(y) = year {
+        date.push_str(&y);
+        if let Some(m) = month {
+            date.push('-');
+            date.push_str(&m);
+            if let Some(d) = day {
+                date.push('-');
+                date.push_str(&d);
             }
-        } else {
-            query.label = Some(segment.to_string());
         }
+    }
+    if !date.is_empty() {
+        query.date_prefix = Some(date);
     }
 
     query
@@ -437,5 +519,81 @@ mod tests {
         let q = parse_url_path("/2026/03/03/hello-world.md");
         assert_eq!(q.label.as_deref(), Some("hello-world"));
         assert_eq!(q.raw_extension.as_deref(), Some("md"));
+    }
+
+    #[test]
+    fn view_words_are_reserved_segments() {
+        let q = parse_url_path("/notable");
+        assert!(q.notable && !q.favorites);
+        assert!(q.label.is_none());
+
+        let q = parse_url_path("/favorites");
+        assert!(q.favorites && !q.notable);
+
+        let q = parse_url_path("/2026/+design/notable/favorites");
+        assert!(q.notable && q.favorites);
+        assert_eq!(q.date_prefix.as_deref(), Some("2026"));
+        assert_eq!(q.and_tags, vec!["design"]);
+        assert!(q.label.is_none());
+
+        // Whole-segment only: an extension makes it a file of that name.
+        let q = parse_url_path("/notable.txt");
+        assert!(!q.notable);
+        assert_eq!(q.label.as_deref(), Some("notable"));
+        assert_eq!(q.raw_extension.as_deref(), Some("txt"));
+    }
+
+    #[test]
+    fn all_orderings_parse_alike() {
+        // Every permutation of the same filters yields the same query…
+        let canon = parse_url_path("/2026/+design/notable");
+        for path in [
+            "/notable/2026/+design",
+            "/+design/notable/2026",
+            "/+design/2026/notable",
+            "/2026/notable/+design",
+        ] {
+            let q = parse_url_path(path);
+            assert_eq!(q.date_prefix, canon.date_prefix, "{path}");
+            assert_eq!(q.and_tags, canon.and_tags, "{path}");
+            assert_eq!(q.notable, canon.notable, "{path}");
+            // …and every one serializes to the one canonical address.
+            assert_eq!(q.canonical_scope_path(), "/2026/+design/notable", "{path}");
+        }
+    }
+
+    #[test]
+    fn split_date_rungs_reassemble() {
+        // Date rungs unlock in order even with segments interleaved.
+        let q = parse_url_path("/2026/+design/03");
+        assert_eq!(q.date_prefix.as_deref(), Some("2026-03"));
+        assert_eq!(q.canonical_scope_path(), "/2026/03/+design");
+    }
+
+    #[test]
+    fn canonical_scope_paths() {
+        assert_eq!(parse_url_path("/").canonical_scope_path(), "/");
+        assert_eq!(parse_url_path("/2026/03/").canonical_scope_path(), "/2026/03");
+        assert_eq!(
+            parse_url_path("/favorites/notable").canonical_scope_path(),
+            "/notable/favorites"
+        );
+        // AND tags sort case-insensitively inside one segment.
+        assert_eq!(
+            parse_url_path("/+zeta+Alpha").canonical_scope_path(),
+            "/+Alpha+zeta"
+        );
+        assert_eq!(
+            parse_url_path("/+b,a").canonical_scope_path(),
+            "/+a,b"
+        );
+        assert_eq!(parse_url_path("/-3000").canonical_scope_path(), "/-3000");
+    }
+
+    #[test]
+    fn scope_base_path_excludes_view() {
+        let q = parse_url_path("/2026/+design/notable/favorites");
+        assert_eq!(q.scope_base_path(), "/2026/+design");
+        assert_eq!(q.canonical_scope_path(), "/2026/+design/notable/favorites");
     }
 }

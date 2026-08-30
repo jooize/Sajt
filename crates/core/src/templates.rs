@@ -1690,14 +1690,12 @@ pub const JS: &str = r##"
     });
 
     /* search: Enter submits, typing live-updates (debounced) — both swap only
-       the list, leaving the focused field untouched. */
+       the list, leaving the focused field untouched. Grade/favorites are path
+       segments riding the form's action; search is the one query param. */
     function searchURL(form) {
       var u = new URL(form.getAttribute("action") || "/", location.origin);
-      new FormData(form).forEach(function (v, k) {
-        if (k === "q") { if (v.trim()) u.searchParams.set("q", v); }
-        else if (k === "favorites") u.searchParams.set("favorites", "");
-        else if (v) u.searchParams.set(k, v);
-      });
+      var v = qInput ? qInput.value : "";
+      if (v.trim()) u.searchParams.set("search", v);
       return u.pathname + u.search;
     }
     var qTimer = 0;
@@ -1772,29 +1770,34 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
-/// Build the query string for a view filter: "" when default, else
-/// "?grade=notable&favorites&q=…". `favorites` is a bare presence flag.
-fn query_string(view: &ViewFilter) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    if view.notable {
-        parts.push(format!("grade={}", view.grade_word()));
-    }
-    if view.fav {
-        parts.push("favorites".to_string());
-    }
-    if let Some(ref q) = view.q {
-        parts.push(format!("q={}", percent_encode(q)));
-    }
-    if parts.is_empty() {
-        String::new()
-    } else {
-        format!("?{}", parts.join("&"))
+/// The `?search=` suffix for a view, or "" — search is the one filter that
+/// stays a query parameter (per-request input, not a resource).
+pub fn search_query_suffix(view: &ViewFilter) -> String {
+    match view.q {
+        Some(ref q) => format!("?search={}", percent_encode(q)),
+        None => String::new(),
     }
 }
 
-/// A raw (un-escaped) URL: path + composed query string.
+/// Compose a scope path with a view: `path` (date/tags, no view words) plus
+/// the canonical view path suffix (`/notable`, `/favorites`) plus `?search=`.
+/// The emit side writes only this canonical spelling (staticdrop.md: redirects
+/// are shock absorbers, not a second grammar).
 fn make_url(path: &str, view: &ViewFilter) -> String {
-    format!("{}{}", path, query_string(view))
+    format!("{}{}", view_path(path, view), search_query_suffix(view))
+}
+
+/// `path` + the view's path suffix, collapsing the bare root ("/" + "/notable"
+/// → "/notable").
+fn view_path(path: &str, view: &ViewFilter) -> String {
+    let suffix = view.path_suffix();
+    if suffix.is_empty() {
+        path.to_string()
+    } else if path == "/" {
+        suffix
+    } else {
+        format!("{}{}", path.trim_end_matches('/'), suffix)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1928,25 +1931,19 @@ fn render_site_header(ctx: &HeaderContext) -> String {
     let fav_target = ViewFilter { notable: view.notable, fav: !view.fav, q: view.q.clone() };
     let fav_href = html_escape(&make_url(ctx.base_path, &fav_target));
 
-    // Saved-bookmarks link: to /saved, or back to root when already there.
-    let saved_href = if ctx.saved_view { "/" } else { "/saved" };
+    // Saved-bookmarks link: to /saved, or back to root when already there —
+    // keeping the view axes and any search either way.
+    let saved_href = html_escape(&make_url(
+        if ctx.saved_view { "/" } else { "/saved" },
+        view,
+    ));
     let saved_current = if ctx.saved_view { "page" } else { "false" };
 
-    // Search preserves grade/favorites via hidden fields; action is the path.
-    // (A form can't emit a valueless key, so `favorites=` stands in for the
-    // bare `?favorites` the links use — the parser treats both as presence.)
-    let mut hidden = String::new();
-    if view.notable {
-        hidden.push_str(&format!(
-            r#"<input type="hidden" name="grade" value="{}">"#,
-            view.grade_word()
-        ));
-    }
-    if view.fav {
-        hidden.push_str(r#"<input type="hidden" name="favorites" value="">"#);
-    }
+    // Search: grade/favorites are path segments now, so they ride the form's
+    // action path — no hidden fields. GET emits `?search=` onto it.
     let q_value = view.q.as_deref().map(html_escape).unwrap_or_default();
-    let action = if ctx.base_path.is_empty() { "/" } else { ctx.base_path };
+    let base = if ctx.base_path.is_empty() { "/" } else { ctx.base_path };
+    let action = view_path(base, view);
 
     // Active date scope: a quiet removable chip under the cloud. The × returns
     // to the tag path (or root), keeping the current grade/favorites/search.
@@ -1972,14 +1969,13 @@ fn render_site_header(ctx: &HeaderContext) -> String {
 </p>
 <search>
 <button type="submit" id="qbtn" aria-label="Search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M15.2 15.2 21.5 21.5"/></svg></button>
-<input type="search" name="q" id="q" value="{q_value}" placeholder="Search" aria-label="Search entries">
+<input type="search" name="search" id="q" value="{q_value}" placeholder="Search" aria-label="Search entries">
 </search>
-{hidden}
 </form>
 </header>"#,
         cloud = render_cloud(ctx),
         scope = scope,
-        action = html_escape(action),
+        action = html_escape(&action),
         saved_href = saved_href,
         saved_current = saved_current,
         bookmark = BOOKMARK_SVG,
@@ -1991,7 +1987,6 @@ fn render_site_header(ctx: &HeaderContext) -> String {
         fav_href = fav_href,
         fav_cur = if view.fav { "true" } else { "false" },
         q_value = q_value,
-        hidden = hidden,
     )
 }
 
@@ -2217,34 +2212,32 @@ pub fn canonical_raw_href(entry: &Entry, all_entries: &[&Entry]) -> String {
     compose_href(&canonical(entry, all_entries).path, ext)
 }
 
-/// The full canonical location for a redirect: encoded path + the view filters
-/// (grade/favorites/search). Everything non-canonical is dropped, so every alias
-/// and non-canonical URL 301s onto one address.
-pub fn canonical_location(entry: &Entry, all_entries: &[&Entry], view: &ViewFilter) -> String {
-    let c = canonical(entry, all_entries);
-    let mut parts: Vec<String> = Vec::new();
-    if view.notable {
-        parts.push(format!("grade={}", view.grade_word()));
-    }
-    if view.fav {
-        parts.push("favorites".to_string());
-    }
-    if let Some(ref q) = view.q {
-        parts.push(format!("q={}", percent_encode(q)));
-    }
-    let mut out = encode_path(&c.path);
-    if !parts.is_empty() {
-        out.push('?');
-        out.push_str(&parts.join("&"));
-    }
-    out
+/// The full canonical location for an entry redirect: the encoded canonical
+/// path, nothing else. A post has exactly one address — view state is a
+/// listing concern (path segments there), never carried onto a post page —
+/// so every alias and non-canonical URL 301s onto one bare address.
+pub fn canonical_location(entry: &Entry, all_entries: &[&Entry]) -> String {
+    encode_path(&canonical(entry, all_entries).path)
 }
 
 /// Percent-encode a decoded path for emission (href attribute, Location
-/// header): each segment is encoded, slashes survive.
+/// header): each segment is encoded, slashes survive. `+` and `,` pass
+/// through — they are RFC 3986 sub-delims, legal in a path segment, and the
+/// tag grammar's own vocabulary (`/+design`, `/+a,b`); encoding them would
+/// mint a second spelling of the canonical address.
 pub fn encode_path(path: &str) -> String {
     path.split('/')
-        .map(percent_encode)
+        .map(|seg| {
+            let mut out = String::with_capacity(seg.len());
+            for b in seg.bytes() {
+                match b {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~'
+                    | b'+' | b',' => out.push(b as char),
+                    _ => out.push_str(&format!("%{:02X}", b)),
+                }
+            }
+            out
+        })
         .collect::<Vec<_>>()
         .join("/")
 }

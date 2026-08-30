@@ -110,29 +110,43 @@ impl CloudStats {
     }
 }
 
-/// The transient view filter carried in the query string: the grade floor
-/// (`?grade=notable`), favorites-only (`?favorites`), and a free-text search
-/// (`?q=…`). Composes with the path filter (tags / date) that `ContentQuery`
-/// already handles.
+/// The view filter: the grade floor and favorites-only ride URL **path
+/// segments** (`/notable`, `/favorites` — author-side content selection, so
+/// every combination is a real generated page), while free-text search stays
+/// the one query parameter (`?search=…` — per-request input, not a resource).
+/// Composes with the path filter (tags / date) that `ContentQuery` handles;
+/// canonical scope order is date, then tags, then view (staticdrop.md).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ViewFilter {
-    /// Show only notable-and-better entries (`?grade=notable`).
+    /// Show only notable-and-better entries (the `/notable` path segment).
     pub notable: bool,
     pub fav: bool,
     pub q: Option<String>,
 }
 
 impl ViewFilter {
-    /// Parse from decoded query parameters (`grade`, `favorites`, `q`). The
-    /// grade scale is two-state: `notable` (or `1`) turns the floor on;
-    /// anything else means "everything".
-    pub fn from_params(grade: Option<&str>, fav: bool, q: Option<&str>) -> Self {
-        let grade = grade.map(|s| s.to_ascii_lowercase());
-        let notable = matches!(grade.as_deref(), Some("notable") | Some("1"));
-        let q = q
+    /// Assemble from path-parsed view flags plus the `?search=` parameter
+    /// (trimmed; empty means none).
+    pub fn new(notable: bool, fav: bool, search: Option<&str>) -> Self {
+        let q = search
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
         ViewFilter { notable, fav, q }
+    }
+
+    /// The canonical view path suffix: `""`, `"/notable"`, `"/favorites"`, or
+    /// `"/notable/favorites"`. Axis order is fixed (grade, then favorites);
+    /// any other spelling 301s here. The words are reserved path segments —
+    /// a post named `notable` stays reachable at its date address.
+    pub fn path_suffix(&self) -> String {
+        let mut out = String::new();
+        if self.notable {
+            out.push_str("/notable");
+        }
+        if self.fav {
+            out.push_str("/favorites");
+        }
+        out
     }
 
     /// The grade floor as its URL/UI word.
@@ -194,21 +208,22 @@ mod tests {
     }
 
     #[test]
-    fn grade_parsing() {
-        assert!(ViewFilter::from_params(Some("notable"), false, None).notable);
-        assert!(ViewFilter::from_params(Some("1"), false, None).notable);
-        assert!(!ViewFilter::from_params(Some("everything"), false, None).notable);
-        assert!(!ViewFilter::from_params(None, false, None).notable);
-        // "best" is a parked, no-longer-recognized value → falls to everything.
-        assert!(!ViewFilter::from_params(Some("best"), false, None).notable);
-        assert!(!ViewFilter::from_params(Some("garbage"), false, None).notable);
+    fn view_path_suffix() {
+        assert_eq!(ViewFilter::new(false, false, None).path_suffix(), "");
+        assert_eq!(ViewFilter::new(true, false, None).path_suffix(), "/notable");
+        assert_eq!(ViewFilter::new(false, true, None).path_suffix(), "/favorites");
+        // Canonical axis order: grade, then favorites.
+        assert_eq!(
+            ViewFilter::new(true, true, None).path_suffix(),
+            "/notable/favorites"
+        );
     }
 
     #[test]
-    fn empty_query_is_none() {
-        assert_eq!(ViewFilter::from_params(None, false, Some("   ")).q, None);
+    fn empty_search_is_none() {
+        assert_eq!(ViewFilter::new(false, false, Some("   ")).q, None);
         assert_eq!(
-            ViewFilter::from_params(None, false, Some(" hi ")).q,
+            ViewFilter::new(false, false, Some(" hi ")).q,
             Some("hi".to_string())
         );
     }

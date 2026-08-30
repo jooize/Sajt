@@ -526,21 +526,30 @@ folder or file name, so there is no nameless entry: the one-shot migration
 folded any unlabeled file into an `untitled/` folder post (label `untitled`),
 and `parse_filename` — which used to mint `None` labels — is gone.
 
-**View filters — DECIDED 2026-07-05.** Topics stay path-based (`/+design`,
-`/+design+rust` AND, `/+design,rust` OR): permanent, linkable cool-URIs. The
-transient view state rides in composable query params — `?grade=notable`
-(**SHIPPED 2026-07-06**: renamed from `?level=`, with the scale collapsed to a
-two-state everything/notable — the `best` segment and its threshold are gone;
-with no grading ledger present the notable bucket is simply empty), `?favorites`
-(renamed from `?fav` — params are human words; URLs are the shareable UI), and search on
-the universal `?q=…` — layering onto any path (`/+design?grade=notable&favorites`). Every header control is a real `<a>` / GET-form
-(no JS required), so the address bar always reflects the current view and
-right-click → Copy Link shares the exact filtered timeline; no separate "link
-these filters" affordance is needed. `/saved` is the reader's bookmarks, a
-client-side view (the server renders the full timeline, the browser filters to
-what it has in `localStorage`). Tag order in a multi-tag path is left
-as-composed for now (a sorted `rel="canonical"` to fold `+a+b`/`+b+a` is a
-later SEO nicety).
+**View filters — path segments (SHIPPED 2026-08-30, staticdrop.md).** Topics
+stay path-based (`/+design`, `/+design+rust` AND, `/+design,rust` OR):
+permanent, linkable cool-URIs. The view axes moved from query params into
+**reserved path segments** — `/notable` (the two-state everything/notable
+floor; with no grading ledger the notable bucket is simply empty) and
+`/favorites` — because they are author-side content selection, so every
+combination is a real page the static build can emit. Canonical scope order
+is **date, then tags, then view** (`/2026/+design/notable/favorites`); every
+ordering of the same filters is accepted and 301s to the canonical spelling
+(tags sorted case-insensitively, no trailing slash) — redirects are shock
+absorbers, not a second grammar, and the site itself only ever emits
+canonical URLs. The old query spellings (`?grade=`, `?favorites`) are gone
+without redirect absorption (never really online, no legacy). Search is the
+one filter that stays a query — `?search=…` (renamed from `?q=` 2026-08-30;
+per-request input, not a resource) — layering onto any scope path. Every
+header control is a real `<a>` / GET-form (no JS required), so the address
+bar always reflects the current view and right-click → Copy Link shares the
+exact filtered timeline. `/saved` is the reader's bookmarks, a client-side
+view (the server renders the full timeline, the browser filters to what it
+has in `localStorage`); it composes with the view axes (`/saved/notable`).
+Post URLs never carry view state: opening a post drops the view, and every
+alias 301s to the one bare canonical address. `notable`, `favorites`, and
+`saved` are reserved words — a post so named stays reachable at its date
+address, never at the bare label.
 
 ## Authoring formats
 
@@ -682,7 +691,7 @@ mode is never a security decision. What shipped:
   - `/slug?fullscreen` — full-viewport frame + slim top bar (site mark, back,
     "show only the HTML" link). No injection; the frame scrolls itself. The
     expand link on every embedded frame targets this — a stateless real-link
-    control like `?grade`.
+    control like the `/notable` view segment.
   - `/{slug}/{file}.html` — the **exact bytes** at the folder-post asset path
     that already exists (bare-file `.html` posts gain an asset-style address).
     No iframe needed: the response's own `Content-Security-Policy: sandbox
