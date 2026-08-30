@@ -8,7 +8,8 @@
 //!
 //! The invariant this walk enforces: **every URL the site emits is a real
 //! file**. A link that resolves to a 404 is a broken build (nonzero exit),
-//! not a footnote.
+//! not a footnote. `--allow-broken-links` downgrades that one failure to a
+//! loud warning for a deliberate partial publish; internal errors still fail.
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -53,6 +54,12 @@ struct Args {
     /// Allow image transcodes to run WITHOUT an OS sandbox (see serve's flag).
     #[arg(long)]
     unsandboxed_transcode: bool,
+
+    /// Succeed even when pages link to URLs that resolve to 404. The broken
+    /// links are still listed in the report; this only changes the exit code,
+    /// for a deliberate publish of a knowingly incomplete site.
+    #[arg(long)]
+    allow_broken_links: bool,
 }
 
 /// The provenance record on a published file: the content-relative source
@@ -439,8 +446,15 @@ async fn main() {
         }
     }
     if !broken.is_empty() {
-        failed = true;
-        println!("  BROKEN LINKS     {} (every emitted URL must be a real file)", broken.len());
+        if args.allow_broken_links {
+            println!(
+                "  BROKEN LINKS     {} (ALLOWED by --allow-broken-links; these URLs will 404 on the published site)",
+                broken.len()
+            );
+        } else {
+            failed = true;
+            println!("  BROKEN LINKS     {} (every emitted URL must be a real file)", broken.len());
+        }
         for (url, referrers) in &broken {
             for r in referrers {
                 println!("    {} (linked from {})", url, r);
