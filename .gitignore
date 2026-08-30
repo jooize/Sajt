@@ -4,3 +4,16 @@
 .DS_Store
 /server.log
 /.cache
+
+# Build output: blobs and manifest of the operator's real site. Personal
+# site data must never enter this repository.
+/build
+
+# Agent/session state (personal notes, scratch, trash). Covered by the
+# user's global ignore too; listed here so a clone without that global
+# config still cannot commit them.
+/.claude-memory
+/.agents-work
+/.tmp
+/.trash
+SECRETS.md
