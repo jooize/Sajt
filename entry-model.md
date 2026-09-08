@@ -208,7 +208,7 @@ rule).
 - **Not a tag, not per-post metadata** — per-post grading ceremony is a burden;
   this must stay simple.
 - The pairwise-judgement ledger is
-  **`.esko.bar-grade-judgements.jsonl` in the content root**, append-only,
+  **`.sajt-grade-judgements.jsonl` in the content root**, append-only,
   written by the author (future companion/grading app, or by hand), synced
   *forward* with the content like everything else. The server only reads it
   and derives `?grade=` buckets into its outside-the-tree cache.

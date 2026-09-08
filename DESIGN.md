@@ -945,8 +945,9 @@ Reference realizations: `static/timeline-glass-mockup.html` (rows) and
   quiet entry metadata: `source`, "more like this".
 - **Typeface** — **OPEN**: New York (ui-serif) vs SF (system-ui) for entry
   body text; toggle in the mockup. Chrome is always system sans.
-- **Page titles — DECIDED 2026-07-04: site first**: `esko.bar — Topics`,
-  `esko.bar — <entry title>`. The domain is the brand, and tabs from the
+- **Page titles — DECIDED 2026-07-04: site first**: `<site name> — Topics`,
+  `<site name> — <entry title>` (the name comes from `.sajt.toml`, default the
+  site directory's name; since 2026-09-08). The site name is the brand, and tabs from the
   site cluster visually. Modern browsers (Safari included) deduplicate a
   repeated title prefix across same-site tabs and surface the distinct
   part, so the classic truncation argument for page-first no longer bites.
@@ -1115,7 +1116,7 @@ at clean URLs. The `Do`-prefix action tags and the timestamp-filename
 convention are retired.
 
 Later: grading flow in production (author-written
-`.esko.bar-grade-judgements.jsonl` + Bradley-Terry derivation), visitor
+`.sajt-grade-judgements.jsonl` + Bradley-Terry derivation), visitor
 favorites + infinite-scroll continue, Share Extension, passkey auth for
 `private`, expiring share links, `.prompt` generation polish, 404 suggestions,
 dark-variant images, related entries, mini-TOC, print stylesheet.
