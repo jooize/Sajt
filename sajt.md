@@ -164,7 +164,7 @@ The publish manifest doubles as the offline system:
   not; Chrome and Firefox honor `persist()` indefinitely). This is
   accepted as-is — honest copy, no mitigation machinery.
 - **Download (disk).** The build emits archives as plain files:
-  `esko.bar-everything-20260830T1425Z.zip` — domain, scope, UTC stamp —
+  `example.org-everything-20260830T1425Z.zip` — domain, scope, UTC stamp —
   each containing its manifest slice, so an archive is self-describing
   and verifiable. Static, curl-able, evicted by nobody. The browser copy
   is a convenience cache; the zip is the permanent copy. Build-time

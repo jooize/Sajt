@@ -67,7 +67,7 @@ birthtime dates, and the `.id`/UUID identity plan:
   the date must outlive edits. The extension gives the timeline its type
   indication for free.
 - **Folders as entries** — `open-source-licenses/` *is*
-  `esko.bar/open-source-licenses`. Publish date = an **empty date-named
+  `example.org/open-source-licenses`. Publish date = an **empty date-named
   subfolder** (`2026-03-03T1430/`), editable on any device (Finder/iOS Files
   "New Folder"); zero markers → mtime fallback, two+ → error (fail-closed).
   Exactly one primary content file (stem `index` or = folder name, or the
@@ -90,7 +90,7 @@ birthtime dates, and the `.id`/UUID identity plan:
   (hand-written page), a `.prompt` (AI-generated page from sibling files), or
   neither (auto gallery/listing of its contents). Files inside a bundle
   inherit the folder's identity and need no timestamps. Assets inside are
-  addressable as `esko.bar/<name>/<asset>`.
+  addressable as `example.org/<name>/<asset>`.
 
 ### Visibility — tags are the only gate
 
@@ -495,14 +495,14 @@ boundary (2026-07-15, v0.18.0); PDF strip + verify gates (v0.19.0); SVG strip
 Labels are primary; dates are for timeline filtering only.
 
 ```
-esko.bar/                     timeline (newest first), tag cloud as header
-esko.bar/saved                the reader's bookmarked entries (client-side)
-esko.bar/+favorite            my hand-picked favorites (a plain Finder tag)
-esko.bar/open-source-licenses entry (file or folder), label = URL
-esko.bar/open-source-licenses/report.pdf   asset inside a bundle
-esko.bar/2026-03/             listing: March 2026
-esko.bar/+design+rust         tag filter (AND); comma = OR
-esko.bar/sunset.md            raw source (extension = raw)
+example.org/                     timeline (newest first), tag cloud as header
+example.org/saved                the reader's bookmarked entries (client-side)
+example.org/+favorite            my hand-picked favorites (a plain Finder tag)
+example.org/open-source-licenses entry (file or folder), label = URL
+example.org/open-source-licenses/report.pdf   asset inside a bundle
+example.org/2026-03/             listing: March 2026
+example.org/+design+rust         tag filter (AND); comma = OR
+example.org/sunset.md            raw source (extension = raw)
 ```
 
 Old date+label URLs 301-redirect to label-only. `/best` and `/everything`
@@ -667,7 +667,7 @@ blast radius "deface / phish the visitor", not account theft; but the stated bar
 (a hospital or law firm, hence future auth + multiple contributors) meant closing
 it durably. v0.12.0 does, in five commits (S2.1–S2.4 + tiers).
 
-**The one invariant: author-supplied HTML never executes in the esko.bar
+**The one invariant: author-supplied HTML never executes in the site's own
 origin.** Every serving mode below jails it in an opaque origin, so choosing a
 mode is never a security decision. What shipped:
 
@@ -714,7 +714,7 @@ mode is never a security decision. What shipped:
     widgets, games); the opaque origin just can't read our cookies/DOM/storage
     or act as the user.
 - **Strict CSP, no `unsafe-inline`, no nonces — via externalized JS/CSS.** Move
-  our inline `<script>`/`<style>` to files served from esko.bar. Page policy:
+  our inline `<script>`/`<style>` to files served by the site itself. Page policy:
   `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'
   data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action
   'self'; frame-ancestors 'self'`. Companion headers everywhere:
@@ -758,7 +758,7 @@ mode is never a security decision. What shipped:
   bar, since script-src stays locked and default/img/font-src 'self' already
   close CSS-based exfiltration.)
 - **CSP delivers the "zero third-party requests" reader-privacy goal** (below):
-  the browser refuses any request to a non-esko.bar host, so a reader's IP/UA/
+  the browser refuses any request to any other host, so a reader's IP/UA/
   Referer never leak to an outside server; the jailed `.html` responses carry
   their own third-party-blocking policy. **Safety verdict:** the jail makes
   `.html` XSS-safe unconditionally; the CSP makes every page privacy-safe.
@@ -946,7 +946,7 @@ Reference realizations: `static/timeline-glass-mockup.html` (rows) and
 - **Typeface** — **OPEN**: New York (ui-serif) vs SF (system-ui) for entry
   body text; toggle in the mockup. Chrome is always system sans.
 - **Page titles — DECIDED 2026-07-04: site first**: `<site name> — Topics`,
-  `<site name> — <entry title>` (the name comes from `.sajt.toml`, default the
+  `<site name> — <entry title>` (the name comes from `Sajt.toml`, default the
   site directory's name; since 2026-09-08). The site name is the brand, and tabs from the
   site cluster visually. Modern browsers (Safari included) deduplicate a
   repeated title prefix across same-site tabs and surface the distinct
@@ -1116,13 +1116,17 @@ at clean URLs. The `Do`-prefix action tags and the timestamp-filename
 convention are retired.
 
 Later: grading flow in production (author-written
-`.sajt-grade-judgements.jsonl` + Bradley-Terry derivation), visitor
+`Sajt-Grade-Judgements.jsonl` + Bradley-Terry derivation), visitor
 favorites + infinite-scroll continue, Share Extension, passkey auth for
 `private`, expiring share links, `.prompt` generation polish, 404 suggestions,
 dark-variant images, related entries, mini-TOC, print stylesheet.
 
 ## Design files
 
+- The design mockups that lived in `static/` (timeline, entry page, listings,
+  filter controls, marks, cloud, link rows) were removed on 2026-09-08; they
+  are in history at commit `8bc77c8` and earlier. New mockups showing the
+  settled design are planned.
 - `sajt.md` — **static-publish architecture + macOS app (DESIGNED
   2026-08-30, not yet built; canonical for deployment)**: build local,
   ship bytes; closure model; manifest + adapters; the Sajt name.

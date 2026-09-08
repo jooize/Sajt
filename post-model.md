@@ -146,7 +146,7 @@ post. "A date-named thing is a date."
 ### Date-time deeplinks (new)
 
 Every post page shows a quiet permalink of its publish moment —
-`¶ esko.bar/2026/07/04?time=191430` — mono, ¶-prefixed, the generalization
+`¶ example.org/2026/07/04?time=191430` — mono, ¶-prefixed, the generalization
 of the bare-link row's permalink (`static/link-rows-mockup.html`, case 4).
 
 This is a **name-independent citation**: it resolves by timestamp and 301s
@@ -286,7 +286,7 @@ Two visually distinct targets, so nothing is ambiguous:
   Rendered as a semantic `<cite>` (favicon · target title · domain) — no class,
   fits the element-selector rule.
 - **No label** (bare link) is the one case the target's headline *is* the
-  headline → destination, with a quiet `¶ esko.bar/2026/07/04` permalink → the
+  headline → destination, with a quiet `¶ example.org/2026/07/04` permalink → the
   card page.
 - Degrade cleanly: label == target title → show once; embed/title fetch failed →
   bare domain.
