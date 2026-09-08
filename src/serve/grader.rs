@@ -3,7 +3,7 @@
 //! This is a SEPARATE web server from the public site (`routes.rs`). The public
 //! server is strictly read-only on the content tree; this grader is the one
 //! sanctioned writer, and it writes exactly one file — the append-only judgement
-//! ledger `<content_dir>/.sajt-grade-judgements.jsonl` that `grade.rs`
+//! ledger `<content_dir>/Sajt-Grade-Judgements.jsonl` that `grade.rs`
 //! reads. It never mutates a post. It binds `127.0.0.1` only and must never be
 //! proxied (it is deliberately absent from the Caddyfile).
 //!
@@ -40,7 +40,7 @@ use sajt::templates;
 /// The single file this tool ever writes, relative to the content root. Must
 /// match `grade::LEDGER_STEM` + `.jsonl` — the exact name the public server
 /// reads. The write guard (`append_judgements`) asserts the full path.
-const LEDGER_FILENAME: &str = ".sajt-grade-judgements.jsonl";
+const LEDGER_FILENAME: &str = "Sajt-Grade-Judgements.jsonl";
 
 // ─── Server state ────────────────────────────────────────────────────────────
 
@@ -216,7 +216,7 @@ fn json_str(s: &str) -> String {
 }
 
 /// Append complete JSONL lines to the grade ledger — the ONLY write this tool
-/// performs. `target` MUST be exactly `<content_dir>/.sajt-grade-judgements
+/// performs. `target` MUST be exactly `<content_dir>/Sajt-Grade-Judgements
 /// .jsonl`; any other path is refused before a single byte is written (fail
 /// closed). The file is created if absent. Each line gets a trailing newline.
 fn append_judgements(content_dir: &Path, target: &Path, lines: &[String]) -> std::io::Result<()> {
@@ -824,6 +824,32 @@ fn print_notice(port: u16, content_dir: &Path, ledger: &Path) {
 
 /// Run the grading tool: scan content, build the local-only router, and serve
 /// until Ctrl-C.
+/// `sajt grade purge`: move every ledger file to the system Trash. Lists what
+/// it would remove and refuses without `--yes`; nothing is ever deleted
+/// outright, the Trash keeps the undo.
+pub fn purge(content_dir: &Path, yes: bool) {
+    let files = sajt::grade::ledger_files(content_dir);
+    if files.is_empty() {
+        println!("No grade ledger in {}: nothing to purge.", content_dir.display());
+        return;
+    }
+    println!("Grade ledger file(s) in {}:", content_dir.display());
+    for f in &files {
+        println!("  {}", f.file_name().unwrap_or_default().to_string_lossy());
+    }
+    if !yes {
+        eprintln!("Not touched. Re-run with --yes to move them to the Trash.");
+        std::process::exit(1);
+    }
+    match trash::delete_all(&files) {
+        Ok(()) => println!("Moved {} file(s) to the Trash.", files.len()),
+        Err(e) => {
+            eprintln!("Could not move the ledger to the Trash: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
 pub async fn run(content_dir: PathBuf, port: u16) {
     // A disposable cache root OUTSIDE the content tree, so scanning never writes
     // into content. Fail closed if it would land inside the content tree.

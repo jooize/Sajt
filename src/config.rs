@@ -1,14 +1,16 @@
 //! The site's identity: its name, its domain, its language. The engine is
-//! generic; these are site data, read from `.sajt.toml` in the site
+//! generic; these are site data, read from `Sajt.toml` in the site
 //! directory and derived from the directory itself when the file says
 //! nothing. Everything that wants a name gets it from here: page titles and
 //! the header mark, the generated Caddyfile's site block (and whatever
 //! container or service unit wraps it), the embed fetcher's contact URL.
 //!
-//! The file lives inside the site directory as a dotfile, so it moves,
-//! syncs, and backs up with the site. It can never be published: the scanner
-//! skips every dot-prefixed entry at the top level, the same rule that keeps
-//! `.DS_Store` and the grade ledger out of the site.
+//! The file lives inside the site directory, visible, so it moves, syncs,
+//! and backs up with the site and can be found and edited where the site is.
+//! It can never be published: its name is reserved, and the scanner skips
+//! reserved names at the top level ([`is_reserved_name`]) the way it skips
+//! dotfiles. No hidden data: everything the engine keeps in a site is a
+//! visible file with a `Sajt` prefix.
 //!
 //! Serving is domain-agnostic. Every URL the engine emits is a path, so a
 //! site works on any host name the moment it is served; the domain is only
@@ -20,7 +22,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 /// The configuration file's name inside the site directory.
-pub const FILE_NAME: &str = ".sajt.toml";
+pub const FILE_NAME: &str = "Sajt.toml";
 
 /// What the file may say. Every key is optional: a missing file and an empty
 /// file mean the same thing, a site described entirely by its directory.
@@ -91,6 +93,13 @@ fn valid_language(tag: &str) -> bool {
     (2..=3).contains(&primary.len())
         && primary.chars().all(|c| c.is_ascii_alphabetic())
         && parts.all(|p| (1..=8).contains(&p.len()) && p.chars().all(|c| c.is_ascii_alphanumeric()))
+}
+
+/// Top-level names the engine reserves for its own visible files: the
+/// configuration and the grade ledger (with its iCloud conflict copies). The
+/// scanner never treats these as posts, and nothing else may claim them.
+pub fn is_reserved_name(name: &str) -> bool {
+    name == FILE_NAME || crate::grade::is_ledger_name(name)
 }
 
 /// Where the configuration file lives for a site directory.

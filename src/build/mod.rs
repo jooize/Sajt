@@ -34,12 +34,12 @@ pub struct CaddyfileArgs {
     #[arg(long, default_value = "./build/manifest.json")]
     manifest: PathBuf,
 
-    /// The site directory; its `.sajt.toml` domain names the generated site
+    /// The site directory; its `Sajt.toml` domain names the generated site
     /// block.
     #[arg(long, default_value = ".")]
     site: PathBuf,
 
-    /// Read the site configuration from this file instead of `.sajt.toml`
+    /// Read the site configuration from this file instead of `Sajt.toml`
     /// inside the site directory.
     #[arg(long)]
     config: Option<PathBuf>,

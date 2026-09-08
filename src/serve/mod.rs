@@ -45,6 +45,23 @@ pub struct GradeArgs {
     /// Port to listen on (127.0.0.1 only).
     #[arg(long, default_value_t = 1236)]
     port: u16,
+
+    #[command(subcommand)]
+    action: Option<GradeAction>,
+}
+
+#[derive(clap::Subcommand)]
+enum GradeAction {
+    /// Move the grade ledger (and any iCloud conflict copies) to the Trash
+    ///
+    /// The ledger is the only thing the engine ever writes into a site. Lists
+    /// what it would remove and stops unless --yes is given. Files go to the
+    /// system Trash, never straight to deletion.
+    Purge {
+        /// Actually do it.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Parser)]
@@ -61,7 +78,10 @@ pub struct GetArgs {
 /// the content tree, and writes exactly one file: the grade ledger.
 pub async fn grade(args: GradeArgs) {
     let site = open_site(&args.site);
-    grader::run(site.content_dir, args.port).await;
+    match args.action {
+        Some(GradeAction::Purge { yes }) => grader::purge(&site.content_dir, yes),
+        None => grader::run(site.content_dir, args.port).await,
+    }
 }
 
 /// One-shot URL resolution: the page layer as a CLI. Runs the same scan and

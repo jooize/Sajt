@@ -1,8 +1,8 @@
 //! Grade derivation: turn the append-only pairwise-judgement ledger into a
 //! per-post grade in `0.0..=1.0`, read-only and fully recomputable.
 //!
-//! The ledger is `.sajt-grade-judgements.jsonl` in the content root (plus any
-//! `.sajt-grade-judgements*.jsonl` conflict copies iCloud may leave), written
+//! The ledger is `Sajt-Grade-Judgements.jsonl` in the content root (plus any
+//! `Sajt-Grade-Judgements*.jsonl` conflict copies iCloud may leave), written
 //! by the author's grading tool — never by this server. Each line is one pairwise
 //! judgement ("winner beat loser"). We union every ledger file, drop exact
 //! duplicates, resolve names through the alias map, keep only judgements between
@@ -35,7 +35,7 @@ pub struct Judgement {
 
 /// The ledger file name stem. The canonical file is `<STEM>.jsonl`; iCloud
 /// conflict copies (`<STEM> 2.jsonl`) are merged in and de-duplicated.
-const LEDGER_STEM: &str = ".sajt-grade-judgements";
+const LEDGER_STEM: &str = "Sajt-Grade-Judgements";
 
 /// Virtual pseudo-comparisons every post plays against a fixed-strength anchor:
 /// `PRIOR` wins and `PRIOR` losses. This is the Bayesian prior — it pins the
@@ -96,9 +96,24 @@ pub fn load_judgements(content_dir: &Path) -> Vec<Judgement> {
     out
 }
 
+/// Every ledger file in the content root: the canonical file and any iCloud
+/// conflict copies, sorted by name. What `sajt grade purge` removes.
+pub fn ledger_files(content_dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut out: Vec<_> = std::fs::read_dir(content_dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| is_ledger_name(&e.file_name().to_string_lossy()))
+                .map(|e| e.path())
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
 /// True for the canonical ledger file and its iCloud conflict copies:
-/// `.sajt-grade-judgements.jsonl`, `.sajt-grade-judgements 2.jsonl`, …
-fn is_ledger_name(name: &str) -> bool {
+/// `Sajt-Grade-Judgements.jsonl`, `Sajt-Grade-Judgements 2.jsonl`, …
+pub fn is_ledger_name(name: &str) -> bool {
     name.starts_with(LEDGER_STEM) && name.ends_with(".jsonl")
 }
 
@@ -311,9 +326,9 @@ mod tests {
 
     #[test]
     fn ledger_name_matching() {
-        assert!(is_ledger_name(".sajt-grade-judgements.jsonl"));
-        assert!(is_ledger_name(".sajt-grade-judgements 2.jsonl")); // iCloud copy
-        assert!(!is_ledger_name(".sajt-grade-judgements.jsonl.bak"));
+        assert!(is_ledger_name("Sajt-Grade-Judgements.jsonl"));
+        assert!(is_ledger_name("Sajt-Grade-Judgements 2.jsonl")); // iCloud copy
+        assert!(!is_ledger_name("Sajt-Grade-Judgements.jsonl.bak"));
         assert!(!is_ledger_name("grade-judgements.jsonl"));
         assert!(!is_ledger_name(".DS_Store"));
     }

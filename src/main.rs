@@ -34,7 +34,7 @@ enum Cli {
     ///
     /// Starts its own web UI to compare two posts side-by-side (each rendered as on the live site), binary-searches
     /// the new post into the ranking, and appends the resulting judgements to
-    /// `<content_dir>/.sajt-grade-judgements.jsonl`. Localhost bind only;
+    /// `<content_dir>/Sajt-Grade-Judgements.jsonl`. Localhost bind only;
     /// never proxy it. Runs until Ctrl-C. See `entry-model.md` (Grade section).
     Grade(serve::GradeArgs),
     /// Resolve one URL against the content tree and print the reply
@@ -49,12 +49,12 @@ enum Cli {
 /// Options every subcommand that touches a site shares.
 #[derive(clap::Args)]
 pub struct SiteArgs {
-    /// The site directory: the content files, and `.sajt.toml` if the site
+    /// The site directory: the content files, and `Sajt.toml` if the site
     /// wants to say more about itself than its directory name does.
     #[arg(long, default_value = ".")]
     pub site: PathBuf,
 
-    /// Read the site configuration from this file instead of `.sajt.toml`
+    /// Read the site configuration from this file instead of `Sajt.toml`
     /// inside the site directory. A missing file is fine either way: the site
     /// is then described by its directory. A file that exists but does not
     /// parse is an error at startup.
