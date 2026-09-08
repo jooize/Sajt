@@ -2,7 +2,7 @@
 
 The single summary of the site's design. Detail files live in `.claude-memory/`
 and are referenced at the bottom. Items are marked **DECIDED** (with date),
-**PROPOSED** (Claude's recommendation, awaiting Tilde), or **OPEN**.
+**PROPOSED** (a recommendation awaiting a decision), or **OPEN**.
 
 ## Philosophy
 
@@ -767,7 +767,7 @@ mode is never a security decision. What shipped:
 
 **DECIDED 2026-07-05: the "rows" glass variant** (supersedes the 2026-07-03
 "no glass, anywhere"). After comparing plain / rows / full in
-`static/timeline-glass-mockup.html`, Tilde chose *rows*: on the timeline every
+`static/timeline-glass-mockup.html`, *rows* won: on the timeline every
 entry floats as a glass card, and the segmented level control and the help
 dialog pick up the same glass material. The tag-cloud header and the entry-post
 body stay plain — the "full" variant that also glasses the cloud header was

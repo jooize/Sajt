@@ -2,23 +2,23 @@
 
 Written 2026-07-04 after a mockup session. The mockups are now the design
 source of truth; this plan turns them into served pages. Everything below
-was agreed with Tilde unless marked "decide".
+is decided unless marked "decide".
 
 ## Sources of truth (read these first)
 
 - `static/timeline-mockup.html` — the timeline (site root), v4.8 + deep links
 - `static/entry-page-mockup.html` — the entry page, incl. shared header
 - `static/timeline-glass-mockup.html` — glass flair variants (plain/rows/full),
-  **decision pending**: Tilde is comparing; DESIGN.md currently says fully
-  plain. Do NOT ship glass unless Tilde has picked a variant. If a glass
-  variant wins, update DESIGN.md.
+  **decision pending**: the variants are still being compared; DESIGN.md
+  currently says fully plain. Do NOT ship glass until a variant is picked. If
+  a glass variant wins, update DESIGN.md.
 - `static/filter-control-mockup.html`, `static/marks-mockup.html` — reference
 - `DESIGN.md` — canonical decisions; update it as part of this work
 
 ## Core directive
 
-**The header is one shared component.** Tilde: "we should reuse the header
-code in production." One Rust function renders the site header (tag cloud,
+**The header is one shared component.** The mockup's header code is reused
+in production rather than re-implemented. One Rust function renders the site header (tag cloud,
 saved count, level control, favorites, search) for BOTH the timeline and
 entry pages. No duplicated markup.
 
@@ -42,11 +42,11 @@ entry pages. No duplicated markup.
 ### Entry page
 - Header above the post, no hairline between them. On load, the page lands
   scrolled to the post (instant, in JS before paint if possible); scrolling
-  up reveals the menu. Tilde loves this dynamic.
+  up reveals the menu. This dynamic is a keeper.
 - Crumbs at top-left of the post, visible without scrolling:
   `← Timeline` (link) and `↑ Menu` (button, scrolls to top INSTANTLY —
-  Tilde: "no slow smooth scrolling!!").
-  - Deferred idea (Tilde, unsure): also show the previous post there like
+  never slow smooth scrolling).
+  - Deferred idea (undecided): also show the previous post there like
     the Continue block at the bottom — "might get busy". Don't build.
 - h1 gets a chain-icon anchor (svg, .58em) in the left margin linking to
   the entry's canonical URL — no `#` fragment. h2s keep `#` section links.
@@ -150,7 +150,8 @@ rename the one constant once the site is named, pre-1.0, no migration).
    linger from the 2026-07-03 pruning).
 
 Run: `nix develop --command cargo run -- serve` + `caddy start --config Caddyfile`,
-then https://localhost. Restart server after changes (Tilde watches live).
+then https://localhost. Restart the server after changes (the result is
+checked live in the browser).
 
 ## 2026-07-05 handoff: decisions made, implementation plan (for Opus)
 
@@ -202,10 +203,10 @@ Verify with `nix develop --command cargo test` and by running the server.
   above the fold even when the post is short). Recompute on resize with
   min-height cleared first, then re-measure.
 - **Bookmark/star alignment.** `main section article aside > button svg`
-  gets `translate: 0 -1px` (Tilde judged the bookmark 1–2px low vs the ★).
+  gets `translate: 0 -1px` (the bookmark sat 1–2px low against the ★).
 - **Bookmark keys.** localStorage key = canonical path sans leading slash
   (labels alone collide for duplicates). Pre-1.0, no migration.
-- **Entry body typography: serif + toggle (Tilde 2026-07-05).** Post
+- **Entry body typography: serif + toggle (decided 2026-07-05).** Post
   section defaults to serif — `--serif: ui-serif, "New York", Georgia,
   "Times New Roman", serif`, 1.0625rem/1.72; chrome stays sans. The
   typeface toggle SHIPS: `t` key + a small serif/sans control in the page
@@ -214,7 +215,7 @@ Verify with `nix develop --command cargo test` and by running the server.
   (`article#post > section` swaps to `var(--sans)`, letter-spacing .001em,
   per the mockup). Default serif; JS-applied (brief flash for sans users
   is accepted). Heading sizes per entry-page-mockup.html.
-- **Continue block: FULL inline-load (Tilde 2026-07-05).** Port the
+- **Continue block: FULL inline-load (decided 2026-07-05).** Port the
   mockup's behavior for real: the server renders
   `<nav id="continue"><p>Continue</p><a …><b>title</b><time>date</time></a></nav>`
   for the next-older entry (`next` is already computed in `serve_entry`).
@@ -323,7 +324,7 @@ Verify with `nix develop --command cargo test` and by running the server.
 Suggested commits: (1) build fix + canonical URLs, (2) cloud ordering,
 (3) grip + bookmark nudge, (4) entry-body port, (5) docs.
 
-### Direction (Tilde 2026-07-05): timestamp filename prefixes are going away
+### Direction (decided 2026-07-05): timestamp filename prefixes are going away
 
 Clean names are the plan (per entry-page-mockup prose: folder/file name IS
 the address, dates from filesystem creation time, remembered by the index
@@ -354,7 +355,7 @@ FILESYSTEM stops being the version store and the SERVER must take over:
   migration (one-shot conversion, pre-v1.0.0). macOS Versions still ruled
   out (below).
 
-### Why not macOS Versions (Tilde's question)
+### Why not macOS Versions
 
 The Versions system (NSDocument's version browser) stores revisions in a
 hidden per-volume database (`/.DocumentRevisions-V100`), owned by whichever
@@ -364,7 +365,7 @@ by the OS under disk pressure. It's a UI feature, not a storage contract —
 unusable as a hosting substrate. Our filesystem convention (timestamped
 filenames, content hashes) IS the version store, and it's portable.
 
-## Open decisions for Tilde
+## Open decisions
 
 - ~~Glass: plain, rows, or full?~~ **RESOLVED 2026-07-05: rows.**
 - ~~Filter URL scheme for production~~ **RESOLVED 2026-07-05: tags as paths,
@@ -379,7 +380,7 @@ filenames, content hashes) IS the version store, and it's portable.
 # 2026-07-05 SESSION 2 HANDOFF (read this first after /clear)
 
 Written just before a context clear. This session was mostly a **design
-conversation** with Tilde that produced a complete, coherent "Phase 2" (identity
+conversation** that produced a complete, coherent "Phase 2" (identity
 + grading + a URL-grammar redesign), plus it advanced the entry-body port. Two
 buckets below: (A) finish the in-flight entry-body port, then (B) Phase 2.
 
@@ -516,7 +517,7 @@ commit. Then PLAN items 5 (docs: DESIGN.md/PLAN.md/.claude-memory) and 6 (grep
 Backed by a web prior-art sweep (condensed below). Sequence: write a design doc
 first (`identity-grading-urls.md`, ref from DESIGN.md), then build 2b→2d.
 
-### Entry identity (unlocks the rename Tilde wants)
+### Entry identity (unlocks the filename rename)
 - **Server-assigned UUIDv7** per entry, on first sight. Time-ordered (sorts by
   creation). **NEVER stored as a tag.**
 - Home, tiered: custom **xattr `bar.esko.id`** (invisible in Finder — a
@@ -529,7 +530,7 @@ first (`identity-grading-urls.md`, ref from DESIGN.md), then build 2b→2d.
   daemon running** (the reason hash+name lost).
 - **Do NOT auto-fold** dropped files into folders — it would kill the `.md`-vs-`/`
   type display and the `/name.md` raw view. File-vs-folder stays a meaningful
-  user choice; folders are opt-in (Tilde's "promote a file to a folder" gesture)
+  user choice; folders are opt-in (the "promote a file to a folder" gesture)
   for robust identity / multi-file entries.
 
 ### Grading
@@ -572,7 +573,7 @@ first (`identity-grading-urls.md`, ref from DESIGN.md), then build 2b→2d.
   canonical, query preserved. (Timestamps are currently naive-local — decide
   UTC/`Z` normalization.)
 
-### Filename rename migration (Tilde's original ask — non-destructive)
+### Filename rename migration (the original goal — non-destructive)
 - Drop the `YYYY-MM-DDTHHMMSS_` prefix → clean names. Depends on the UUID
   identity above so renames stay safe.
 - **NEVER overwrite.** Collisions exist: THREE `cookie-consent-tests.html`
@@ -698,7 +699,7 @@ section + view-filters `?grade=`), PLAN.md (supersession banner on Phase 2).
 
 **BUILD PLAN (approved 2026-07-06 — hand off to a coding session; spec =
 `entry-model.md`, read it first and treat it as canonical over this list).**
-Commit per step. Restart the server after each step so Tilde can look
+Commit per step. Restart the server after each step so the result can be checked
 (sandbox off for the bind). `nix develop --command cargo test` throughout.
 
 > **SHIPPED 2026-07-06 — all six steps landed.** Commits: step 1 `8bde7a7`,
@@ -768,7 +769,7 @@ templates) — **DONE `56968c9`**
   (fs::rename/write/create under content root must be gone).
 
 *Step 5 — one-shot migration* (script or `cargo run -- migrate`, run ONCE
-by Tilde; never overwrite; DRY-run first and show the plan) — **DONE `5eec29c`**
+by hand; never overwrite; DRY-run first and show the plan) — **DONE `5eec29c`**
 (`src/migrate.rs`; applied to live `content/` 2026-07-06)
 - Each `YYYY-MM-DDTHHMMSS[_label].ext` -> folder `<label>/` (unlabeled ->
   `untitled/`) containing `<label>.ext` + date marker `YYYY-MM-DDTHHMMSS/`
