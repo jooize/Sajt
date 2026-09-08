@@ -190,7 +190,7 @@ mod tests {
     struct TmpFile(PathBuf);
     impl TmpFile {
         fn new(stem: &str) -> Self {
-            let p = std::env::temp_dir().join(format!("esko-{}-{}", stem, std::process::id()));
+            let p = std::env::temp_dir().join(format!("sajt-{}-{}", stem, std::process::id()));
             std::fs::write(&p, b"x").unwrap();
             TmpFile(p)
         }

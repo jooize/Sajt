@@ -1700,7 +1700,7 @@ mod tests {
             static COUNTER: AtomicU32 = AtomicU32::new(0);
             let n = COUNTER.fetch_add(1, Ordering::Relaxed);
             let mut p = std::env::temp_dir();
-            p.push(format!("esko-scan-{}-{}", std::process::id(), n));
+            p.push(format!("sajt-scan-{}-{}", std::process::id(), n));
             std::fs::create_dir_all(&p).unwrap();
             TmpDir(p)
         }
@@ -2529,7 +2529,7 @@ mod tests {
     #[test]
     fn dotfiles_and_missing_dir() {
         // Missing content dir → empty, no error.
-        let missing = std::env::temp_dir().join(format!("esko-missing-{}", std::process::id()));
+        let missing = std::env::temp_dir().join(format!("sajt-missing-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&missing);
         assert!(scan_entries(&missing).unwrap().is_empty());
 

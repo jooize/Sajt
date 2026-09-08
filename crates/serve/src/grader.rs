@@ -3,7 +3,7 @@
 //! This is a SEPARATE web server from the public site (`routes.rs`). The public
 //! server is strictly read-only on the content tree; this grader is the one
 //! sanctioned writer, and it writes exactly one file — the append-only judgement
-//! ledger `<content_dir>/.esko.bar-grade-judgements.jsonl` that `grade.rs`
+//! ledger `<content_dir>/.sajt-grade-judgements.jsonl` that `grade.rs`
 //! reads. It never mutates a post. It binds `127.0.0.1` only and must never be
 //! proxied (it is deliberately absent from the Caddyfile).
 //!
@@ -40,7 +40,7 @@ use sajt_core::templates;
 /// The single file this tool ever writes, relative to the content root. Must
 /// match `grade::LEDGER_STEM` + `.jsonl` — the exact name the public server
 /// reads. The write guard (`append_judgements`) asserts the full path.
-const LEDGER_FILENAME: &str = ".esko.bar-grade-judgements.jsonl";
+const LEDGER_FILENAME: &str = ".sajt-grade-judgements.jsonl";
 
 // ─── Server state ────────────────────────────────────────────────────────────
 
@@ -216,7 +216,7 @@ fn json_str(s: &str) -> String {
 }
 
 /// Append complete JSONL lines to the grade ledger — the ONLY write this tool
-/// performs. `target` MUST be exactly `<content_dir>/.esko.bar-grade-judgements
+/// performs. `target` MUST be exactly `<content_dir>/.sajt-grade-judgements
 /// .jsonl`; any other path is refused before a single byte is written (fail
 /// closed). The file is created if absent. Each line gets a trailing newline.
 fn append_judgements(content_dir: &Path, target: &Path, lines: &[String]) -> std::io::Result<()> {
@@ -925,7 +925,7 @@ mod tests {
     /// real ledger target is accepted and the lines land with trailing newlines.
     #[test]
     fn ledger_append_path_guard() {
-        let dir = std::env::temp_dir().join(format!("esko-grader-guard-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sajt-grader-guard-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 

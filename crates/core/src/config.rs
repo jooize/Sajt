@@ -13,7 +13,7 @@ use std::path::Path;
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct SiteConfig {
-    /// The site's domain, a bare host name like "esko.bar" — no scheme, no
+    /// The site's domain, a bare host name like "example.org" — no scheme, no
     /// path. Optional: without it the engine stays unbranded and adapters
     /// fall back to local addresses.
     pub domain: Option<String>,
@@ -60,19 +60,19 @@ mod tests {
 
     #[test]
     fn domains_are_bare_hosts_only() {
-        assert!(valid_domain("esko.bar"));
+        assert!(valid_domain("example.org"));
         assert!(valid_domain("xn--sthlm-nua.example"));
         assert!(!valid_domain(""));
-        assert!(!valid_domain("https://esko.bar"));
-        assert!(!valid_domain("esko.bar/path"));
-        assert!(!valid_domain("esko bar"));
-        assert!(!valid_domain("esko.bar\n"));
+        assert!(!valid_domain("https://example.org"));
+        assert!(!valid_domain("example.org/path"));
+        assert!(!valid_domain("example org"));
+        assert!(!valid_domain("example.org\n"));
     }
 
     #[test]
     fn parsing_fails_closed() {
-        assert!(toml::from_str::<SiteConfig>("domain = \"esko.bar\"").is_ok());
+        assert!(toml::from_str::<SiteConfig>("domain = \"example.org\"").is_ok());
         // Unknown keys are refused, not ignored.
-        assert!(toml::from_str::<SiteConfig>("domian = \"esko.bar\"").is_err());
+        assert!(toml::from_str::<SiteConfig>("domian = \"example.org\"").is_err());
     }
 }

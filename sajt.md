@@ -7,7 +7,7 @@ for the static-publish architecture and the macOS app. It extends
 older text (rsync content to a dynamic Linux server), this document wins.
 
 Sajt is the engine's name; `esko.bar` is its first instance. Crate
-`sajt`, app `Sajt.app`, bundle `bar.esko.sajt`, client
+`sajt`, app `Sajt.app`, bundle `bar.esko.Sajt`, client
 storage namespace `sajt` (retires the provisional `NS = "site"`).
 The word is the Swedish spelling of "site" (it is in SAOL): said aloud it
 is exactly what the engine makes, written down it is unmistakably its own.
@@ -230,7 +230,7 @@ sajt/              Cargo workspace
   crates/build        walk the closure, emit tree + manifest         (bin)
   crates/push         S3-compatible upload, ordered and verified     (lib)
 
-Sajt.app/          Swift, bundle bar.esko.sajt
+Sajt.app/          Swift, bundle bar.esko.Sajt
   Contents/MacOS/Sajt       SwiftUI shell
   Contents/Helpers/sajt     the Rust binary, spawned as a child
 ```

@@ -27,7 +27,7 @@ struct Args {
 
     /// Root for disposable caches (embeds, etc.), kept OUTSIDE the content tree
     /// so the server never writes into content. Defaults to the platform cache
-    /// dir (e.g. macOS ~/Library/Caches/bar.esko.sajt).
+    /// dir (e.g. macOS ~/Library/Caches/bar.esko.Sajt).
     #[arg(long)]
     cache_dir: Option<PathBuf>,
 
@@ -77,7 +77,7 @@ enum Command {
     /// Local-only pairwise grading tool. Starts its own web UI to compare two
     /// posts side-by-side (each rendered as on the live site), binary-searches
     /// the new post into the ranking, and appends the resulting judgements to
-    /// `<content_dir>/.esko.bar-grade-judgements.jsonl`. Localhost bind only;
+    /// `<content_dir>/.sajt-grade-judgements.jsonl`. Localhost bind only;
     /// never proxy it. Runs until Ctrl-C. See `entry-model.md` (Grade section).
     Grade {
         /// Port to listen on (127.0.0.1 only).
@@ -146,7 +146,7 @@ fn percent_decode(s: &str) -> String {
 /// Platform cache directory used when `--cache-dir` isn't given. Falls back to a
 /// project-local `./.cache` only if the OS can't provide one.
 fn default_cache_dir() -> PathBuf {
-    directories::ProjectDirs::from("bar", "esko", "sajt")
+    directories::ProjectDirs::from("bar", "esko", "Sajt")
         .map(|dirs| dirs.cache_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from("./.cache"))
 }

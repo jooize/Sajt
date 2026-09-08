@@ -385,7 +385,7 @@ async fn build(args: BuildArgs) {
         .canonicalize()
         .unwrap_or_else(|_| args.content_dir.clone());
     let cache_dir = args.cache_dir.clone().unwrap_or_else(|| {
-        directories::ProjectDirs::from("bar", "esko", "sajt")
+        directories::ProjectDirs::from("bar", "esko", "Sajt")
             .map(|dirs| dirs.cache_dir().to_path_buf())
             .unwrap_or_else(|| PathBuf::from("./.cache"))
     });

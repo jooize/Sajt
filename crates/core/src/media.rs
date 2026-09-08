@@ -1951,7 +1951,7 @@ mod tests {
     /// and an event handler.
     fn inkscape_svg() -> String {
         r##"<?xml version="1.0" encoding="UTF-8"?>
-<!-- Made with SecretEditor on Tilde's laptop -->
+<!-- Made with SecretEditor on Sajteia's laptop -->
 <svg xmlns="http://www.w3.org/2000/svg"
      xmlns:xlink="http://www.w3.org/1999/xlink"
      xmlns:dc="http://purl.org/dc/elements/1.1/"
@@ -1959,10 +1959,10 @@ mod tests {
      xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.0.dtd"
      xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
      width="100" height="100"
-     sodipodi:docname="/Users/tilde/Secret Projects/logo-final.svg"
-     inkscape:export-filename="/Users/tilde/Desktop/secret-export.png">
+     sodipodi:docname="/Users/sajteia/Secret Projects/logo-final.svg"
+     inkscape:export-filename="/Users/sajteia/Desktop/secret-export.png">
   <sodipodi:namedview inkscape:window-width="1728"/>
-  <metadata><rdf:RDF><dc:creator>Tilde Secret</dc:creator></rdf:RDF></metadata>
+  <metadata><rdf:RDF><dc:creator>Sajteia Secret</dc:creator></rdf:RDF></metadata>
   <title>A circle</title>
   <script>alert('x')</script>
   <circle cx="50" cy="50" r="40" fill="#a123f6" onclick="alert('y')"/>
@@ -1976,7 +1976,7 @@ mod tests {
         let clean = strip_svg(src.as_bytes()).expect("well-formed SVG strips");
         let clean_str = String::from_utf8(clean.clone()).unwrap();
         for leak in [
-            "Secret Projects", "secret-export", "Tilde Secret", "SecretEditor",
+            "Secret Projects", "secret-export", "Sajteia Secret", "SecretEditor",
             "sodipodi", "inkscape", "namedview", "purl.org", "rdf-syntax",
             "<metadata", "<script", "onclick",
         ] {
@@ -2100,7 +2100,7 @@ mod tests {
     async fn transcode_refused_when_mode_is_disabled() {
         // TRANSCODE_MODE is never initialized in tests, so it reads Disabled —
         // and a transcode must refuse to run (fail closed), touching nothing.
-        let scratch = std::env::temp_dir().join(format!("esko-tx-refuse-{}", std::process::id()));
+        let scratch = std::env::temp_dir().join(format!("sajt-tx-refuse-{}", std::process::id()));
         std::fs::create_dir_all(&scratch).unwrap();
         assert!(!run_vips_transcode(b"bytes", &scratch, "heic", "4096", 85).await);
         assert!(!scratch.join("in.heic").exists(), "input must not be written");
@@ -2206,7 +2206,7 @@ mod tests {
 
     #[test]
     fn sweep_clears_everything_but_the_clean_store() {
-        let root = std::env::temp_dir().join(format!("esko-sweep-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("sajt-sweep-test-{}", std::process::id()));
         let media = root.join("media");
         std::fs::create_dir_all(media.join(".tx.deadbeef.3")).unwrap();
         std::fs::write(media.join(".tx.deadbeef.3/in.heic"), b"stranded input").unwrap();
@@ -2220,14 +2220,14 @@ mod tests {
         assert!(!media.join("deadbeef-v1-j4096q85.jpg").exists(), "legacy flat cache swept");
         assert!(media.join("clean/deadbeef-s1.jpg").exists(), "clean store kept");
         // A missing cache dir is fine (fresh install).
-        sweep_cache(Path::new("/nonexistent-esko-cache"));
+        sweep_cache(Path::new("/nonexistent-sajt-cache"));
         std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[tokio::test]
     async fn promotion_gate_populates_store_and_rejects_dirty_output() {
         let root =
-            std::env::temp_dir().join(format!("esko-promote-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("sajt-promote-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
 
         // A verified-clean output is promoted and read back from the store.
@@ -2269,7 +2269,7 @@ mod tests {
     #[tokio::test]
     async fn poisoned_store_entry_is_withheld_and_removed() {
         let root =
-            std::env::temp_dir().join(format!("esko-poison-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("sajt-poison-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         // A file placed in the store without going through the promotion gate
         // (disk corruption, tampering, a version-drift bug) must never serve:
@@ -2289,7 +2289,7 @@ mod tests {
     #[tokio::test]
     async fn prepare_strip_path_serves_from_the_clean_store() {
         let root =
-            std::env::temp_dir().join(format!("esko-prepare-store-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("sajt-prepare-store-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let source = jpeg_with_make();
         let key = format!("{}-{STRIP_TAG}", content_hash(&source));

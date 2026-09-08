@@ -1,8 +1,8 @@
 //! Grade derivation: turn the append-only pairwise-judgement ledger into a
 //! per-post grade in `0.0..=1.0`, read-only and fully recomputable.
 //!
-//! The ledger is `.esko.bar-grade-judgements.jsonl` in the content root (plus any
-//! `.esko.bar-grade-judgements*.jsonl` conflict copies iCloud may leave), written
+//! The ledger is `.sajt-grade-judgements.jsonl` in the content root (plus any
+//! `.sajt-grade-judgements*.jsonl` conflict copies iCloud may leave), written
 //! by the author's grading tool — never by this server. Each line is one pairwise
 //! judgement ("winner beat loser"). We union every ledger file, drop exact
 //! duplicates, resolve names through the alias map, keep only judgements between
@@ -35,7 +35,7 @@ pub struct Judgement {
 
 /// The ledger file name stem. The canonical file is `<STEM>.jsonl`; iCloud
 /// conflict copies (`<STEM> 2.jsonl`) are merged in and de-duplicated.
-const LEDGER_STEM: &str = ".esko.bar-grade-judgements";
+const LEDGER_STEM: &str = ".sajt-grade-judgements";
 
 /// Virtual pseudo-comparisons every post plays against a fixed-strength anchor:
 /// `PRIOR` wins and `PRIOR` losses. This is the Bayesian prior — it pins the
@@ -97,7 +97,7 @@ pub fn load_judgements(content_dir: &Path) -> Vec<Judgement> {
 }
 
 /// True for the canonical ledger file and its iCloud conflict copies:
-/// `.esko.bar-grade-judgements.jsonl`, `.esko.bar-grade-judgements 2.jsonl`, …
+/// `.sajt-grade-judgements.jsonl`, `.sajt-grade-judgements 2.jsonl`, …
 fn is_ledger_name(name: &str) -> bool {
     name.starts_with(LEDGER_STEM) && name.ends_with(".jsonl")
 }
@@ -311,9 +311,9 @@ mod tests {
 
     #[test]
     fn ledger_name_matching() {
-        assert!(is_ledger_name(".esko.bar-grade-judgements.jsonl"));
-        assert!(is_ledger_name(".esko.bar-grade-judgements 2.jsonl")); // iCloud copy
-        assert!(!is_ledger_name(".esko.bar-grade-judgements.jsonl.bak"));
+        assert!(is_ledger_name(".sajt-grade-judgements.jsonl"));
+        assert!(is_ledger_name(".sajt-grade-judgements 2.jsonl")); // iCloud copy
+        assert!(!is_ledger_name(".sajt-grade-judgements.jsonl.bak"));
         assert!(!is_ledger_name("grade-judgements.jsonl"));
         assert!(!is_ledger_name(".DS_Store"));
     }

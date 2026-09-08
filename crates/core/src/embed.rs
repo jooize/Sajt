@@ -3035,7 +3035,7 @@ mod tests {
     #[test]
     fn cache_roundtrip_honors_mtime() {
         let mut dir = std::env::temp_dir();
-        dir.push(format!("esko-embed-{}", std::process::id()));
+        dir.push(format!("sajt-embed-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         let data = EmbedData::Generic(GenericEmbed {

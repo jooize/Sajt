@@ -11,8 +11,8 @@ rust-version = "1.93"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jooize/Sajt"
 readme = "README.md"
-keywords = ["static-site", "publishing", "cms", "website", "markdown"]
-categories = ["web-programming", "command-line-utilities"]
+keywords = ["static-site", "publishing", "cms", "markdown", "asciidoc"]
+categories = ["web-programming", "command-line-utilities", "text-processing"]
 # crates.io is permanent: a version can be yanked, never deleted. Publishing
 # stays gated off until the engine is de-branded, the repository is public,
 # and a first release is cut on purpose. Flip to true when release.yml is

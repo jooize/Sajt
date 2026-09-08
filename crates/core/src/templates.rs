@@ -4,7 +4,7 @@ use crate::stats::{compute_cloud, CloudStats, TagStat, ViewFilter};
 
 // ============================================================================
 // Stylesheet — ported from the mockups (timeline-glass-mockup.html, the "rows"
-// glass variant Tilde chose, and entry-page-mockup.html's shared header). The
+// glass variant that was chosen, and entry-page-mockup.html's shared header). The
 // old glass-card design was thrown out. Element selectors, no classes (the JS
 // state classes .selected/.near/.empty aside), light-dark() theming.
 // ============================================================================
@@ -1162,7 +1162,7 @@ pub const JS: &str = r##"
   if (seFrame) {
     window.addEventListener("message", function (e) {
       if (e.source !== seFrame.contentWindow) return;
-      var hgt = e.data && e.data.eskoEmbedHeight;
+      var hgt = e.data && e.data.sajtEmbedHeight;
       if (typeof hgt !== "number" || !isFinite(hgt)) return;
       hgt = Math.max(128, Math.min(200000, Math.round(hgt)));
       seFrame.style.height = hgt + "px";

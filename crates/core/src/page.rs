@@ -1427,7 +1427,7 @@ fn is_sandboxed_document(ext: &str) -> bool {
 /// well-formed when the document is served as XML (XHTML) — no CDATA needed.
 const EMBED_REPORTER: &str = r#"<script>(function(){
   function h(){var d=document;return Math.max(d.documentElement.scrollHeight, d.body?d.body.scrollHeight:0);}
-  function send(){try{parent.postMessage({eskoEmbedHeight:h()},"*");}catch(e){}}
+  function send(){try{parent.postMessage({sajtEmbedHeight:h()},"*");}catch(e){}}
   if(window.ResizeObserver){new ResizeObserver(send).observe(document.documentElement);}
   window.addEventListener("load",send);send();
 })();</script>
