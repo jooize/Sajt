@@ -1,4 +1,4 @@
-//! The site configuration file (`staticdrop.toml`): the one place the
+//! The site configuration file (`sajt.toml`): the one place the
 //! site's own identity lives. The engine is generic; the domain is site
 //! data, and everything that wants a name derives it from here — the
 //! generated Caddyfile's site block (and whatever container or service unit

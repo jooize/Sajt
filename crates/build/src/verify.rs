@@ -2,15 +2,15 @@
 //! status, body hash, and every recorded header. The manifest is the single
 //! reference — `crates/serve` should pass because it shares the page layer,
 //! and an adapter's host should pass because the adapter rendered the same
-//! manifest. The same loop later verifies a CDN after push (staticdrop.md).
+//! manifest. The same loop later verifies a CDN after push (sajt.md).
 
 use crate::manifest::{FileEntry, Manifest};
 use sha2::{Digest, Sha256};
-use staticdrop_core::templates::encode_path;
+use sajt_core::templates::encode_path;
 
 /// A deterministic address outside any real closure, probing the fallback
 /// (custom 404) behavior.
-const FALLBACK_PROBE: &str = "/staticdrop-verify-404-probe";
+const FALLBACK_PROBE: &str = "/sajt-verify-404-probe";
 
 pub struct Outcome {
     pub checked: usize,

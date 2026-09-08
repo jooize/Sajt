@@ -2,7 +2,7 @@
 //! store — `respond(store, path, flags)` returns the finished HTTP-shaped
 //! reply with no web-framework types anywhere. crates/serve wraps this in
 //! axum; crates/build walks the URL space and writes the same bytes to files
-//! (staticdrop.md: because both link this exact code, static output cannot
+//! (sajt.md: because both link this exact code, static output cannot
 //! diverge from the preview).
 
 use crate::content::ContentStore;
@@ -13,7 +13,7 @@ use crate::templates::{self, HeaderContext};
 use crate::url::{parse_url_path, ContentQuery};
 
 /// Where a reply's bytes came from — the record the build's provenance
-/// manifest is made of (staticdrop.md: "the build emits a provenance manifest
+/// manifest is made of (sajt.md: "the build emits a provenance manifest
 /// naming, for every file it intends to upload, the source path and the
 /// specific `public` tag that authorized it, and refuses to upload any file
 /// without that provenance").
@@ -109,7 +109,7 @@ pub struct RequestFlags {
 /// Assemble the view filter: grade/favorites come off the parsed path (the
 /// reserved `/notable` and `/favorites` segments), search off the query.
 /// Query spellings of grade/favorites are not accepted — not even as
-/// redirect inputs (staticdrop.md: no legacy to absorb).
+/// redirect inputs (sajt.md: no legacy to absorb).
 fn view_of(query: &ContentQuery, flags: &RequestFlags) -> ViewFilter {
     ViewFilter::new(query.notable, query.favorites, flags.search.as_deref())
 }
@@ -1295,7 +1295,7 @@ async fn serve_image(req: ImageRequest<'_>) -> Reply {
     let transcode_only = crate::media::is_transcode_only_ext(req.ext);
 
     // A `/jpeg` rung on a file that already IS a JPEG adds nothing: 301 to the
-    // parent (the closure model collapses no-op rungs, staticdrop.md).
+    // parent (the closure model collapses no-op rungs, sajt.md).
     if req.as_jpeg && source_is_jpeg {
         let target = if req.thumb {
             format!("{}/thumb", req.base_href)

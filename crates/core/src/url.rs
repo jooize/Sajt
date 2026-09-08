@@ -89,7 +89,7 @@ impl ContentQuery {
     /// view — no label): date rungs, then one tag segment, then the view
     /// suffix. Tags are sorted case-insensitively, so every ordering of the
     /// same filter names one address ("sorting is complete at every depth" —
-    /// staticdrop.md rung 3). `/` when nothing filters.
+    /// sajt.md rung 3). `/` when nothing filters.
     pub fn canonical_scope_path(&self) -> String {
         let mut out = self.scope_base_path();
         if self.notable {
@@ -170,7 +170,7 @@ fn push_segment(path: &mut String, segment: &str) {
 /// Parse a URL path into a ContentQuery.
 ///
 /// Segments are classified independently of position, so **every ordering of
-/// the same filters parses to the same query** (staticdrop.md: "all orderings
+/// the same filters parses to the same query** (sajt.md: "all orderings
 /// are accepted; non-canonical orderings 301" — the caller compares against
 /// `canonical_scope_path` and redirects). Classification per segment:
 ///

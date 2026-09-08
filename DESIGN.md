@@ -344,7 +344,7 @@ the legacy flat cache layout). PDFs and SVGs keep their in-memory verify gates
 (above); folding them into the same store is a candidate follow-up.
 
 #### Honest representation URLs — the `/jpeg` and `/thumb` rungs (v0.30.0,
-2026-08-30; path form of v0.26.0's `?as=jpeg`, per staticdrop.md)
+2026-08-30; path form of v0.26.0's `?as=jpeg`, per sajt.md)
 
 A URL's extension never lies about the bytes it returns (DECIDED 2026-08-25).
 Strippable formats (JPEG/PNG/WebP) serve their own
@@ -537,7 +537,7 @@ folder or file name, so there is no nameless entry: the one-shot migration
 folded any unlabeled file into an `untitled/` folder post (label `untitled`),
 and `parse_filename` — which used to mint `None` labels — is gone.
 
-**View filters — path segments (SHIPPED 2026-08-30, staticdrop.md).** Topics
+**View filters — path segments (SHIPPED 2026-08-30, sajt.md).** Topics
 stay path-based (`/+design`, `/+design+rust` AND, `/+design,rust` OR):
 permanent, linkable cool-URIs. The view axes moved from query params into
 **reserved path segments** — `/notable` (the two-state everything/notable
@@ -1012,7 +1012,7 @@ Content-hash dividends and quiet touches (DECIDED 2026-07-04):
 
 ## Platform portability (DECIDED 2026-07-16)
 
-**AMENDED 2026-08-30 — the deployment story moved to `staticdrop.md`
+**AMENDED 2026-08-30 — the deployment story moved to `sajt.md`
 (canonical): the site is built entirely on the Mac and shipped as static
 bytes; no dynamic server runs on the public host.** The portable binary
 below remains true for local preview and the optional VPS serving lane.
@@ -1078,7 +1078,7 @@ Developer ID + notarization stays open until then.
 5. **Metadata stripping** — before anything with photos goes public.
 6. **Feeds + sitemap + OG meta + security headers**, then go live.
    (Deployment redesigned 2026-08-30: static build shipped to object
-   storage/CDN, never content rsynced to a live server — `staticdrop.md`.)
+   storage/CDN, never content rsynced to a live server — `sajt.md`.)
 
 Done 2026-07-03: effects/variants/theme-switcher pruned from templates;
 unreferenced prototypes archived (git history keeps them).
@@ -1122,9 +1122,9 @@ dark-variant images, related entries, mini-TOC, print stylesheet.
 
 ## Design files
 
-- `staticdrop.md` — **static-publish architecture + macOS app (DESIGNED
+- `sajt.md` — **static-publish architecture + macOS app (DESIGNED
   2026-08-30, not yet built; canonical for deployment)**: build local,
-  ship bytes; closure model; manifest + adapters; the StaticDrop name.
+  ship bytes; closure model; manifest + adapters; the Sajt name.
 - `post-model.md` — **post-model refinement spec (2026-07-07, not yet built)**:
   slugs, timestamps, kinds, link posts, revisions/families, listings, scheme
   guard, EXIF. Extends `entry-model.md`.

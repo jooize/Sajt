@@ -1,5 +1,5 @@
 {
-  description = "StaticDrop: publishing engine where the filesystem is the CMS";
+  description = "Sajt: publishing engine where the filesystem is the CMS";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";

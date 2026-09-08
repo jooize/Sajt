@@ -11,7 +11,7 @@
 
 # Site instance configuration (the operator's domain): site data, like
 # /content, not engine code.
-/staticdrop.toml
+/sajt.toml
 
 # Agent/session state (personal notes, scratch, trash). Covered by the
 # user's global ignore too; listed here so a clone without that global

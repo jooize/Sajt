@@ -1,6 +1,6 @@
-//! The closure builder (staticdrop.md): generate the transitive closure of
+//! The closure builder (sajt.md): generate the transitive closure of
 //! the site's own link graph. Every URL a generated page emits is resolved
-//! through the same `staticdrop_core::page` layer the preview server uses,
+//! through the same `sajt_core::page` layer the preview server uses,
 //! its reply written to a content-addressed blob store, and the whole build
 //! described by one host-neutral manifest — files with hashes, the redirect
 //! map, the 410 ledger, the fallback page, and the security headers. Per-host
@@ -17,8 +17,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 
-use staticdrop_core::page::{self, Reply, RequestFlags};
-use staticdrop_core::url::percent_decode;
+use sajt_core::page::{self, Reply, RequestFlags};
+use sajt_core::url::percent_decode;
 
 mod caddyfile;
 mod manifest;
@@ -28,8 +28,8 @@ use manifest::{FileEntry, Manifest, ProvenanceEntry};
 
 #[derive(Parser)]
 #[command(
-    name = "staticdrop-build",
-    about = "StaticDrop closure builder, manifest adapters, and verifier"
+    name = "sajt-build",
+    about = "Sajt closure builder, manifest adapters, and verifier"
 )]
 enum Cli {
     /// Walk the site closure; emit blobs/, manifest.json, and the report.
@@ -48,7 +48,7 @@ struct CaddyfileArgs {
     manifest: PathBuf,
 
     /// Site configuration file; its domain names the generated site block.
-    #[arg(long, default_value = "./staticdrop.toml")]
+    #[arg(long, default_value = "./sajt.toml")]
     config: PathBuf,
 
     /// Site address line for the generated file, overriding the config
@@ -93,7 +93,7 @@ struct BuildArgs {
 
     /// Site configuration file (domain, …). Missing is fine; unparseable is
     /// a build error.
-    #[arg(long, default_value = "./staticdrop.toml")]
+    #[arg(long, default_value = "./sajt.toml")]
     config: PathBuf,
 
     /// Root for disposable caches (embeds, clean media store), shared with the
@@ -237,7 +237,7 @@ fn content_type_of(reply: &Reply) -> String {
 
 /// Fill the per-response gap the serve middleware fills on live responses: a
 /// content-type-appropriate CSP where the handler chose none. The policy
-/// itself stays in `staticdrop_core::security` (the single source); without
+/// itself stays in `sajt_core::security` (the single source); without
 /// this, manifest entries would ship weaker headers than the preview server
 /// sends.
 fn default_csp(headers: &mut BTreeMap<String, String>) {
@@ -245,7 +245,7 @@ fn default_csp(headers: &mut BTreeMap<String, String>) {
         let ct = headers.get("content-type").cloned().unwrap_or_default();
         headers.insert(
             "content-security-policy".to_string(),
-            staticdrop_core::security::csp_for_content_type(&ct).to_string(),
+            sajt_core::security::csp_for_content_type(&ct).to_string(),
         );
     }
 }
@@ -310,7 +310,7 @@ fn render_caddyfile(args: CaddyfileArgs) {
         eprintln!("{}", e);
         std::process::exit(1);
     });
-    let config = staticdrop_core::config::load(&args.config).unwrap_or_else(|e| {
+    let config = sajt_core::config::load(&args.config).unwrap_or_else(|e| {
         eprintln!("{}", e);
         std::process::exit(1);
     });
@@ -355,7 +355,7 @@ async fn run_verify(args: VerifyArgs) {
         eprintln!("{}", e);
         std::process::exit(1);
     });
-    println!("StaticDrop verify report ({})", args.base);
+    println!("Sajt verify report ({})", args.base);
     println!("  addresses checked  {}", outcome.checked);
     if args.dynamic_fallback {
         println!("  note               fallback probe body not compared (--dynamic-fallback)");
@@ -372,12 +372,12 @@ async fn run_verify(args: VerifyArgs) {
 }
 
 async fn build(args: BuildArgs) {
-    let config = staticdrop_core::config::load(&args.config).unwrap_or_else(|e| {
+    let config = sajt_core::config::load(&args.config).unwrap_or_else(|e| {
         eprintln!("{}", e);
         std::process::exit(1);
     });
     if let Some(domain) = &config.domain {
-        staticdrop_core::embed::init_contact(domain);
+        sajt_core::embed::init_contact(domain);
     }
 
     let content_dir = args
@@ -385,7 +385,7 @@ async fn build(args: BuildArgs) {
         .canonicalize()
         .unwrap_or_else(|_| args.content_dir.clone());
     let cache_dir = args.cache_dir.clone().unwrap_or_else(|| {
-        directories::ProjectDirs::from("bar", "esko", "staticdrop")
+        directories::ProjectDirs::from("bar", "esko", "sajt")
             .map(|dirs| dirs.cache_dir().to_path_buf())
             .unwrap_or_else(|| PathBuf::from("./.cache"))
     });
@@ -402,11 +402,11 @@ async fn build(args: BuildArgs) {
         std::process::exit(1);
     }
 
-    staticdrop_core::media::sweep_cache(&cache_dir);
-    staticdrop_core::media::init_transcode(args.unsandboxed_transcode);
-    staticdrop_core::media::init_jpeg_quality(args.jpeg_quality);
+    sajt_core::media::sweep_cache(&cache_dir);
+    sajt_core::media::init_transcode(args.unsandboxed_transcode);
+    sajt_core::media::init_jpeg_quality(args.jpeg_quality);
 
-    let mut store = staticdrop_core::content::ContentStore::scan(&content_dir, &cache_dir)
+    let mut store = sajt_core::content::ContentStore::scan(&content_dir, &cache_dir)
         .expect("Failed to scan content directory");
     store.resolve_embeds().await;
 
@@ -514,7 +514,7 @@ async fn build(args: BuildArgs) {
         redirects,
         gone,
         fallback,
-        universal_headers: staticdrop_core::security::UNIVERSAL_HEADERS
+        universal_headers: sajt_core::security::UNIVERSAL_HEADERS
             .iter()
             .map(|(n, v)| (n.to_string(), v.to_string()))
             .collect(),
@@ -528,7 +528,7 @@ async fn build(args: BuildArgs) {
 
     // ---- Report ------------------------------------------------------------
     let total_bytes: u64 = manifest.files.values().map(|f| f.size).sum();
-    println!("StaticDrop build report");
+    println!("Sajt build report");
     println!("  urls walked      {}", visited.len());
     println!("  files            {} ({} bytes)", manifest.files.len(), total_bytes);
     println!("  redirects        {}", manifest.redirects.len());
@@ -629,7 +629,7 @@ mod tests {
         default_csp(&mut h);
         assert_eq!(
             h["content-security-policy"],
-            staticdrop_core::security::csp_for_content_type("text/html")
+            sajt_core::security::csp_for_content_type("text/html")
         );
 
         let mut h: BTreeMap<String, String> =
@@ -637,7 +637,7 @@ mod tests {
         default_csp(&mut h);
         assert_eq!(
             h["content-security-policy"],
-            staticdrop_core::security::csp_for_content_type("image/jpeg")
+            sajt_core::security::csp_for_content_type("image/jpeg")
         );
 
         let mut h: BTreeMap<String, String> = [

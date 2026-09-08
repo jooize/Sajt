@@ -1,10 +1,10 @@
 [package]
-name = "staticdrop-build"
+name = "sajt-build"
 version.workspace = true
 edition.workspace = true
 
-# The closure builder (staticdrop.md): walk the transitive closure of the
-# site's own link graph through staticdrop-core's page layer, write every
+# The closure builder (sajt.md): walk the transitive closure of the
+# site's own link graph through sajt-core's page layer, write every
 # reply to a content-addressed blob store, and emit the host-neutral manifest
 # plus a build report. Also home to the manifest renderings (the Caddyfile
 # adapter) and the verifier that replays the manifest against a live host
@@ -12,7 +12,7 @@ edition.workspace = true
 # the network beyond core's embed refresh).
 [dependencies]
 reqwest.workspace = true
-staticdrop-core.workspace = true
+sajt-core.workspace = true
 tokio.workspace = true
 clap.workspace = true
 scraper.workspace = true

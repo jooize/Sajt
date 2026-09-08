@@ -1,4 +1,4 @@
-# StaticDrop — build local, ship bytes
+# Sajt — build local, ship bytes
 
 **DESIGNED 2026-08-29/30, not yet implemented.** This document is canonical
 for the static-publish architecture and the macOS app. It extends
@@ -6,22 +6,24 @@ for the static-publish architecture and the macOS app. It extends
 "The file-privacy boundary"); where the deployment story here conflicts with
 older text (rsync content to a dynamic Linux server), this document wins.
 
-StaticDrop is the engine's name; `esko.bar` is its first instance. Crate
-`staticdrop`, app `StaticDrop.app`, bundle `bar.esko.staticdrop`, client
-storage namespace `staticdrop` (retires the provisional `NS = "site"`).
-Name availability verified 2026-08-30: crates.io free; GitHub carries only
-dormant unrelated repos; `staticdrop.app`/`.dev`/`.net` unregistered
-(`.com` parked at a brand broker — not needed). The name reads two ways,
-both intended: a static site you drop files into, and the parachutist's
-static line — the cord that opens the chute automatically the moment the
-jumper drops. No ripcord, no publish button: the drop itself deploys.
+Sajt is the engine's name; `esko.bar` is its first instance. Crate
+`sajt`, app `Sajt.app`, bundle `bar.esko.sajt`, client
+storage namespace `sajt` (retires the provisional `NS = "site"`).
+The word is the Swedish spelling of "site" (it is in SAOL): said aloud it
+is exactly what the engine makes, written down it is unmistakably its own.
+Name availability verified 2026-09-08: crates.io and Homebrew free; GitHub
+carries only unrelated repos; npm holds an obscure `sajt` static-site
+generator (not a namespace this project ships to); `sajt.se` and `sajt.dev`
+are registered by others, `sajt.app` shows no DNS. The engine was named
+StaticDrop from 2026-08-30 to 2026-09-08; that name overclaimed "static"
+(only the shipped bytes are) and said nothing about the result.
 
 ## The decision
 
 **The site is built entirely on the Mac; the public host stores and serves
 bytes and executes none of our logic.** The server was already a pure
 function of the content tree — read-only, no accounts, no per-request
-state. StaticDrop finishes the thought: rendering, transcoding, stripping,
+state. Sajt finishes the thought: rendering, transcoding, stripping,
 verification, embeds, feeds, indexes, and the publish gate all run at build
 time, locally. The host is a shelf, not a computer.
 
@@ -222,15 +224,15 @@ outbound connections; `--embed-check-hours` becomes a rebuild cadence.
 ## Components
 
 ```
-staticdrop/              Cargo workspace
+sajt/              Cargo workspace
   crates/core         scan, entry model, tags, render, clean store   (lib)
   crates/serve        axum: local preview, and the VPS lane          (bin)
   crates/build        walk the closure, emit tree + manifest         (bin)
   crates/push         S3-compatible upload, ordered and verified     (lib)
 
-StaticDrop.app/          Swift, bundle bar.esko.staticdrop
-  Contents/MacOS/StaticDrop       SwiftUI shell
-  Contents/Helpers/staticdrop     the Rust binary, spawned as a child
+Sajt.app/          Swift, bundle bar.esko.sajt
+  Contents/MacOS/Sajt       SwiftUI shell
+  Contents/Helpers/sajt     the Rust binary, spawned as a child
 ```
 
 **No FFI.** The app spawns the binary as a child process and speaks JSON
@@ -259,6 +261,7 @@ question stays open until ~1.0, as already recorded in DESIGN.md.
 4. Push: ordered upload + manifest verification.
 5. App shell last; the CLI is fully usable without it.
 
-Open besides the order: icon (concepts settled: a falling square under a
-cracking canopy; most reduced form, one stroke — a vertical line becoming
-an arc), registering `staticdrop.dev` or `.app` before anything public.
+Open besides the order: icon (the parachute-canopy concepts belonged to the
+StaticDrop name and are retired; not yet redesigned for Sajt), registering
+`sajt.app` (the one Sajt domain that showed no DNS on 2026-09-08) before
+anything public.

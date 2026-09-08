@@ -1,6 +1,6 @@
-//! StaticDrop core: everything that is a pure function of the content tree,
+//! Sajt core: everything that is a pure function of the content tree,
 //! plus rendering and the author-side network fetches (embeds, outbound link
-//! checks). Design canon: staticdrop.md.
+//! checks). Design canon: sajt.md.
 //!
 //! The boundary rule: no web-framework types in this crate. crates/serve wraps
 //! these modules in axum; crates/build will walk the same URL space and emit

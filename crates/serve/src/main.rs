@@ -4,7 +4,7 @@ mod routes;
 mod security;
 
 use clap::{Parser, Subcommand};
-use staticdrop_core::{content, embed, media};
+use sajt_core::{content, embed, media};
 use notify::Watcher;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -13,7 +13,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 #[derive(Parser)]
-#[command(name = "staticdrop", about = "StaticDrop content server")]
+#[command(name = "sajt", about = "Sajt content server")]
 struct Args {
     /// Directory containing content files
     #[arg(long, default_value = "./content")]
@@ -22,12 +22,12 @@ struct Args {
     /// Site configuration file (domain, …). A missing file is fine — the
     /// engine runs unconfigured; a file that exists but does not parse is a
     /// startup error.
-    #[arg(long, default_value = "./staticdrop.toml")]
+    #[arg(long, default_value = "./sajt.toml")]
     config: PathBuf,
 
     /// Root for disposable caches (embeds, etc.), kept OUTSIDE the content tree
     /// so the server never writes into content. Defaults to the platform cache
-    /// dir (e.g. macOS ~/Library/Caches/bar.esko.staticdrop).
+    /// dir (e.g. macOS ~/Library/Caches/bar.esko.sajt).
     #[arg(long)]
     cache_dir: Option<PathBuf>,
 
@@ -98,12 +98,12 @@ enum Command {
 /// Split a `get` URL into the decoded path and its request flags. The query
 /// understands exactly what the server's handlers do: `search=` (with `+` as
 /// space), `embed`, and `fullscreen`.
-fn split_request(url: &str) -> (String, staticdrop_core::page::RequestFlags) {
+fn split_request(url: &str) -> (String, sajt_core::page::RequestFlags) {
     let (path, query) = match url.split_once('?') {
         Some((p, q)) => (p, Some(q)),
         None => (url, None),
     };
-    let mut flags = staticdrop_core::page::RequestFlags::default();
+    let mut flags = sajt_core::page::RequestFlags::default();
     if let Some(q) = query {
         for pair in q.split('&') {
             let (k, v) = match pair.split_once('=') {
@@ -146,7 +146,7 @@ fn percent_decode(s: &str) -> String {
 /// Platform cache directory used when `--cache-dir` isn't given. Falls back to a
 /// project-local `./.cache` only if the OS can't provide one.
 fn default_cache_dir() -> PathBuf {
-    directories::ProjectDirs::from("bar", "esko", "staticdrop")
+    directories::ProjectDirs::from("bar", "esko", "sajt")
         .map(|dirs| dirs.cache_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from("./.cache"))
 }
@@ -163,12 +163,12 @@ async fn main() {
     }
 
     // Site config first: everything below may derive identity from it.
-    let config = staticdrop_core::config::load(&args.config).unwrap_or_else(|e| {
+    let config = sajt_core::config::load(&args.config).unwrap_or_else(|e| {
         eprintln!("{}", e);
         std::process::exit(1);
     });
     if let Some(domain) = &config.domain {
-        staticdrop_core::embed::init_contact(domain);
+        sajt_core::embed::init_contact(domain);
     }
 
     // Canonicalize content dir (or use as-is if it doesn't exist yet)
@@ -235,7 +235,7 @@ async fn main() {
     // scan + embed resolve the server does, so the bytes match a live request.
     if let Some(Command::Get { ref url }) = args.command {
         let (path, flags) = split_request(url);
-        let reply = staticdrop_core::page::respond(&store, &path, &flags).await;
+        let reply = sajt_core::page::respond(&store, &path, &flags).await;
         eprintln!("HTTP {}", reply.status);
         for (name, value) in &reply.headers {
             eprintln!("{}: {}", name, value);

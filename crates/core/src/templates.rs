@@ -1092,7 +1092,7 @@ article[data-error] code { font-family: var(--mono); background: light-dark(rgba
 pub const BOOT_JS: &str = r##"
 (function () {
   try {
-    var NS = "staticdrop", d = document.documentElement, s = window.localStorage;
+    var NS = "sajt", d = document.documentElement, s = window.localStorage;
     var w = parseFloat(s.getItem(NS + "-width"));
     if (w > 0) {
       var m = Math.min(1160, window.innerWidth - 64);
@@ -1107,7 +1107,7 @@ pub const BOOT_JS: &str = r##"
 pub const JS: &str = r##"
 (function () {
   var store = window.localStorage;
-  var NS = "staticdrop";
+  var NS = "sajt";
   var WIDTH = NS + "-width", SAVED = NS + "-saved", TYPE = NS + "-type", AUTOLOAD = NS + "-autoload";
   var body = document.body, page = body.dataset.page;
   var help = document.getElementById("help");
@@ -1781,7 +1781,7 @@ pub fn search_query_suffix(view: &ViewFilter) -> String {
 
 /// Compose a scope path with a view: `path` (date/tags, no view words) plus
 /// the canonical view path suffix (`/notable`, `/favorites`) plus `?search=`.
-/// The emit side writes only this canonical spelling (staticdrop.md: redirects
+/// The emit side writes only this canonical spelling (sajt.md: redirects
 /// are shock absorbers, not a second grammar).
 fn make_url(path: &str, view: &ViewFilter) -> String {
     format!("{}{}", view_path(path, view), search_query_suffix(view))
@@ -3520,7 +3520,7 @@ pub fn not_found_label_page(label: &str, all_entries: &[&Entry]) -> String {
 /// (HEIC/TIFF/…): the exact bytes are withheld for privacy, and the honest
 /// clean-JPEG rendition lives one path rung down. A real page rather than a
 /// redirect, so the address never serves bytes its extension does not name —
-/// and so a static host can ship it as a plain file (staticdrop.md).
+/// and so a static host can ship it as a plain file (sajt.md).
 pub fn transcode_explainer_page(base_href: &str, ext: &str) -> String {
     let href = html_escape(base_href);
     let ext_upper = html_escape(&ext.to_ascii_uppercase());

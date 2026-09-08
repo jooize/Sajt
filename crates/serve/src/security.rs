@@ -1,5 +1,5 @@
 //! Axum middleware stamping the security header policy from
-//! `staticdrop_core::security` onto every response. Policy values live in
+//! `sajt_core::security` onto every response. Policy values live in
 //! core so the future static build emits identical headers; this module only
 //! does the HTTP plumbing.
 
@@ -7,7 +7,7 @@ use axum::extract::Request;
 use axum::http::{header, HeaderName, HeaderValue};
 use axum::middleware::Next;
 use axum::response::Response;
-use staticdrop_core::security;
+use sajt_core::security;
 
 /// Stamp hardening headers onto every response, and a content-type-appropriate
 /// CSP where the handler has not already chosen one.

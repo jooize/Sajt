@@ -115,7 +115,7 @@ impl CloudStats {
 /// every combination is a real generated page), while free-text search stays
 /// the one query parameter (`?search=…` — per-request input, not a resource).
 /// Composes with the path filter (tags / date) that `ContentQuery` handles;
-/// canonical scope order is date, then tags, then view (staticdrop.md).
+/// canonical scope order is date, then tags, then view (sajt.md).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ViewFilter {
     /// Show only notable-and-better entries (the `/notable` path segment).

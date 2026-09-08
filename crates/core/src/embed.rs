@@ -927,11 +927,11 @@ pub fn init_contact(domain: &str) {
 fn fetch_ua() -> String {
     match UA_CONTACT.get() {
         Some(contact) => format!(
-            "Mozilla/5.0 (compatible; staticdrop/{}; +{})",
+            "Mozilla/5.0 (compatible; sajt/{}; +{})",
             env!("CARGO_PKG_VERSION"),
             contact
         ),
-        None => format!("Mozilla/5.0 (compatible; staticdrop/{})", env!("CARGO_PKG_VERSION")),
+        None => format!("Mozilla/5.0 (compatible; sajt/{})", env!("CARGO_PKG_VERSION")),
     }
 }
 
