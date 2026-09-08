@@ -12,7 +12,7 @@ categories.workspace = true
 publish.workspace = true
 
 # The axum skin: router, handlers, watcher wiring, the local-only grading tool,
-# and the one-shot migrate subcommand. All content logic lives in
+# and nothing else. All content logic lives in
 # sajt-core; this crate only speaks HTTP.
 [dependencies]
 sajt-core.workspace = true

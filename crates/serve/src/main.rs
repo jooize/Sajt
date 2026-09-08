@@ -1,5 +1,4 @@
 mod grader;
-mod migrate;
 mod routes;
 mod security;
 
@@ -66,14 +65,6 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
-    /// One-shot: convert old flat `YYYY-MM-DDTHHMMSS[_label].ext` files into
-    /// folder posts (see entry-model.md). DRY-RUN unless `--apply` is given;
-    /// never overwrites. Run once, pre-1.0.
-    Migrate {
-        /// Perform the migration. Without this, only the plan is printed.
-        #[arg(long)]
-        apply: bool,
-    },
     /// Local-only pairwise grading tool. Starts its own web UI to compare two
     /// posts side-by-side (each rendered as on the live site), binary-searches
     /// the new post into the ranking, and appends the resulting judgements to
@@ -176,15 +167,6 @@ async fn main() {
         .content_dir
         .canonicalize()
         .unwrap_or_else(|_| args.content_dir.clone());
-
-    // One-shot subcommands run and exit before any server setup.
-    if let Some(Command::Migrate { apply }) = args.command {
-        if let Err(e) = migrate::run(&content_dir, apply) {
-            eprintln!("Migration failed: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
 
     // The grading tool runs its own local-only web server (separate from the
     // public one) until Ctrl-C, then exits. It is the ONLY sanctioned writer of
