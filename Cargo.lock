@@ -1877,46 +1877,12 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 name = "sajt"
 version = "0.37.0"
 dependencies = [
- "axum",
- "chrono",
- "clap",
- "directories",
- "mime_guess",
- "notify",
- "sajt-core",
- "serde",
- "serde_json",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "sajt-build"
-version = "0.37.0"
-dependencies = [
- "chrono",
- "clap",
- "directories",
- "reqwest",
- "sajt-core",
- "scraper",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "sajt-core"
-version = "0.37.0"
-dependencies = [
  "ammonia",
+ "axum",
  "base64",
  "chrono",
+ "clap",
+ "directories",
  "imagesize",
  "img-parts",
  "json5",
@@ -1924,6 +1890,7 @@ dependencies = [
  "libc",
  "lopdf",
  "mime_guess",
+ "notify",
  "plist",
  "quick-xml 0.41.0",
  "reqwest",
@@ -1933,7 +1900,9 @@ dependencies = [
  "sha2 0.10.9",
  "tokio",
  "toml",
+ "tower-http",
  "tracing",
+ "tracing-subscriber",
  "unicode-normalization",
  "xattr",
 ]

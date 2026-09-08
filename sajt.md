@@ -135,7 +135,7 @@ for someone:
 |---|---|---|
 | 1 exact file | everything the site links to | any static host |
 | 2 rule map | 301s (orderings to the host's rule budget, deepest-first, shortfall reported), 410s, headers | declarative rule support |
-| 3 normalizer | all orderings, forever (~30 lines; sorting is complete at every depth) | any host that runs code; `crates/serve` has it natively |
+| 3 normalizer | all orderings, forever (~30 lines; sorting is complete at every depth) | any host that runs code; `sajt serve` has it natively |
 | 4 fallback shell | forged URLs via 404 + JS; noscript gets the full timeline + notice | a custom 404 page |
 
 **Target: object storage + CDN** (R2 or Bunny), never the provider's
@@ -224,11 +224,13 @@ outbound connections; `--embed-check-hours` becomes a rebuild cadence.
 ## Components
 
 ```
-sajt/              Cargo workspace
-  crates/core         scan, entry model, tags, render, clean store   (lib)
-  crates/serve        axum: local preview, and the VPS lane          (bin)
-  crates/build        walk the closure, emit tree + manifest         (bin)
-  crates/push         S3-compatible upload, ordered and verified     (lib)
+sajt/              one Cargo package, one binary
+  src/lib.rs          the engine: scan, entry model, tags, render, clean store, pages
+  src/main.rs         the `sajt` command; every lane is a subcommand of it
+  src/serve/          `sajt serve`: axum preview and the VPS lane; `grade`, `get`
+  src/build/          `sajt build`: walk the closure, emit tree + manifest;
+                      `caddyfile` and `verify` adapters
+  src/push/           `sajt push`: S3-compatible upload, ordered and verified (planned)
 
 Sajt.app/          Swift, bundle bar.esko.Sajt
   Contents/MacOS/Sajt       SwiftUI shell

@@ -41,7 +41,7 @@ pub struct Manifest {
     /// The out-of-closure fallback page (the host's custom 404).
     pub fallback: FileEntry,
     /// Hardening headers for every response, from the one policy source
-    /// (`sajt_core::security`).
+    /// (`sajt::security`).
     pub universal_headers: Vec<(String, String)>,
 }
 

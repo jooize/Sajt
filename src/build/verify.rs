@@ -4,9 +4,9 @@
 //! and an adapter's host should pass because the adapter rendered the same
 //! manifest. The same loop later verifies a CDN after push (sajt.md).
 
-use crate::manifest::{FileEntry, Manifest};
+use crate::build::manifest::{FileEntry, Manifest};
 use sha2::{Digest, Sha256};
-use sajt_core::templates::encode_path;
+use sajt::templates::encode_path;
 
 /// A deterministic address outside any real closure, probing the fallback
 /// (custom 404) behavior.

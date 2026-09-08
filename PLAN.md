@@ -149,7 +149,7 @@ rename the one constant once the site is named, pre-1.0, no migration).
 7. Prune interim glass card styles from templates.rs (DESIGN.md notes they
    linger from the 2026-07-03 pruning).
 
-Run: `nix develop --command cargo run` + `caddy start --config Caddyfile`,
+Run: `nix develop --command cargo run -- serve` + `caddy start --config Caddyfile`,
 then https://localhost. Restart server after changes (Tilde watches live).
 
 ## 2026-07-05 handoff: decisions made, implementation plan (for Opus)

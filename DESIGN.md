@@ -582,7 +582,7 @@ opaque `file`.
 - **AsciiDoc** (`.adoc`) — **DECIDED 2026-07-03: render with Asciidoctor**,
   not Pandoc. Pandoc has **no AsciiDoc reader** (verified: absent from
   `pandoc --list-input-formats`; the current `"adoc" => "asciidoc"` mapping in
-  `crates/core/src/render.rs` errors at runtime). Asciidoctor natively supports
+  `src/render.rs` errors at runtime). Asciidoctor natively supports
   `video::RvRhUHTV_8k[youtube]`, `video::file.mp4[width=640,start=60,opts=autoplay]`,
   admonitions, includes, and source highlighting. Ship it in the Nix dev shell
   alongside Pandoc; invoke like Pandoc is invoked today (sandboxed, semaphore,
@@ -630,7 +630,7 @@ inline style) — a real favicon fetch is deferred precisely so a link row makes
 `post-model.md` §7; the fetcher half of §4).** Two fail-closed choke points, both
 security-critical:
 
-- **Scheme allowlist (`crates/core/src/outbound.rs`).** Every `<a href>` in rendered body
+- **Scheme allowlist (`src/outbound.rs`).** Every `<a href>` in rendered body
   HTML passes through `classify_scheme` (an allowlist, not a blocklist): only
   `https`, `http`, `mailto`, `tel` reach the reader. `http` is allowed but
   **flagged** by the pure-CSS `main a[href^="http://"]` rule (no server class);
@@ -642,7 +642,7 @@ security-critical:
   gain `rel="noreferrer"` for reader privacy. Applied as the last transform
   before the body enters the shell, so nothing an embed expansion produced can
   reintroduce an unsafe link. (Cites reuse the same guard — see §4, C7b.)
-- **SSRF-hardened fetcher (`crates/core/src/embed.rs`).** All scan-time outbound requests
+- **SSRF-hardened fetcher (`src/embed.rs`).** All scan-time outbound requests
   (oEmbed, OG scrape, iTunes, media download, liveness) funnel through one
   `guarded_fetch`. reqwest auto-redirect is disabled; each of up to 5 hops is
   followed by hand, its host re-resolved and **every** resolved IP checked
@@ -676,7 +676,7 @@ mode is never a security decision. What shipped:
   (and `gfm`/`commonmark_x` variants) still emit `<script>`/`on*`/`javascript:`
   verbatim (verified). So instead of trusting a reader flag, every pandoc *output*
   (markdown/rst/adoc/org/tex → `RenderedContent::Html`) is run through
-  `sanitize::body` (`crates/core/src/sanitize.rs`, ammonia/html5ever): scripts, event
+  `sanitize::body` (`src/sanitize.rs`, ammonia/html5ever): scripts, event
   handlers, `<iframe>`, `<style>`, inline `style=`, and unsafe-scheme URLs are
   stripped, while the structural markup pandoc relies on (syntax-highlight
   classes, footnote/heading ids) is kept. Table alignment — pandoc's one inline
@@ -1083,7 +1083,7 @@ Developer ID + notarization stays open until then.
 Done 2026-07-03: effects/variants/theme-switcher pruned from templates;
 unreferenced prototypes archived (git history keeps them).
 
-Done 2026-07-05: the mockup design is ported into `crates/core/src/templates.rs`. Stage 1
+Done 2026-07-05: the mockup design is ported into `src/templates.rs`. Stage 1
 shipped the shared `render_site_header` (tag cloud + controls) on both the
 timeline and entry pages plus the rows-glass timeline. The **entry-body port**
 then shipped in full: JS-injected heading anchors (h1 chains to the entry's

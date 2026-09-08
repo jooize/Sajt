@@ -1,34 +1,25 @@
+//! The axum skin: router, handlers, watcher wiring, and the local-only
+//! grading tool. All content logic lives in the library; this module only
+//! speaks HTTP.
+
 mod grader;
 mod routes;
 mod security;
 
-use clap::{Parser, Subcommand};
-use sajt_core::{content, embed, media};
+use clap::Parser;
 use notify::Watcher;
+use sajt::embed;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+use crate::{load_store, open_site, SiteArgs};
+
 #[derive(Parser)]
-#[command(name = "sajt", about = "Sajt content server")]
-struct Args {
-    /// Directory containing content files
-    #[arg(long, default_value = "./content")]
-    content_dir: PathBuf,
-
-    /// Site configuration file (domain, …). A missing file is fine — the
-    /// engine runs unconfigured; a file that exists but does not parse is a
-    /// startup error.
-    #[arg(long, default_value = "./sajt.toml")]
-    config: PathBuf,
-
-    /// Root for disposable caches (embeds, etc.), kept OUTSIDE the content tree
-    /// so the server never writes into content. Defaults to the platform cache
-    /// dir (e.g. macOS ~/Library/Caches/bar.esko.Sajt).
-    #[arg(long)]
-    cache_dir: Option<PathBuf>,
+pub struct ServeArgs {
+    #[command(flatten)]
+    pub site: SiteArgs,
 
     /// Port to listen on
     #[arg(long, default_value_t = 1234)]
@@ -37,64 +28,67 @@ struct Args {
     /// Address to bind. The loopback default keeps the server reachable only
     /// through the local reverse proxy; set 0.0.0.0 only where the network
     /// boundary is elsewhere (e.g. inside a container whose host does TLS).
-    /// The grading tool is NOT affected — it always binds loopback.
+    /// The grading tool is NOT affected: it always binds loopback.
     #[arg(long, default_value = "127.0.0.1")]
     listen: std::net::IpAddr,
 
     /// Embed liveness check interval in hours (0 = disabled)
     #[arg(long, default_value_t = 24)]
     embed_check_hours: u64,
-
-    /// JPEG quality (1-100) for full-view transcoded renditions (the `/jpeg` rung).
-    /// Author-side only, never a URL parameter. The value is part of the
-    /// clean-store cache key, so changing it regenerates renditions on demand;
-    /// gallery tiles keep their own fixed quality.
-    #[arg(long, default_value_t = 85, value_parser = clap::value_parser!(u8).range(1..=100))]
-    jpeg_quality: u8,
-
-    /// Allow image transcodes to run WITHOUT an OS sandbox when none is
-    /// available (sandbox-exec on macOS, bwrap on Linux). The default is
-    /// fail-closed: with no sandbox tooling, formats that need a transcode
-    /// (HEIC/TIFF/GIF/...) are withheld rather than decoded unconfined.
-    #[arg(long)]
-    unsandboxed_transcode: bool,
-
-    #[command(subcommand)]
-    command: Option<Command>,
 }
 
-#[derive(Subcommand)]
-enum Command {
-    /// Local-only pairwise grading tool. Starts its own web UI to compare two
-    /// posts side-by-side (each rendered as on the live site), binary-searches
-    /// the new post into the ranking, and appends the resulting judgements to
-    /// `<content_dir>/.sajt-grade-judgements.jsonl`. Localhost bind only;
-    /// never proxy it. Runs until Ctrl-C. See `entry-model.md` (Grade section).
-    Grade {
-        /// Port to listen on (127.0.0.1 only).
-        #[arg(long, default_value_t = 1236)]
-        port: u16,
-    },
-    /// Resolve one URL against the content tree and print the reply — the
-    /// whole site as a function, no server. The body goes to stdout; the
-    /// status line and headers go to stderr. Exit code 0 below 400, 1 from
-    /// 400 up. Accepts a path with an optional query
-    /// (`/2026/+design/notable`, `/photo.tif/jpeg`, `/?search=rust`).
-    Get {
-        /// URL path (and optional `?search=`/`?embed`/`?fullscreen` query).
-        url: String,
-    },
+#[derive(Parser)]
+pub struct GradeArgs {
+    #[command(flatten)]
+    pub site: SiteArgs,
+
+    /// Port to listen on (127.0.0.1 only).
+    #[arg(long, default_value_t = 1236)]
+    port: u16,
+}
+
+#[derive(Parser)]
+pub struct GetArgs {
+    #[command(flatten)]
+    pub site: SiteArgs,
+
+    /// URL path (and optional `?search=`/`?embed`/`?fullscreen` query).
+    url: String,
+}
+
+/// The grading tool runs its own local-only web server (separate from the
+/// public one) until Ctrl-C, then exits. It is the ONLY sanctioned writer of
+/// the content tree, and writes exactly one file: the grade ledger.
+pub async fn grade(args: GradeArgs) {
+    let site = open_site(&args.site);
+    grader::run(site.content_dir, args.port).await;
+}
+
+/// One-shot URL resolution: the page layer as a CLI. Runs the same scan and
+/// embed resolve the server does, so the bytes match a live request.
+pub async fn get(args: GetArgs) {
+    let site = open_site(&args.site);
+    let store = load_store(&site).await;
+    let (path, flags) = split_request(&args.url);
+    let reply = sajt::page::respond(&store, &path, &flags).await;
+    eprintln!("HTTP {}", reply.status);
+    for (name, value) in &reply.headers {
+        eprintln!("{}: {}", name, value);
+    }
+    use std::io::Write;
+    std::io::stdout().write_all(&reply.body).expect("write body to stdout");
+    std::process::exit(if reply.status < 400 { 0 } else { 1 });
 }
 
 /// Split a `get` URL into the decoded path and its request flags. The query
 /// understands exactly what the server's handlers do: `search=` (with `+` as
 /// space), `embed`, and `fullscreen`.
-fn split_request(url: &str) -> (String, sajt_core::page::RequestFlags) {
+fn split_request(url: &str) -> (String, sajt::page::RequestFlags) {
     let (path, query) = match url.split_once('?') {
         Some((p, q)) => (p, Some(q)),
         None => (url, None),
     };
-    let mut flags = sajt_core::page::RequestFlags::default();
+    let mut flags = sajt::page::RequestFlags::default();
     if let Some(q) = query {
         for pair in q.split('&') {
             let (k, v) = match pair.split_once('=') {
@@ -134,98 +128,11 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Platform cache directory used when `--cache-dir` isn't given. Falls back to a
-/// project-local `./.cache` only if the OS can't provide one.
-fn default_cache_dir() -> PathBuf {
-    directories::ProjectDirs::from("bar", "esko", "Sajt")
-        .map(|dirs| dirs.cache_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("./.cache"))
-}
 
-#[tokio::main]
-async fn main() {
-    let args = Args::parse();
-
-    // `get` prints the reply body on stdout, so logs must stay off it.
-    if matches!(args.command, Some(Command::Get { .. })) {
-        tracing_subscriber::fmt().with_writer(std::io::stderr).init();
-    } else {
-        tracing_subscriber::fmt::init();
-    }
-
-    // Site config first: everything below may derive identity from it.
-    let config = sajt_core::config::load(&args.config).unwrap_or_else(|e| {
-        eprintln!("{}", e);
-        std::process::exit(1);
-    });
-    if let Some(domain) = &config.domain {
-        sajt_core::embed::init_contact(domain);
-    }
-
-    // Canonicalize content dir (or use as-is if it doesn't exist yet)
-    let content_dir = args
-        .content_dir
-        .canonicalize()
-        .unwrap_or_else(|_| args.content_dir.clone());
-
-    // The grading tool runs its own local-only web server (separate from the
-    // public one) until Ctrl-C, then exits. It is the ONLY sanctioned writer of
-    // the content tree, and writes exactly one file: the grade ledger.
-    if let Some(Command::Grade { port }) = args.command {
-        grader::run(content_dir, port).await;
-        return;
-    }
-
-    tracing::info!("Content directory: {}", content_dir.display());
-
-    // Resolve the cache root (outside the content tree) and make sure it exists.
-    // Creating it up front surfaces permission problems early; a failure isn't
-    // fatal (the site still serves, embeds just re-fetch each run).
-    let cache_dir = args.cache_dir.clone().unwrap_or_else(default_cache_dir);
-    if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-        tracing::warn!("Could not create cache directory {}: {}", cache_dir.display(), e);
-    }
-    let cache_dir = cache_dir.canonicalize().unwrap_or(cache_dir);
-    tracing::info!("Cache directory: {}", cache_dir.display());
-
-    // Fail closed: the cache must never sit inside the content tree, or the
-    // server's cache writes (and its stale-cache cleanup, which deletes whole
-    // cache subdirectories) would mutate content. The content tree stays
-    // strictly read-only.
-    if cache_dir == content_dir || cache_dir.starts_with(&content_dir) {
-        panic!(
-            "Refusing to start: cache directory {} is inside the content directory {}. \
-             Choose a --cache-dir outside the content tree.",
-            cache_dir.display(),
-            content_dir.display()
-        );
-    }
-
-    // Clear transcode scratch stranded by a prior run that died mid-job, then
-    // decide — loudly — how the vips subprocess is confined for this run.
-    media::sweep_cache(&cache_dir);
-    media::init_transcode(args.unsandboxed_transcode);
-    media::init_jpeg_quality(args.jpeg_quality);
-
-    let mut store = content::ContentStore::scan(&content_dir, &cache_dir)
-        .expect("Failed to scan content directory");
-
-    // Resolve link embeds (fetches uncached, reads cached)
-    store.resolve_embeds().await;
-
-    // One-shot URL resolution: the page layer as a CLI. Runs after the same
-    // scan + embed resolve the server does, so the bytes match a live request.
-    if let Some(Command::Get { ref url }) = args.command {
-        let (path, flags) = split_request(url);
-        let reply = sajt_core::page::respond(&store, &path, &flags).await;
-        eprintln!("HTTP {}", reply.status);
-        for (name, value) in &reply.headers {
-            eprintln!("{}: {}", name, value);
-        }
-        use std::io::Write;
-        std::io::stdout().write_all(&reply.body).expect("write body to stdout");
-        std::process::exit(if reply.status < 400 { 0 } else { 1 });
-    }
+pub async fn run(args: ServeArgs) {
+    let site = open_site(&args.site);
+    let content_dir = site.content_dir.clone();
+    let store = load_store(&site).await;
 
     let state = Arc::new(RwLock::new(store));
 

@@ -48,7 +48,7 @@ time. The comment is published with the folder, so glance at Get Info
 Start both processes (see `CLAUDE.md` for development conventions):
 
 ```sh
-nix develop --command cargo run                        # Rust server on :1234
+nix develop --command cargo run -- serve               # Rust server on :1234
 nix develop --command caddy start --config Caddyfile   # HTTPS proxy on :443
 ```
 

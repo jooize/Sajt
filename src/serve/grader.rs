@@ -32,10 +32,10 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
-use sajt_core::content::ContentStore;
-use sajt_core::entry::Entry;
-use sajt_core::render::{render_entry, RenderedContent};
-use sajt_core::templates;
+use sajt::content::ContentStore;
+use sajt::entry::Entry;
+use sajt::render::{render_entry, RenderedContent};
+use sajt::templates;
 
 /// The single file this tool ever writes, relative to the content root. Must
 /// match `grade::LEDGER_STEM` + `.jsonl` — the exact name the public server
@@ -966,7 +966,7 @@ mod tests {
         assert_eq!(read[0], r#"{"winner":"a","loser":"b","at":"2026-07-06T18:05:00Z"}"#);
         // Every emitted line parses back as a grade::Judgement (format contract).
         for line in &read {
-            let j: sajt_core::grade::Judgement = serde_json::from_str(line).unwrap();
+            let j: sajt::grade::Judgement = serde_json::from_str(line).unwrap();
             assert!(!j.winner.is_empty() && !j.loser.is_empty() && j.at.is_some());
         }
 

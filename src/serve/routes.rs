@@ -1,4 +1,4 @@
-//! The axum skin over `sajt_core::page`: every handler decodes the
+//! The axum skin over `sajt::page`: every handler decodes the
 //! request into a path + `RequestFlags`, calls the page layer, and converts
 //! its framework-free `Reply` into an axum response. All resolution and
 //! rendering logic lives in core, so the closure builder walks the exact
@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use sajt_core::content::ContentStore;
-use sajt_core::page::{self, Reply, RequestFlags};
+use sajt::content::ContentStore;
+use sajt::page::{self, Reply, RequestFlags};
 
 pub type AppState = Arc<RwLock<ContentStore>>;
 
@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn reply_conversion_preserves_status_and_headers() {
         let reply = Reply {
-            provenance: sajt_core::page::Provenance::Generated,
+            provenance: sajt::page::Provenance::Generated,
             status: 301,
             headers: vec![("location", "/2026/+design/notable".to_string())],
             body: Vec::new(),
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn invalid_header_value_fails_closed() {
         let reply = Reply {
-            provenance: sajt_core::page::Provenance::Generated,
+            provenance: sajt::page::Provenance::Generated,
             status: 200,
             headers: vec![("location", "bad\nvalue".to_string())],
             body: Vec::new(),

@@ -1,13 +1,11 @@
-[workspace]
-resolver = "3"
-members = ["crates/core", "crates/serve", "crates/build"]
-
-[workspace.package]
+[package]
+name = "sajt"
 version = "0.37.0"
 edition = "2024"
 # Minimum supported toolchain. rust-toolchain.toml pins the exact version
 # every build uses; this is the floor crates.io advertises.
 rust-version = "1.93"
+description = "Sajt: a publishing engine where the filesystem is the CMS. Drop a file in a folder, tag it public, it is published."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jooize/Sajt"
 readme = "README.md"
@@ -19,12 +17,14 @@ categories = ["web-programming", "command-line-utilities", "text-processing"]
 # meant to ship for real; until then that workflow fails fast at publish.
 publish = false
 
-# One version of every dependency for the whole workspace, so crates/build and
-# crates/push (sajt.md) can never drift from what crates/serve links.
-[workspace.dependencies]
-# The version must match [workspace.package].version: crates.io resolves the
-# dependency by version, the path only serves the local build.
-sajt-core = { path = "crates/core", version = "0.37.0" }
+# One package, two targets. The library (src/lib.rs) is the engine: the
+# content tree as a pure function, rendering, the privacy gates, page
+# generation, and the author-side fetches. The binary (src/main.rs) is the
+# `sajt` command, whose `serve` and `build` subcommands are thin skins over
+# the same library, so the preview server and the static closure cannot
+# disagree about a single byte.
+
+[dependencies]
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["set-header", "trace", "catch-panic"] }
@@ -46,10 +46,21 @@ notify = { version = "8", default-features = false, features = ["macos_fsevent"]
 directories = "6"
 sha2 = "0.10"
 unicode-normalization = "0.1"
+# Image metadata stripping (post-model.md section 8): container-level surgery
+# that drops EXIF/XMP/IPTC/comment segments while keeping pixels byte-exact
+# and the ICC profile. `kamadak-exif` reads the orientation tag robustly
+# (untrusted input, so a parser that never panics) before we drop the EXIF
+# that carried it.
 img-parts = "0.4"
 kamadak-exif = "0.6"
+# Set RLIMIT_CPU on the libvips transcode subprocess (a pre-exec backstop
+# against a runaway decode of an attacker-controlled image, on top of the
+# wall-clock timeout). Unix only; the code is `#[cfg(unix)]`-gated.
 libc = "0.2"
 lopdf = { version = "0.44.0", default-features = false }
+# Pre-decode dimensions gate (decompression-bomb defense): a pure-Rust header
+# parse for every raster format we transcode, so an image declaring absurd
+# dimensions is withheld before libvips ever decodes it.
 imagesize = "0.15"
 quick-xml = "0.41"
 base64 = "0.22.1"

@@ -12,7 +12,7 @@
 //! matching is case-insensitive — each of those would silently change what
 //! gets served, so they are rejected up front.
 
-use crate::manifest::{FileEntry, Manifest};
+use crate::build::manifest::{FileEntry, Manifest};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -250,7 +250,7 @@ pub fn render(manifest: &Manifest, address: &str, root: &str) -> Result<String, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::ProvenanceEntry;
+    use crate::build::manifest::ProvenanceEntry;
     use std::collections::{BTreeMap, BTreeSet};
 
     fn entry(hash: &str, status: u16, headers: &[(&str, &str)]) -> FileEntry {

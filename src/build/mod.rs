@@ -1,6 +1,6 @@
 //! The closure builder (sajt.md): generate the transitive closure of
 //! the site's own link graph. Every URL a generated page emits is resolved
-//! through the same `sajt_core::page` layer the preview server uses,
+//! through the same `sajt::page` layer the preview server uses,
 //! its reply written to a content-addressed blob store, and the whole build
 //! described by one host-neutral manifest — files with hashes, the redirect
 //! map, the 410 ledger, the fallback page, and the security headers. Per-host
@@ -17,8 +17,10 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 
-use sajt_core::page::{self, Reply, RequestFlags};
-use sajt_core::url::percent_decode;
+use sajt::page::{self, Reply, RequestFlags};
+use sajt::url::percent_decode;
+
+use crate::{load_store, open_site, SiteArgs};
 
 mod caddyfile;
 mod manifest;
@@ -27,22 +29,7 @@ mod verify;
 use manifest::{FileEntry, Manifest, ProvenanceEntry};
 
 #[derive(Parser)]
-#[command(
-    name = "sajt-build",
-    about = "Sajt closure builder, manifest adapters, and verifier"
-)]
-enum Cli {
-    /// Walk the site closure; emit blobs/, manifest.json, and the report.
-    Build(BuildArgs),
-    /// Render manifest.json as a complete generated Caddyfile.
-    Caddyfile(CaddyfileArgs),
-    /// Fetch every manifest address from a live host and compare status,
-    /// body hash, and headers against the manifest.
-    Verify(VerifyArgs),
-}
-
-#[derive(Parser)]
-struct CaddyfileArgs {
+pub struct CaddyfileArgs {
     /// The manifest to render.
     #[arg(long, default_value = "./build/manifest.json")]
     manifest: PathBuf,
@@ -68,7 +55,7 @@ struct CaddyfileArgs {
 }
 
 #[derive(Parser)]
-struct VerifyArgs {
+pub struct VerifyArgs {
     /// The manifest that is the reference.
     #[arg(long, default_value = "./build/manifest.json")]
     manifest: PathBuf,
@@ -86,21 +73,9 @@ struct VerifyArgs {
 }
 
 #[derive(Parser)]
-struct BuildArgs {
-    /// Directory containing content files
-    #[arg(long, default_value = "./content")]
-    content_dir: PathBuf,
-
-    /// Site configuration file (domain, …). Missing is fine; unparseable is
-    /// a build error.
-    #[arg(long, default_value = "./sajt.toml")]
-    config: PathBuf,
-
-    /// Root for disposable caches (embeds, clean media store), shared with the
-    /// preview server so renditions are built once. Defaults to the platform
-    /// cache dir.
-    #[arg(long)]
-    cache_dir: Option<PathBuf>,
+pub struct BuildArgs {
+    #[command(flatten)]
+    pub site: SiteArgs,
 
     /// On-disk static assets directory (fonts, images the shell references).
     #[arg(long, default_value = "./static")]
@@ -114,15 +89,6 @@ struct BuildArgs {
     /// bug, and this turns it into a loud failure instead of a full disk.
     #[arg(long, default_value_t = 100_000)]
     max_urls: usize,
-
-    /// JPEG quality for full-view transcoded renditions. Must match the
-    /// preview server's setting or hashes (and bytes) differ between them.
-    #[arg(long, default_value_t = 85, value_parser = clap::value_parser!(u8).range(1..=100))]
-    jpeg_quality: u8,
-
-    /// Allow image transcodes to run WITHOUT an OS sandbox (see serve's flag).
-    #[arg(long)]
-    unsandboxed_transcode: bool,
 
     /// Succeed even when pages link to URLs that resolve to 404. The broken
     /// links are still listed in the report; this only changes the exit code,
@@ -237,7 +203,7 @@ fn content_type_of(reply: &Reply) -> String {
 
 /// Fill the per-response gap the serve middleware fills on live responses: a
 /// content-type-appropriate CSP where the handler chose none. The policy
-/// itself stays in `sajt_core::security` (the single source); without
+/// itself stays in `sajt::security` (the single source); without
 /// this, manifest entries would ship weaker headers than the preview server
 /// sends.
 fn default_csp(headers: &mut BTreeMap<String, String>) {
@@ -245,7 +211,7 @@ fn default_csp(headers: &mut BTreeMap<String, String>) {
         let ct = headers.get("content-type").cloned().unwrap_or_default();
         headers.insert(
             "content-security-policy".to_string(),
-            sajt_core::security::csp_for_content_type(&ct).to_string(),
+            sajt::security::csp_for_content_type(&ct).to_string(),
         );
     }
 }
@@ -294,23 +260,12 @@ fn store_blob(
     })
 }
 
-#[tokio::main]
-async fn main() {
-    // The report goes to stdout; logs stay on stderr.
-    tracing_subscriber::fmt().with_writer(std::io::stderr).init();
-    match Cli::parse() {
-        Cli::Build(args) => build(args).await,
-        Cli::Caddyfile(args) => render_caddyfile(args),
-        Cli::Verify(args) => run_verify(args).await,
-    }
-}
-
-fn render_caddyfile(args: CaddyfileArgs) {
+pub fn render_caddyfile(args: CaddyfileArgs) {
     let manifest = manifest::load(&args.manifest).unwrap_or_else(|e| {
         eprintln!("{}", e);
         std::process::exit(1);
     });
-    let config = sajt_core::config::load(&args.config).unwrap_or_else(|e| {
+    let config = sajt::config::load(&args.config).unwrap_or_else(|e| {
         eprintln!("{}", e);
         std::process::exit(1);
     });
@@ -344,7 +299,7 @@ fn render_caddyfile(args: CaddyfileArgs) {
     );
 }
 
-async fn run_verify(args: VerifyArgs) {
+pub async fn run_verify(args: VerifyArgs) {
     let manifest = manifest::load(&args.manifest).unwrap_or_else(|e| {
         eprintln!("{}", e);
         std::process::exit(1);
@@ -371,44 +326,14 @@ async fn run_verify(args: VerifyArgs) {
     std::process::exit(1);
 }
 
-async fn build(args: BuildArgs) {
-    let config = sajt_core::config::load(&args.config).unwrap_or_else(|e| {
-        eprintln!("{}", e);
-        std::process::exit(1);
-    });
-    if let Some(domain) = &config.domain {
-        sajt_core::embed::init_contact(domain);
-    }
-
-    let content_dir = args
-        .content_dir
-        .canonicalize()
-        .unwrap_or_else(|_| args.content_dir.clone());
-    let cache_dir = args.cache_dir.clone().unwrap_or_else(|| {
-        directories::ProjectDirs::from("bar", "esko", "Sajt")
-            .map(|dirs| dirs.cache_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("./.cache"))
-    });
-    if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-        tracing::warn!("Could not create cache directory {}: {}", cache_dir.display(), e);
-    }
-    let cache_dir = cache_dir.canonicalize().unwrap_or(cache_dir);
-    if cache_dir == content_dir || cache_dir.starts_with(&content_dir) {
-        eprintln!("Refusing to build: cache directory is inside the content directory.");
-        std::process::exit(1);
-    }
+pub async fn build(args: BuildArgs) {
+    let site = open_site(&args.site);
+    let content_dir = site.content_dir.clone();
     if args.out.starts_with(&content_dir) {
         eprintln!("Refusing to build: output directory is inside the content directory.");
         std::process::exit(1);
     }
-
-    sajt_core::media::sweep_cache(&cache_dir);
-    sajt_core::media::init_transcode(args.unsandboxed_transcode);
-    sajt_core::media::init_jpeg_quality(args.jpeg_quality);
-
-    let mut store = sajt_core::content::ContentStore::scan(&content_dir, &cache_dir)
-        .expect("Failed to scan content directory");
-    store.resolve_embeds().await;
+    let store = load_store(&site).await;
 
     std::fs::create_dir_all(args.out.join("blobs")).expect("create output directory");
 
@@ -514,7 +439,7 @@ async fn build(args: BuildArgs) {
         redirects,
         gone,
         fallback,
-        universal_headers: sajt_core::security::UNIVERSAL_HEADERS
+        universal_headers: sajt::security::UNIVERSAL_HEADERS
             .iter()
             .map(|(n, v)| (n.to_string(), v.to_string()))
             .collect(),
@@ -629,7 +554,7 @@ mod tests {
         default_csp(&mut h);
         assert_eq!(
             h["content-security-policy"],
-            sajt_core::security::csp_for_content_type("text/html")
+            sajt::security::csp_for_content_type("text/html")
         );
 
         let mut h: BTreeMap<String, String> =
@@ -637,7 +562,7 @@ mod tests {
         default_csp(&mut h);
         assert_eq!(
             h["content-security-policy"],
-            sajt_core::security::csp_for_content_type("image/jpeg")
+            sajt::security::csp_for_content_type("image/jpeg")
         );
 
         let mut h: BTreeMap<String, String> = [
