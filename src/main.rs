@@ -14,7 +14,7 @@ use std::path::PathBuf;
 #[command(
     name = "sajt",
     version,
-    about = "Sajt: a publishing engine where the filesystem is the CMS"
+    about = "Publishing engine where the filesystem is the CMS"
 )]
 enum Cli {
     /// Serve the site: preview on a workstation, or the origin behind a proxy

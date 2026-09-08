@@ -1,4 +1,4 @@
-# esko.bar — Design
+# Sajt — Design
 
 The single summary of the site's design. Detail files live in `.claude-memory/`
 and are referenced at the bottom. Items are marked **DECIDED** (with date),

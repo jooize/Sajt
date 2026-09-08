@@ -5,7 +5,7 @@ edition = "2024"
 # Minimum supported toolchain. rust-toolchain.toml pins the exact version
 # every build uses; this is the floor crates.io advertises.
 rust-version = "1.93"
-description = "Sajt: a publishing engine where the filesystem is the CMS. Drop a file in a folder, tag it public, it is published."
+description = "Publishing engine where the filesystem is the CMS: drop a file in a folder, tag it public, it is published."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jooize/Sajt"
 readme = "README.md"
