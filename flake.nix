@@ -12,9 +12,9 @@
       let
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs { inherit system overlays; };
-        rust = pkgs.rust-bin.stable.latest.default.override {
-          extensions = [ "rust-src" "rust-analyzer" ];
-        };
+        # Pinned by rust-toolchain.toml (channel + components), never "latest":
+        # a build must be reproducible from the repository alone.
+        rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
       in {
         devShells.default = pkgs.mkShell {
           buildInputs = [

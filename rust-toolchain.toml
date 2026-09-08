@@ -1,0 +1,5 @@
+# The one toolchain every build uses, on workstations and in CI alike; the
+# flake reads this file, so `nix develop` and rustup agree byte for byte.
+[toolchain]
+channel = "1.93.1"
+components = ["rust-src", "rust-analyzer"]
