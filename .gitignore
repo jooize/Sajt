@@ -3,6 +3,10 @@
 /.agents-cargo
 .DS_Store
 /server.log
+
+# Workstation-specific Caddy blocks (LAN and container addresses): machine
+# data, imported by the committed Caddyfile when present.
+/Caddyfile.local*
 /.cache
 
 # Build output: blobs and manifest of the operator's real site. Personal

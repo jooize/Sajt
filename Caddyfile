@@ -1,3 +1,8 @@
+# Development reverse proxy for the engine's own workstation: HTTPS on
+# localhost in front of `sajt serve`. A site's real Caddyfile is generated
+# from its build manifest (`sajt caddyfile`); this file is for developing
+# the engine, and carries nothing that identifies a machine or a network.
+#
 # HSTS belongs at the TLS terminator (Caddy), not the app behind it: the app
 # can't tell whether the client used HTTPS. Sent only on the HTTPS sites below.
 # Note (dev): this pins HTTPS for `localhost` in your browser for max-age. If you
@@ -17,21 +22,7 @@ http://localhost {
 	redir https://localhost{uri} permanent
 }
 
-# Mac-only HTTPS for the Linux fixture container (Apple `container` VM used to
-# live-verify the Linux serving path). *.localhost resolves to loopback, so this
-# is never LAN-reachable. The container IP can drift across container restarts —
-# check `container list` if this stops responding.
-https://linux.localhost {
-	tls internal
-	reverse_proxy [CONTAINER-IP]:1234
-}
-
-https://[LAN-IP] {
-	tls internal
-	import hsts
-	reverse_proxy localhost:1234
-}
-
-http://[LAN-IP] {
-	redir https://[LAN-IP]{uri} permanent
-}
+# Blocks that name a machine or a network (a LAN address, a container's IP)
+# live in the gitignored Caddyfile.local next to this file. The glob keeps a
+# missing file from being an error, so a fresh clone works as-is.
+import Caddyfile.local*
