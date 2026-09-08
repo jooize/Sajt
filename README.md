@@ -48,12 +48,31 @@ time. The comment is published with the folder, so glance at Get Info
 Start both processes (see `CLAUDE.md` for development conventions):
 
 ```sh
-nix develop --command cargo run -- serve               # Rust server on :1234
+nix develop --command cargo run -- serve --site content # Rust server on :1234
 nix develop --command caddy start --config Caddyfile   # HTTPS proxy on :443
 ```
 
 Then visit <https://localhost>. To trust Caddy's local CA:
 `sudo nix develop --command caddy trust`.
+
+## A site is a directory
+
+A site is one directory: the content files, and optionally a `.sajt.toml`
+with what the directory name cannot say. Nothing else is required. `~/Sites`
+on a Mac is a natural home (`~/Sites/example.org`), and iCloud Drive works
+too, since dotfiles sync.
+
+```toml
+# .sajt.toml, every key optional
+name = "Anna's notes"   # page titles and the header mark; default: the directory name
+domain = "example.org"  # the public host, for the Caddyfile adapter and the fetch UA only
+language = "sv"         # BCP 47 tag on every page; default "en"
+```
+
+Serving is domain-agnostic. Every URL the engine emits is a path, so a site
+works on any host name the moment it is served; the domain is consulted only
+where something must name the public host. The dotfile can never be
+published: the scanner skips every dot-prefixed entry at the top level.
 
 ## Documentation
 

@@ -251,6 +251,7 @@ fn append_judgements(content_dir: &Path, target: &Path, lines: &[String]) -> std
 /// GET / — the landing page: pick a post to place. Ungraded posts are surfaced
 /// first (the natural things to place); graded posts can be re-placed.
 async fn landing(State(app): State<Shared>) -> Response {
+    let site = sajt::config::site();
     let st = app.read().await;
     let posts = st.gradable();
     let (ungraded, graded): (Vec<&Entry>, Vec<&Entry>) =
@@ -276,7 +277,7 @@ async fn landing(State(app): State<Shared>) -> Response {
 
     let body = format!(
         r#"<div id="gtop">
-<h1>esko.bar grading</h1>
+<h1>{site_name} grading</h1>
 <span class="g-prog">{total} gradable post{plural}</span>
 <form method="post" action="/refresh" class="g-right"><button class="g-btn" type="submit">Refresh</button></form>
 </div>
@@ -286,6 +287,7 @@ async fn landing(State(app): State<Shared>) -> Response {
 <h2>Graded &mdash; re-place ({g})</h2>
 {graded_list}
 </div>"#,
+        site_name = esc(&site.name),
         total = posts.len(),
         plural = if posts.len() == 1 { "" } else { "s" },
         u = ungraded.len(),
@@ -301,7 +303,7 @@ async fn landing(State(app): State<Shared>) -> Response {
             format!("<ul>{}</ul>", graded_html)
         },
     );
-    Html(shell("esko.bar grading", &body)).into_response()
+    Html(shell(&format!("{} grading", site.name), &body)).into_response()
 }
 
 /// POST /refresh — re-scan the content tree (picks up new posts and any ledger
@@ -693,7 +695,7 @@ fn render_appended(path: &Path, lines: &[String]) -> String {
 fn shell(title: &str, body: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
-<html lang="en">
+<html lang="{lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -704,6 +706,7 @@ fn shell(title: &str, body: &str) -> String {
 {body}
 </body>
 </html>"#,
+        lang = esc(&sajt::config::site().language),
         title = esc(title),
         css = templates::CSS,
         grader_css = GRADER_CSS,
@@ -809,7 +812,7 @@ fn not_found() -> Response {
 fn print_notice(port: u16, content_dir: &Path, ledger: &Path) {
     let bar = "=".repeat(74);
     eprintln!("\n{bar}");
-    eprintln!("  esko.bar GRADING TOOL  --  local authoring surface, NOT the public site");
+    eprintln!("  {} GRADING TOOL  --  local authoring surface, NOT the public site", sajt::config::site().name.to_uppercase());
     eprintln!("{bar}");
     eprintln!("  URL      http://127.0.0.1:{port}");
     eprintln!("  Content  {}", content_dir.display());

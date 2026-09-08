@@ -1522,7 +1522,7 @@ pub const JS: &str = r##"
         if (!current || !current.dataset.canonical || current.dataset.canonical === lastPath) return;
         lastPath = current.dataset.canonical;
         try { history.replaceState(null, "", lastPath); } catch (err) {}
-        if (current.dataset.title) document.title = "esko.bar — " + current.dataset.title;
+        if (current.dataset.title) document.title = document.documentElement.dataset.site + " — " + current.dataset.title;
       }
       var urlRaf = 0;
       function queueURL() { if (!urlRaf) urlRaf = requestAnimationFrame(function () { urlRaf = 0; updateURL(); }); }
@@ -1996,7 +1996,21 @@ fn render_site_header(ctx: &HeaderContext) -> String {
 
 /// Wrap page content in the full HTML document.
 /// `page_kind` is "timeline" | "entry" | "plain"; `saved_view` marks /saved.
+/// A page title in the site's voice: the site name alone for the front
+/// page, "name — subject" everywhere else. The one place titles are composed,
+/// so every page agrees with the header mark and the JS that updates the
+/// title while reading.
+fn site_title(subject: &str) -> String {
+    let name = &crate::config::site().name;
+    if subject.is_empty() {
+        name.clone()
+    } else {
+        format!("{} — {}", name, subject)
+    }
+}
+
 fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> String {
+    let site = crate::config::site();
     let view_attr = if saved_view { r#" data-view="saved""# } else { "" };
     // The reading-typeface toggle is an entry-page affordance only (the serif
     // body is what it swaps); JS wires the `t` key and updates the label.
@@ -2022,7 +2036,7 @@ fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> Str
     };
     format!(
         r#"<!DOCTYPE html>
-<html lang="en">
+<html lang="{lang}" data-site="{site_name}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2043,6 +2057,8 @@ fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> Str
 <script src="{site_href}"></script>
 </body>
 </html>"#,
+        lang = html_escape(&site.language),
+        site_name = html_escape(&site.name),
         title = html_escape(title),
         css_href = crate::assets::SITE_CSS.url(),
         boot_href = crate::assets::BOOT_JS.url(),
@@ -2553,11 +2569,7 @@ pub fn timeline_page(
     ctx: &HeaderContext,
     filter_desc: &str,
 ) -> String {
-    let title = if filter_desc.is_empty() {
-        "esko.bar".to_string()
-    } else {
-        format!("esko.bar — {}", filter_desc)
-    };
+    let title = site_title(filter_desc);
 
     let mut rows = String::new();
     let mut current_month = String::new();
@@ -2813,7 +2825,7 @@ pub fn error_page(entry: &Entry, all_entries: &[&Entry]) -> String {
         headline = html_escape(&headline),
         detail = detail,
     );
-    page_shell(&format!("esko.bar — error: {}", label), &body, "entry", false)
+    page_shell(&site_title(&format!("error: {}", label)), &body, "entry", false)
 }
 
 /// The headline and detail (already-escaped HTML) for each scan failure.
@@ -2886,7 +2898,7 @@ pub fn entry_page(
         continue_nav = continue_nav(next, all_entries),
     );
 
-    page_shell(&format!("esko.bar — {}", label), &body, "entry", false)
+    page_shell(&site_title(label), &body, "entry", false)
 }
 
 /// The label to title a standalone `.html` post with.
@@ -2940,7 +2952,7 @@ pub fn standalone_embed_page(entry: &Entry, all_entries: &[&Entry], next: Option
         continue_nav = continue_nav(next, all_entries),
     );
 
-    page_shell(&format!("esko.bar — {}", label), &body, "entry", false)
+    page_shell(&site_title(label), &body, "entry", false)
 }
 
 /// Model B (`?fullscreen`): a standalone `.html` post given the whole viewport
@@ -2950,28 +2962,31 @@ pub fn standalone_embed_page(entry: &Entry, all_entries: &[&Entry], next: Option
 /// stylesheet and inherits the strict page CSP (which admits the same-origin
 /// iframe via `frame-src 'self'`).
 pub fn standalone_fullscreen_page(entry: &Entry, all_entries: &[&Entry]) -> String {
+    let site = crate::config::site();
     let label = standalone_label(entry);
     let canon_href = canonical_href(entry, all_entries);
     let raw_href = canonical_raw_href(entry, all_entries);
 
     format!(
         r#"<!DOCTYPE html>
-<html lang="en">
+<html lang="{lang}" data-site="{site_name}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>esko.bar &mdash; {title}</title>
+<title>{site_name} &mdash; {title}</title>
 <link rel="stylesheet" href="{css_href}">
 </head>
 <body data-page="fullscreen">
 <header id="sebar">
-<a href="/" id="sebar-mark">esko.bar</a>
+<a href="/" id="sebar-mark">{site_name}</a>
 <span id="sebar-title">{title}</span>
 <span id="sebar-actions"><a href="{canon}">&larr; back</a><a href="{raw}">show only the HTML</a></span>
 </header>
 <iframe id="se-full" src="{raw}" sandbox="allow-scripts allow-popups" title="{title}"></iframe>
 </body>
 </html>"#,
+        lang = html_escape(&site.language),
+        site_name = html_escape(&site.name),
         title = html_escape(label),
         css_href = crate::assets::SITE_CSS.url(),
         canon = html_escape(&canon_href),
@@ -3025,7 +3040,7 @@ pub fn listing_page(
         intro_html,
         &render_site_header(&ctx),
     );
-    page_shell(&format!("esko.bar — {}", label), &body, "listing", false)
+    page_shell(&site_title(label), &body, "listing", false)
 }
 
 /// A nested subfolder listing (`post-model.md` §6): `/label/sub/…` browsed as its
@@ -3053,7 +3068,7 @@ pub fn nested_listing_page(
 
     let body =
         listing_body(title, base_path, &encode_path(base_path), &header, listing, None, &render_site_header(&ctx));
-    page_shell(&format!("esko.bar — {}", title), &body, "listing", false)
+    page_shell(&site_title(title), &body, "listing", false)
 }
 
 /// The shared `<article id="listing">` body for both a top-level listing (Entry)
@@ -3399,7 +3414,7 @@ pub fn image_page(
         continue_nav = continue_nav(next, all_entries),
     );
 
-    page_shell(&format!("esko.bar — {}", label), &body, "entry", false)
+    page_shell(&site_title(label), &body, "entry", false)
 }
 
 /// Post-header tags (horizontal, Finder-color dots) for entry/image pages.
@@ -3512,7 +3527,7 @@ pub fn not_found_label_page(label: &str, all_entries: &[&Entry]) -> String {
         label = html_escape(label),
         suggestions = sugg_html,
     );
-    page_shell(&format!("esko.bar — not found: {}", label), &body, "entry", false)
+    page_shell(&site_title(&format!("not found: {}", label)), &body, "entry", false)
 }
 
 /// Render the 404 page (minimal — no cloud, just the way home).
@@ -3540,7 +3555,7 @@ instead, with that metadata stripped.</p>
 </article>
 </main>"#
     );
-    page_shell("esko.bar — Clean rendition", &body, "plain", false)
+    page_shell(&site_title("Clean rendition"), &body, "plain", false)
 }
 
 pub fn not_found_page() -> String {
@@ -3551,7 +3566,7 @@ pub fn not_found_page() -> String {
 <section><p>Nothing here.</p></section>
 </article>
 </main>"#;
-    page_shell("esko.bar — Not Found", body, "plain", false)
+    page_shell(&site_title("Not Found"), body, "plain", false)
 }
 
 fn html_escape(s: &str) -> String {

@@ -34,9 +34,15 @@ pub struct CaddyfileArgs {
     #[arg(long, default_value = "./build/manifest.json")]
     manifest: PathBuf,
 
-    /// Site configuration file; its domain names the generated site block.
-    #[arg(long, default_value = "./sajt.toml")]
-    config: PathBuf,
+    /// The site directory; its `.sajt.toml` domain names the generated site
+    /// block.
+    #[arg(long, default_value = ".")]
+    site: PathBuf,
+
+    /// Read the site configuration from this file instead of `.sajt.toml`
+    /// inside the site directory.
+    #[arg(long)]
+    config: Option<PathBuf>,
 
     /// Site address line for the generated file, overriding the config
     /// domain (e.g. http://localhost:8080 for the local parity loop).
@@ -265,7 +271,11 @@ pub fn render_caddyfile(args: CaddyfileArgs) {
         eprintln!("{}", e);
         std::process::exit(1);
     });
-    let config = sajt::config::load(&args.config).unwrap_or_else(|e| {
+    let config_path = args
+        .config
+        .clone()
+        .unwrap_or_else(|| sajt::config::path_in(&args.site));
+    let config = sajt::config::load(&config_path).unwrap_or_else(|e| {
         eprintln!("{}", e);
         std::process::exit(1);
     });

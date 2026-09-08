@@ -49,15 +49,17 @@ enum Cli {
 /// Options every subcommand that touches a site shares.
 #[derive(clap::Args)]
 pub struct SiteArgs {
-    /// Directory containing content files.
-    #[arg(long, default_value = "./content")]
-    pub content_dir: PathBuf,
+    /// The site directory: the content files, and `.sajt.toml` if the site
+    /// wants to say more about itself than its directory name does.
+    #[arg(long, default_value = ".")]
+    pub site: PathBuf,
 
-    /// Site configuration file (domain, ...). A missing file is fine: the
-    /// engine runs unconfigured. A file that exists but does not parse is an
-    /// error at startup.
-    #[arg(long, default_value = "./sajt.toml")]
-    pub config: PathBuf,
+    /// Read the site configuration from this file instead of `.sajt.toml`
+    /// inside the site directory. A missing file is fine either way: the site
+    /// is then described by its directory. A file that exists but does not
+    /// parse is an error at startup.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
 
     /// Root for disposable caches (embeds, the clean media store), kept
     /// OUTSIDE the content tree so the engine never writes into content.
@@ -86,7 +88,7 @@ pub struct SiteArgs {
 /// A site opened for work: its configuration applied, its directories
 /// resolved and checked.
 pub struct OpenedSite {
-    pub config: sajt::config::SiteConfig,
+    pub site: sajt::config::Site,
     pub content_dir: PathBuf,
     pub cache_dir: PathBuf,
 }
@@ -105,19 +107,31 @@ fn default_cache_dir() -> PathBuf {
 /// the site is or how it renders. Exits the process on a configuration error:
 /// a typo silently reverting a site to defaults would be a trap.
 pub fn open_site(args: &SiteArgs) -> OpenedSite {
-    let config = sajt::config::load(&args.config).unwrap_or_else(|e| {
+    // Canonicalize the site dir (or use it as-is if it doesn't exist yet): the
+    // real name matters, since an unnamed site is named after its directory.
+    let content_dir = args
+        .site
+        .canonicalize()
+        .unwrap_or_else(|_| args.site.clone());
+
+    let config_path = args
+        .config
+        .clone()
+        .unwrap_or_else(|| sajt::config::path_in(&content_dir));
+    let config = sajt::config::load(&config_path).unwrap_or_else(|e| {
         eprintln!("{}", e);
         std::process::exit(1);
     });
-    if let Some(domain) = &config.domain {
+    let site = sajt::config::resolve(config, &content_dir);
+    if let Some(domain) = &site.domain {
         sajt::embed::init_contact(domain);
     }
-
-    // Canonicalize the content dir (or use it as-is if it doesn't exist yet).
-    let content_dir = args
-        .content_dir
-        .canonicalize()
-        .unwrap_or_else(|_| args.content_dir.clone());
+    tracing::info!(
+        "Site: {} ({})",
+        site.name,
+        site.domain.as_deref().unwrap_or("no domain configured")
+    );
+    sajt::config::init(site.clone());
 
     // Resolve the cache root and make sure it exists. Creating it up front
     // surfaces permission problems early; a failure isn't fatal (the site
@@ -151,7 +165,7 @@ pub fn open_site(args: &SiteArgs) -> OpenedSite {
     sajt::media::init_transcode(args.unsandboxed_transcode);
     sajt::media::init_jpeg_quality(args.jpeg_quality);
 
-    OpenedSite { config, content_dir, cache_dir }
+    OpenedSite { site, content_dir, cache_dir }
 }
 
 /// Scan the content tree and resolve link embeds (fetching uncached, reading
