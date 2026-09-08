@@ -66,3 +66,11 @@ Then visit <https://localhost>. To trust Caddy's local CA:
 - [`sajt.md`](sajt.md) — the static-publish design: build
   locally, ship bytes; closure model, manifest, host adapters.
 - [`PLAN.md`](PLAN.md) — working plan and history.
+
+## License
+
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT license](LICENSE-MIT), at your option. Unless you explicitly
+state otherwise, any contribution intentionally submitted for inclusion in
+Sajt by you, as defined in the Apache-2.0 license, shall be dual licensed as
+above, without any additional terms or conditions.

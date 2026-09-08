@@ -2,6 +2,14 @@
 name = "sajt-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+description = "Sajt engine core: the content tree as a pure function, rendering, the file-privacy gates, and page generation"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
 
 # Everything that is a pure function of the content tree plus rendering, and the
 # author-side network fetches (embed/outbound run at build/refresh time). No web

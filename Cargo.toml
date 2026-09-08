@@ -5,11 +5,26 @@ members = ["crates/core", "crates/serve", "crates/build"]
 [workspace.package]
 version = "0.37.0"
 edition = "2024"
+# Minimum supported toolchain. rust-toolchain.toml pins the exact version
+# every build uses; this is the floor crates.io advertises.
+rust-version = "1.93"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jooize/Sajt"
+readme = "README.md"
+keywords = ["static-site", "publishing", "cms", "website", "markdown"]
+categories = ["web-programming", "command-line-utilities"]
+# crates.io is permanent: a version can be yanked, never deleted. Publishing
+# stays gated off until the engine is de-branded, the repository is public,
+# and a first release is cut on purpose. Flip to true when release.yml is
+# meant to ship for real; until then that workflow fails fast at publish.
+publish = false
 
 # One version of every dependency for the whole workspace, so crates/build and
 # crates/push (sajt.md) can never drift from what crates/serve links.
 [workspace.dependencies]
-sajt-core = { path = "crates/core" }
+# The version must match [workspace.package].version: crates.io resolves the
+# dependency by version, the path only serves the local build.
+sajt-core = { path = "crates/core", version = "0.37.0" }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["set-header", "trace", "catch-panic"] }
