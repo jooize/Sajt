@@ -71,10 +71,11 @@ language = "sv"         # BCP 47 tag on every page; default "en"
 
 Serving is domain-agnostic. Every URL the engine emits is a path, so a site
 works on any host name the moment it is served; the domain is consulted only
-where something must name the public host. The file can never be published:
-its name is reserved, like the grade ledger `Sajt-Grade-Judgements.jsonl`,
-and the scanner skips reserved names. Nothing the engine keeps in a site is
-hidden.
+where something must name the public host. The file is an ordinary file in
+the site, like the grade ledger `Sajt-Grade-Judgements.jsonl` that the grading
+tool writes: published only if it carries the public tag, and never otherwise.
+Nothing the engine keeps in a site is hidden, and nothing in it is secret,
+though the ledger does name posts that may be unpublished.
 
 ## Documentation
 

@@ -97,7 +97,7 @@ pub fn load_judgements(content_dir: &Path) -> Vec<Judgement> {
 }
 
 /// Every ledger file in the content root: the canonical file and any iCloud
-/// conflict copies, sorted by name. What `sajt grade purge` removes.
+/// conflict copies, sorted by name. What `sajt grade trash` removes.
 pub fn ledger_files(content_dir: &Path) -> Vec<std::path::PathBuf> {
     let mut out: Vec<_> = std::fs::read_dir(content_dir)
         .map(|rd| {

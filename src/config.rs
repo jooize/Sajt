@@ -7,10 +7,10 @@
 //!
 //! The file lives inside the site directory, visible, so it moves, syncs,
 //! and backs up with the site and can be found and edited where the site is.
-//! It can never be published: its name is reserved, and the scanner skips
-//! reserved names at the top level ([`is_reserved_name`]) the way it skips
-//! dotfiles. No hidden data: everything the engine keeps in a site is a
-//! visible file with a `Sajt` prefix.
+//! To the scanner it is an ordinary file: like anything else in the site it
+//! is published only when it carries the public tag, and nothing about it is
+//! secret. No hidden data: everything the engine keeps in a site is a
+//! visible file with a `Sajt` prefix, under the same rules as the content.
 //!
 //! Serving is domain-agnostic. Every URL the engine emits is a path, so a
 //! site works on any host name the moment it is served; the domain is only
@@ -93,13 +93,6 @@ fn valid_language(tag: &str) -> bool {
     (2..=3).contains(&primary.len())
         && primary.chars().all(|c| c.is_ascii_alphabetic())
         && parts.all(|p| (1..=8).contains(&p.len()) && p.chars().all(|c| c.is_ascii_alphanumeric()))
-}
-
-/// Top-level names the engine reserves for its own visible files: the
-/// configuration and the grade ledger (with its iCloud conflict copies). The
-/// scanner never treats these as posts, and nothing else may claim them.
-pub fn is_reserved_name(name: &str) -> bool {
-    name == FILE_NAME || crate::grade::is_ledger_name(name)
 }
 
 /// Where the configuration file lives for a site directory.

@@ -55,9 +55,9 @@ enum GradeAction {
     /// Move the grade ledger (and any iCloud conflict copies) to the Trash
     ///
     /// The ledger is the only thing the engine ever writes into a site. Lists
-    /// what it would remove and stops unless --yes is given. Files go to the
-    /// system Trash, never straight to deletion.
-    Purge {
+    /// what it would move and stops unless --yes is given. Files go to the
+    /// system Trash, never straight to deletion, so the move can be undone.
+    Trash {
         /// Actually do it.
         #[arg(long)]
         yes: bool,
@@ -79,7 +79,7 @@ pub struct GetArgs {
 pub async fn grade(args: GradeArgs) {
     let site = open_site(&args.site);
     match args.action {
-        Some(GradeAction::Purge { yes }) => grader::purge(&site.content_dir, yes),
+        Some(GradeAction::Trash { yes }) => grader::trash(&site.content_dir, yes),
         None => grader::run(site.content_dir, args.port).await,
     }
 }

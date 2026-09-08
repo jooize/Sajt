@@ -149,10 +149,8 @@ fn scan_entries(content_dir: &Path) -> std::io::Result<Vec<Entry>> {
                 continue;
             }
         };
-        if name.starts_with('.') || crate::config::is_reserved_name(&name) {
-            // dotfiles (.DS_Store, .claude) and the engine's own visible files
-            // (Sajt.toml, the grade ledger) are never posts
-            continue;
+        if name.starts_with('.') {
+            continue; // dotfiles (.DS_Store, .claude) are never posts
         }
         if is_cache_name(&name) {
             continue; // legacy in-tree embed caches (the server now caches outside content)

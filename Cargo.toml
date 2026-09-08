@@ -43,7 +43,7 @@ toml = "0.8"
 scraper = "0.22"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 directories = "6"
-# `sajt grade purge` moves the ledger to the system Trash (Finder Trash on
+# `sajt grade trash` moves the ledger to the system Trash (Finder Trash on
 # macOS, the freedesktop trash on Linux): removable, never deleted outright.
 trash = "5"
 sha2 = "0.10"

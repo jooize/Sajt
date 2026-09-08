@@ -824,13 +824,13 @@ fn print_notice(port: u16, content_dir: &Path, ledger: &Path) {
 
 /// Run the grading tool: scan content, build the local-only router, and serve
 /// until Ctrl-C.
-/// `sajt grade purge`: move every ledger file to the system Trash. Lists what
-/// it would remove and refuses without `--yes`; nothing is ever deleted
-/// outright, the Trash keeps the undo.
-pub fn purge(content_dir: &Path, yes: bool) {
+/// `sajt grade trash`: move every ledger file to the system Trash. Lists what
+/// it would move and stops without `--yes`; nothing is ever deleted outright,
+/// the Trash keeps the undo.
+pub fn trash(content_dir: &Path, yes: bool) {
     let files = sajt::grade::ledger_files(content_dir);
     if files.is_empty() {
-        println!("No grade ledger in {}: nothing to purge.", content_dir.display());
+        println!("No grade ledger in {}: nothing to move.", content_dir.display());
         return;
     }
     println!("Grade ledger file(s) in {}:", content_dir.display());
@@ -841,13 +841,29 @@ pub fn purge(content_dir: &Path, yes: bool) {
         eprintln!("Not touched. Re-run with --yes to move them to the Trash.");
         std::process::exit(1);
     }
-    match trash::delete_all(&files) {
+    match trash_context().delete_all(&files) {
         Ok(()) => println!("Moved {} file(s) to the Trash.", files.len()),
         Err(e) => {
             eprintln!("Could not move the ledger to the Trash: {}", e);
             std::process::exit(1);
         }
     }
+}
+
+/// The Trash mover. On macOS the crate's default asks Finder over AppleScript,
+/// which needs a running Finder, a GUI session, and an Automation permission
+/// prompt; `sajt` may well run over SSH or under a sandbox. `NSFileManager`'s
+/// `trashItemAtURL` moves the file into the Trash directly with none of those
+/// conditions, at the cost of Finder's "Put Back" entry on some systems (the
+/// file is still in the Trash, and the command listed it by name first).
+fn trash_context() -> trash::TrashContext {
+    let mut ctx = trash::TrashContext::new();
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::TrashContextExtMacos;
+        ctx.set_delete_method(trash::macos::DeleteMethod::NsFileManager);
+    }
+    ctx
 }
 
 pub async fn run(content_dir: PathBuf, port: u16) {
