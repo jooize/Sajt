@@ -596,6 +596,53 @@ opaque `file`.
   other files as downloads. (The old `.link` extension is **retired** — a link
   is now the `link_url` axis below, not a special format.)
 
+### Languages (DECIDED 2026-09-09, not yet built; lands before or with the comrak port)
+
+The site has one language, from `Sajt.toml` (`language`, default `en`),
+emitted as `<html lang>` on every page (shipped 2026-09-08). Posts may differ
+from it, and a post may exist in several languages. Everything below is
+filename grammar and static markup; nothing needs a server decision.
+
+- **A post in another language**: a language subtag before the extension,
+  `brev.sv.md`. The post's `lang` is `sv`; the page still belongs to the site.
+  The subtag is a BCP 47 tag as `Sajt.toml` accepts it (`sv`, `pt-BR`).
+- **One post, several versions**: `hello-world.md` and `hello-world.sv.md`
+  side by side in the post folder. The unsuffixed file is the site-language
+  version and keeps the bare URL `/hello-world`; each other version lives at
+  `/hello-world/<tag>` (`/hello-world/sv`). Those URLs are canonical, stable,
+  and shareable: they never redirect. Every version carries
+  `<link rel="alternate" hreflang>` for all versions plus `x-default` for the
+  bare URL. The timeline shows one row per post (the site-language version)
+  with a quiet "also in svenska" line naming the other versions in their own
+  language. A version is served under the same per-file rule as any other
+  file content: its own `public` tag.
+- **Inline language**: the sanitizer allows `lang` and `dir` on elements, so
+  a quoted paragraph in another language is marked correctly (this is part
+  of the comrak port).
+- **Automatic choice is an edge feature, never a page feature.** A static host
+  serves `/hello-world` as is. The CDN adapter may add a redirect: a request
+  for the bare URL whose `Accept-Language` prefers a language the post exists
+  in gets a `302` to that version with `Vary: Accept-Language`. It only ever
+  fires on the bare URL and only when that version exists, so it is
+  dead-front-safe (edge logic over the same bytes, no content decision).
+- **The "you were redirected" notice, without JavaScript.** The redirect's
+  `Location` carries a fragment: `/hello-world/sv#redirected-for-language`.
+  Browsers keep the fragment, and every multi-version page has
+  `<aside id="redirected-for-language">` at the top of `<main>` (so the
+  fragment scroll is a no-op). CSS `:target` makes it prominent; otherwise it
+  is the quiet version line. Its text is true for anyone who lands on the
+  URL, including the recipient of a copied link: "Svenska. Also in English",
+  each name an autonym linking to that version. Nothing is one-time state:
+  the fragment simply goes away on the next navigation.
+- **Progressive enhancement**: the entry-page script, on load, when the hash
+  is `#redirected-for-language`, sets `data-redirected` on the aside and
+  calls `history.replaceState` to drop the fragment from the address bar, so
+  a copied URL is clean. The CSS keys on `:target` *or* `[data-redirected]`,
+  because some browsers stop matching `:target` once the URL changes.
+  Without JavaScript the fragment stays until the next click; accepted.
+- No id needs reserving: the heading-anchor script already suffixes an id
+  that is taken.
+
 **The `link_url` axis + outbound cites (SHIPPED 2026-07-09, `post-model.md` §4).**
 A post's outbound destination is orthogonal to its `kind`. The scanner resolves
 `Entry.link_url` (always an `http(s)` URL that passed the scheme guard, or `None`)
