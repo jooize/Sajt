@@ -716,7 +716,7 @@ pub struct AppleEmbed {
 // entry-model.md), so every derived embed cache lives under a separate cache
 // root passed in from main -- by default the platform cache dir (e.g. macOS
 // ~/Library/Caches/...). Each entry's cache is a directory named by a hash of
-// its content-relative path; `meta.json5` records the source path and mtime so
+// its content-relative path; `meta.json` records the source path and mtime so
 // an edit (new mtime) forces a refetch, and any downloaded media (OG images,
 // artwork) sits beside it.
 
@@ -773,7 +773,7 @@ struct CacheEnvelope {
 }
 
 fn meta_path(cache_dir: &Path) -> PathBuf {
-    cache_dir.join("meta.json5")
+    cache_dir.join("meta.json")
 }
 
 /// Read cached embed data, but only if it was written for the current file
@@ -781,7 +781,7 @@ fn meta_path(cache_dir: &Path) -> PathBuf {
 pub fn read_cached(cache_dir: &Path, expected_mtime: Option<i64>) -> Option<EmbedData> {
     let meta = meta_path(cache_dir);
     let content = std::fs::read_to_string(&meta).ok()?;
-    let envelope: CacheEnvelope = match json5::from_str(&content) {
+    let envelope: CacheEnvelope = match serde_json::from_str(&content) {
         Ok(e) => e,
         Err(e) => {
             tracing::warn!("Failed to parse embed cache {}: {}", meta.display(), e);
@@ -1826,7 +1826,7 @@ fn extract_instagram_username(url: &str) -> Option<String> {
 /// The scanner already extracted and scheme-guarded the destination into
 /// `entry.link_url` (`post-model.md` §4) — a bare link post, or a content post
 /// citing a `link.*` sidecar. For each such entry:
-/// 1. Check sidecar cache -- if `meta.json5` exists, load it
+/// 1. Check sidecar cache -- if `meta.json` exists, load it
 /// 2. Otherwise, fetch via oEmbed, OG tags, or iTunes Lookup API
 /// 3. Write cache to sidecar directory (keyed by the entry's own path)
 /// 4. Set `link_title` (the cite headline) always, and `display_label` only when
