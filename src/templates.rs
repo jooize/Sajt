@@ -142,6 +142,23 @@ main {
 @media (prefers-reduced-motion: reduce) { #grip::after { transition: none; } }
 @media (max-width: 56rem) { #grip { display: none; } }
 
+/* ---------- rules ----------
+   Every hairline that spans a column fades out at both ends, like the handle
+   window above, so no rule ends in a hard stop. The border stays a border
+   (box model, padding) and border-image paints the fade; --rule-ink is the
+   line colour, set per element so a state (search focus) can recolour it. */
+#site form search input,
+main > article > section hr,
+main > article .footnotes,
+main > article > footer,
+main > article + article,
+#continue,
+dialog p,
+#aliases, #nameshare {
+  --rule-ink: var(--hair);
+  border-image: linear-gradient(to right, transparent, var(--rule-ink) 14%, var(--rule-ink) 86%, transparent) 1;
+}
+
 #readout {
   position: fixed;
   top: 50%;
@@ -394,7 +411,7 @@ body:has(#grip.active) { -webkit-user-select: none; user-select: none; }
   font: .85rem var(--sans);
 }
 #site form search input::placeholder { color: var(--faint); }
-#site form search input:focus { outline: none; border-bottom-color: var(--violet); }
+#site form search input:focus { outline: none; --rule-ink: var(--violet); }
 
 /* ---------- crumbs (entry page): up-left on the post ---------- */
 #crumbs {

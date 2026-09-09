@@ -905,6 +905,12 @@ Reference realizations: `static/timeline-glass-mockup.html` (rows) and
   post. The script creates the element, since it does nothing without JS.
   Sidenotes move between margin and inline automatically; they start 3rem
   out, clear of the zone.
+- **Rules fade at both ends — DECIDED 2026-09-09**: every hairline that
+  spans a column (search underline, `hr`, footnotes, post footer, Continue
+  seams, aliases, the shortcuts dialog) fades out over its outer 14% on each
+  side, the same softness as the handle window, so no rule ends in a hard
+  stop. Painted with `border-image` over an ordinary border; the search
+  underline turns violet on focus through the same gradient.
 - **Quote actions** — two discreet buttons on blockquote hover/focus:
   **quote** copies the quotation with attribution; **link** copies a deep
   link using a text fragment (`#:~:text=…`) that highlights the passage for
