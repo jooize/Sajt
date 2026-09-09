@@ -336,7 +336,7 @@ async fn place(State(app): State<Shared>, AxumPath(label): AxumPath<String>) -> 
 }
 
 /// What the comparison GET needs to render, gathered under the read lock so the
-/// (async, pandoc-shelling) render happens after the lock is released.
+/// (async, possibly helper-shelling) render happens after the lock is released.
 enum CompareView {
     None,
     Compare {

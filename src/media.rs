@@ -1079,7 +1079,7 @@ fn bwrap_invocation(
 // --- transcode (libvips subprocess) -----------------------------------------
 
 /// Cap on concurrent libvips subprocesses. Decoding a large HEIC/HEIF is memory-
-/// and CPU-heavy, so only a few run at once (mirrors the pandoc limiter).
+/// and CPU-heavy, so only a few run at once (mirrors the render helper limiter).
 static VIPS_SEMAPHORE: Semaphore = Semaphore::const_new(2);
 
 /// Per-process counter that makes each transcode's temp filenames unique, so two

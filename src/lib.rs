@@ -13,6 +13,8 @@ pub mod content;
 pub mod embed;
 pub mod entry;
 pub mod grade;
+pub mod highlight;
+pub mod markdown;
 pub mod media;
 pub mod outbound;
 pub mod page;

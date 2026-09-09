@@ -1,6 +1,6 @@
 [package]
 name = "sajt"
-version = "0.37.0"
+version = "0.38.0"
 edition = "2024"
 # Minimum supported toolchain. rust-toolchain.toml pins the exact version
 # every build uses; this is the floor crates.io advertises.
@@ -66,3 +66,10 @@ lopdf = { version = "0.44.0", default-features = false }
 imagesize = "0.15"
 quick-xml = "0.41"
 base64 = "0.22.1"
+# comrak renders CommonMark in-process (no subprocess, no Pandoc). Its
+# default features drag in a CLI and a second syntect with the C oniguruma
+# backend; the engine wants only the parser plus GitHub-style :emoji: codes.
+comrak = { version = "0.55", default-features = false, features = ["shortcodes"] }
+# syntect tokenizes fenced code for every authoring format (src/highlight.rs)
+# with pure-Rust regexes: no C library, one highlighter, one stylesheet.
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }

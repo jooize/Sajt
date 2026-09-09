@@ -667,9 +667,9 @@ main > article > section hr { border: 0; border-top: 1px solid var(--hair); marg
 main > article > section a { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--violet), transparent 55%); text-underline-offset: .15em; }
 main > article > section a:hover { text-decoration-color: currentColor; }
 
-/* tables (pandoc pipe tables). Cell alignment arrives as a data-align attribute
-   -- the sanitizer rewrites pandoc's inline `text-align` style out, so nothing
-   inline is left for a strict `style-src 'self'` to refuse. */
+/* tables. Cell alignment arrives as a data-align attribute -- the sanitizer
+   rewrites the engines' inline `text-align` style / `align` attribute into it,
+   so nothing inline is left for a strict `style-src 'self'` to refuse. */
 main > article > section table { width: 100%; border-collapse: collapse; margin: 0 0 1.4rem; font-size: .95em; display: block; overflow-x: auto; }
 main > article > section th, main > article > section td { padding: .4em .7em; border-bottom: 1px solid var(--hair); text-align: left; }
 main > article > section thead th { border-bottom: 2px solid var(--faint); font-weight: 600; }
@@ -684,7 +684,8 @@ main a[href^="http://"]::after { content: " \2197\FE0E (not secure)"; font-size:
 main [data-unsafe-link] { color: var(--tag-red); text-decoration: line-through; cursor: not-allowed; }
 main [data-unsafe-link]::before { content: "\26A0\FE0E\00A0"; }
 
-/* inline + block code (pandoc: bare <pre> or <div class="sourceCode"><pre>) */
+/* inline + block code: bare <pre> (no language) or the highlighted
+   <div class="sourceCode"><pre> that every engine's fenced code becomes */
 main > article > section code { font-family: var(--mono); font-size: .86em; background: var(--code-bg); padding: .12em .35em; border-radius: 5px; border: 1px solid var(--code-hair); }
 main > article > section pre { position: relative; overflow-x: auto; padding: 1em 1.1em; margin: 0 0 1.4rem; background: var(--code-bg); border: 1px solid var(--code-hair); border-radius: 11px; font-size: .85em; line-height: 1.55; }
 main > article > section pre code { background: none; padding: 0; border: 0; font-size: inherit; }
@@ -751,9 +752,11 @@ main > article > section blockquote > menu:focus-within { opacity: 1; }
 /* footnote refs, right-margin sidenotes, and the bottom footnote list.
    Two modes switch on <html data-sn>: with room JS clones each note into a
    right-margin .sn and hides the bottom list; otherwise the bottom list shows
-   (also the no-JS default — no data-sn attribute). */
-main > article > section a.footnote-ref { color: var(--violet); }
-main > article > section a.footnote-ref sup { font: 650 .72em var(--sans); line-height: 0; }
+   (also the no-JS default — no data-sn attribute). Two engine shapes are
+   served: comrak's <sup class="footnote-ref"><a> with .footnote-backref, and
+   Pandoc's <a class="footnote-ref"><sup> with .footnote-back. */
+main > article > section :is(a.footnote-ref, sup.footnote-ref > a) { color: var(--violet); }
+main > article > section :is(a.footnote-ref sup, sup.footnote-ref) { font: 650 .72em var(--sans); line-height: 0; }
 
 main > article .sn { display: none; }
 html[data-sn="margin"] main > article .sn {
@@ -780,10 +783,28 @@ main > article .footnotes li { margin: 0; border-radius: 6px; padding: .1rem .4r
 main > article .footnotes li::marker { color: var(--violet); font: 650 .85em var(--sans); }
 main > article .footnotes li.lit { background: var(--violet-soft); }
 main > article .footnotes li p { margin: 0; }
-main > article .footnotes .footnote-back { margin-left: .35em; }
+main > article .footnotes :is(.footnote-back, .footnote-backref) { margin-left: .35em; }
 @media (prefers-reduced-motion: reduce) {
   html[data-sn="margin"] main > article .sn, main > article .footnotes li { transition: none; }
 }
+
+/* GitHub-style alerts (> [!NOTE]) from comrak and Asciidoctor admonitions
+   (NOTE: ...) share one look: a violet bar, a small caps label. Asciidoctor
+   lays its admonition out as a two-cell table, flattened here. */
+main > article > section :is(.markdown-alert, .admonitionblock) {
+  margin: 1.8rem 0; padding-left: 1.2rem; border-left: 2px solid var(--violet);
+}
+main > article > section :is(.markdown-alert-title, .admonitionblock .title) {
+  margin: 0 0 .3rem; font: 500 .74rem var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--faint);
+}
+main > article > section .markdown-alert > p:last-child { margin-bottom: 0; }
+main > article > section .admonitionblock table { display: block; width: auto; margin: 0; font-size: inherit; }
+main > article > section .admonitionblock :is(tbody, tr, td) { display: block; padding: 0; border: 0; }
+
+/* Asciidoctor tables carry alignment as classes, not attributes */
+main > article > section :is(th, td).halign-center { text-align: center; }
+main > article > section :is(th, td).halign-right { text-align: right; }
+main > article > section p.tableblock { margin: 0; }
 
 /* mini-TOC — JS-injected after the h1 when the post has >= 3 sections */
 main > article #toc { margin: 0 0 1.6rem; font: .8rem var(--sans); color: var(--faint); }
@@ -935,7 +956,8 @@ main > article > aside[data-notice="danger"] > code {
   background: color-mix(in oklab, #e5484d 22%, transparent);
 }
 
-/* ---------- Pandoc Skylighting: kate (light) + breezedark (dark) ---------- */
+/* ---------- code tokens: kate (light) + breezedark (dark) palettes on the
+   Skylighting class names, which src/highlight.rs emits for every engine ---------- */
 :root {
   --hl-keyword: #1f1c1b; --hl-keyword-weight: 700; --hl-datatype: #0057ae;
   --hl-function: #644a9b; --hl-string: #bf0303; --hl-char: #924c9d;
@@ -1301,20 +1323,23 @@ pub const JS: &str = r##"
     var reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
     var behave = function () { return reduced.matches ? "auto" : "smooth"; };
 
-    /* two-mode footnotes: clone pandoc's bottom footnote list into right-margin
-       .sn spans (shown only when there's room — see updateSidenotes). Pairing is
-       positional: the Nth ref pairs with the Nth <li> / .sn. URL stays clean. */
+    /* two-mode footnotes: clone the engine's bottom footnote list into
+       right-margin .sn spans (shown only when there's room — see
+       updateSidenotes). Pairing is positional: the Nth ref pairs with the Nth
+       <li> / .sn. URL stays clean. Both engine shapes are handled: comrak's
+       sup.footnote-ref > a / .footnote-backref and Pandoc's a.footnote-ref /
+       .footnote-back. */
     function buildFootnotes(post) {
       var fnSection = post.querySelector(".footnotes");
       if (!fnSection) return;
-      var refs = post.querySelectorAll("a.footnote-ref");
+      var refs = post.querySelectorAll("a.footnote-ref, sup.footnote-ref > a");
       var items = fnSection.querySelectorAll("ol > li");
       var sns = [];
       items.forEach(function (li, i) {
         var ref = refs[i];
         if (!ref) { sns.push(null); return; }
         var clone = li.cloneNode(true);
-        var back = clone.querySelector(".footnote-back");
+        var back = clone.querySelector(".footnote-back, .footnote-backref");
         if (back) back.remove();
         var lone = clone.children.length === 1 && clone.firstElementChild.tagName === "P"
           ? clone.firstElementChild : null;
@@ -1344,7 +1369,7 @@ pub const JS: &str = r##"
         });
       });
       fnSection.addEventListener("click", function (e) {
-        var back = e.target.closest(".footnote-back");
+        var back = e.target.closest(".footnote-back, .footnote-backref");
         if (!back) return;
         e.preventDefault();
         var li = back.closest("li");

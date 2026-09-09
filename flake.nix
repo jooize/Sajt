@@ -19,6 +19,11 @@
         devShells.default = pkgs.mkShell {
           buildInputs = [
             rust
+            # Asciidoctor renders .adoc posts as a helper subprocess in its
+            # secure safe mode (src/render.rs). Pandoc is the optional helper
+            # for .rst/.org/.tex; Markdown renders in-process with comrak and
+            # needs neither.
+            pkgs.asciidoctor
             pkgs.pandoc
             # libvips: transcodes formats we cannot segment-strip in pure Rust
             # (HEIC/HEIF/TIFF/AVIF/GIF/BMP) into a clean JPEG, and generates

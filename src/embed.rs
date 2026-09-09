@@ -2438,7 +2438,7 @@ pub fn expand_inline_embeds(html: &str, cache: &HashMap<PathBuf, EmbedData>) -> 
         let text: String = el.text().collect();
         let text = text.trim();
 
-        // Only replace when the link text IS the URL (bare URL auto-linked by Pandoc)
+        // Only replace when the link text IS the URL (a bare URL the engine autolinked)
         if text == href {
             if let Some(embed_data) = url_lookup.get(href) {
                 if !embed_data.is_upstream_deleted() {

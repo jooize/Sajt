@@ -8,12 +8,12 @@
 //!
 //! Trust model — two distinct contexts:
 //!
-//! * [`body`] — the rendered post body. pandoc turns the author's Markdown/RST/…
-//!   into HTML, but pandoc passes *raw* embedded HTML straight through (its
-//!   `-raw_html` reader extension is a no-op in pandoc 3.7), so a dropped-in
-//!   `<script>` would otherwise reach the trusted origin. `body` strips every
-//!   script vector while preserving the structural markup the page relies on
-//!   (syntax-highlight `class`es, footnote/​heading `id`s, table alignment).
+//! * [`body`] — the rendered post body. Every engine (comrak for Markdown,
+//!   Asciidoctor, Pandoc) passes the author's *raw* embedded HTML through to
+//!   its output, so a dropped-in `<script>` would otherwise reach the trusted
+//!   origin. `body` strips every script vector while preserving the structural
+//!   markup the page relies on (syntax-highlight `class`es, footnote/​heading
+//!   `id`s, table alignment, `lang`/`dir` for a passage in another language).
 //!
 //! * [`oembed`] — third-party embed HTML fetched from Twitter/Bluesky/Mastodon.
 //!   This is the least-trusted input we render, so it gets a *tight* allowlist:
@@ -22,22 +22,42 @@
 //!
 //! Neither policy permits inline `style`, `<style>`, `<iframe>`, event handlers,
 //! or `javascript:`/`data:` URLs, so both are clean under a strict CSP
-//! (`script-src 'self'; style-src 'self'`). Table alignment — the one piece of
-//! pandoc output that arrives as an inline `style` — is rewritten to a
-//! `data-align` attribute before sanitizing (see [`rewrite_table_align`]) so the
-//! external stylesheet can honor it without any inline style surviving.
+//! (`script-src 'self'; style-src 'self'`). Table alignment — which Pandoc
+//! emits as an inline `style` and comrak as a legacy `align` attribute — is
+//! rewritten to a `data-align` attribute before sanitizing (see
+//! [`rewrite_table_align`]) so the external stylesheet can honor it without any
+//! inline style surviving.
 
 use ammonia::Builder;
 use std::sync::LazyLock;
 
-/// Allowlist for rendered post bodies: pandoc's structural output survives,
-/// every script vector is removed. Built once and shared (`clean` takes `&self`).
+/// Allowlist for rendered post bodies: the engines' structural output
+/// survives, every script vector is removed. Built once and shared (`clean`
+/// takes `&self`).
 static BODY: LazyLock<Builder<'static>> = LazyLock::new(|| {
     let mut b = Builder::default();
-    // Pandoc leans on `class` (syntax highlighting, footnotes) and `id`
+    // The engines lean on `class` (syntax highlighting, footnotes) and `id`
     // (heading anchors, footnote targets); keep them. They carry no script.
-    b.add_generic_attributes(["class", "id"]);
-    // Table cell alignment, rewritten out of inline `style` into `data-align`.
+    // `lang` and `dir` mark a passage in another language or direction
+    // (DESIGN.md "Languages"); `dir` is checked to its three keywords below.
+    b.add_generic_attributes(["class", "id", "lang", "dir"]);
+    b.attribute_filter(|_element, attribute, value| match attribute {
+        "dir" if !matches!(value, "ltr" | "rtl" | "auto") => None,
+        _ => Some(value.into()),
+    });
+    // ammonia's default tag list stops at HTML4-era structure: `<section>`
+    // (the engines' footnote list, which the sidenote script keys on) must be
+    // added by hand. A task-list checkbox is the one `<input>` allowed, and
+    // only as a disabled checkbox: `type` is pinned to that value, no name,
+    // no form, so it can neither submit nor take input.
+    b.add_tags(["section", "input"]);
+    b.add_tag_attributes("input", ["type", "checked", "disabled"]);
+    b.add_tag_attribute_values("input", "type", ["checkbox"]);
+    // Internal links (footnote refs, heading anchors) stay bare: the outbound
+    // guard is what adds `rel="noreferrer"`, and only to external links.
+    b.link_rel(None);
+    // Table cell alignment, rewritten out of inline `style` / `align` into
+    // `data-align`.
     b.add_tag_attributes("td", ["data-align"]);
     b.add_tag_attributes("th", ["data-align"]);
     // Pixel image sizing arrives as plain attributes (CSP-clean); keep them.
@@ -63,7 +83,7 @@ static OEMBED: LazyLock<Builder<'static>> = LazyLock::new(|| {
     b
 });
 
-/// Sanitize a rendered post body (pandoc output) for the trusted page shell.
+/// Sanitize a rendered post body (engine output) for the trusted page shell.
 pub fn body(html: &str) -> String {
     let prepared = rewrite_table_align(html);
     BODY.clean(&prepared).to_string()
@@ -74,15 +94,21 @@ pub fn oembed(html: &str) -> String {
     OEMBED.clean(html).to_string()
 }
 
-/// Rewrite pandoc's table-cell alignment from an inline `style` (which a strict
-/// `style-src 'self'` would refuse to apply) into a `data-align` attribute the
-/// external stylesheet targets. Pandoc's output for aligned cells is exactly
-/// ` style="text-align: <dir>;"`, so a precise substring swap is deterministic;
-/// the `table_align_rewrite` test pins the format against pandoc upgrades.
+/// Rewrite table-cell alignment into the `data-align` attribute the external
+/// stylesheet targets: Pandoc emits exactly ` style="text-align: <dir>;"`
+/// (which a strict `style-src 'self'` would refuse to apply), comrak the
+/// legacy ` align="<dir>"`. Both swaps are exact substrings, so the rewrite
+/// is deterministic; the `table_align_rewrite` test pins the formats against
+/// engine upgrades. The attribute is only kept on `td`/`th` (allowlist above),
+/// so a stray match elsewhere in raw HTML simply disappears.
 fn rewrite_table_align(html: &str) -> String {
-    html.replace(" style=\"text-align: left;\"", " data-align=\"left\"")
-        .replace(" style=\"text-align: center;\"", " data-align=\"center\"")
-        .replace(" style=\"text-align: right;\"", " data-align=\"right\"")
+    let mut out = html.to_string();
+    for dir in ["left", "center", "right"] {
+        out = out
+            .replace(&format!(" style=\"text-align: {dir};\""), &format!(" data-align=\"{dir}\""))
+            .replace(&format!(" align=\"{dir}\""), &format!(" data-align=\"{dir}\""));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -120,14 +146,37 @@ mod tests {
 
     #[test]
     fn table_align_rewrite() {
-        // The exact shape pandoc 3.7 emits for aligned cells (cells must sit in a
-        // real table or the HTML parser foster-parents them away).
+        // The exact shapes Pandoc 3.7 and comrak emit for aligned cells (cells
+        // must sit in a real table or the HTML parser foster-parents them away).
         let input = r#"<table><thead><tr><th style="text-align: left;">L</th></tr></thead><tbody><tr><td style="text-align: right;">R</td><td style="text-align: center;">C</td></tr></tbody></table>"#;
         let out = body(input);
         assert!(out.contains(r#"data-align="left""#), "{out}");
         assert!(out.contains(r#"data-align="right""#), "{out}");
         assert!(out.contains(r#"data-align="center""#), "{out}");
         assert!(!out.contains("text-align"), "inline align style gone: {out}");
+
+        let comrak = r#"<table><thead><tr><th align="left">L</th></tr></thead><tbody><tr><td align="right">R</td></tr></tbody></table><p align="center">x</p>"#;
+        let out = body(comrak);
+        assert!(out.contains(r#"<th data-align="left">"#), "{out}");
+        assert!(out.contains(r#"<td data-align="right">"#), "{out}");
+        assert!(out.contains("<p>x</p>"), "no alignment attribute survives on a paragraph: {out}");
+    }
+
+    #[test]
+    fn footnote_section_and_task_checkbox_survive_internal_links_stay_bare() {
+        let out = body(r##"<p>x<sup class="footnote-ref"><a href="#fn-1" id="fnref-1">1</a></sup></p><section class="footnotes"><ol><li id="fn-1"><p>n</p></li></ol></section><ul><li><input type="checkbox" checked="" disabled="" /> done</li></ul><input type="text" name="q"><input type="checkbox" onclick="x()">"##);
+        assert!(out.contains(r#"<section class="footnotes">"#), "{out}");
+        assert!(out.contains(r##"<a href="#fn-1" id="fnref-1">1</a>"##), "no rel on a fragment link: {out}");
+        assert!(out.contains(r#"<input type="checkbox" checked="" disabled="">"#), "{out}");
+        assert!(out.contains("<input> <input type=\"checkbox\">") || !out.contains("name="), "type pinned, no name: {out}");
+        assert!(!out.contains("onclick"), "{out}");
+    }
+
+    #[test]
+    fn language_and_direction_survive_direction_is_validated() {
+        let out = body(r#"<p lang="sv" dir="rtl">hej</p><span dir="sideways" lang="x-y">a</span>"#);
+        assert!(out.contains(r#"<p lang="sv" dir="rtl">hej</p>"#), "{out}");
+        assert!(out.contains(r#"<span lang="x-y">a</span>"#), "bogus dir dropped: {out}");
     }
 
     #[test]

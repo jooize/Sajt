@@ -575,26 +575,41 @@ feeding both `kind()` and the render path, closing the old gap where a
 (`README`) is `text` when UTF-8-decodable (rendered preformatted), else an
 opaque `file`.
 
-- **CommonMark** (`.md`) — Pandoc `commonmark_x`, as today. Bare URLs on their
-  own line expand to rich embed cards via the existing embed system (YouTube,
-  Bluesky, Mastodon, App Store, generic OpenGraph…). That *is* the Markdown
-  equivalent of `video::…[youtube]` — paste the URL, get the player/card.
-- **AsciiDoc** (`.adoc`) — **DECIDED 2026-07-03: render with Asciidoctor**,
-  not Pandoc. Pandoc has **no AsciiDoc reader** (verified: absent from
-  `pandoc --list-input-formats`; the current `"adoc" => "asciidoc"` mapping in
-  `src/render.rs` errors at runtime). Asciidoctor natively supports
-  `video::RvRhUHTV_8k[youtube]`, `video::file.mp4[width=640,start=60,opts=autoplay]`,
-  admonitions, includes, and source highlighting. Ship it in the Nix dev shell
-  alongside Pandoc; invoke like Pandoc is invoked today (sandboxed, semaphore,
-  timeout, `--safe-mode=secure`).
-- **Syntax highlighting** — one visual system across both engines: Pandoc's
-  kate/breezedark token classes are already themed with CSS custom properties;
-  map Asciidoctor's Rouge/Pygments classes onto the same custom properties so
-  code looks identical regardless of source format.
-- Everything else as today: `.rst`/`.org`/`.tex` via Pandoc, `.html`
-  passthrough, `.txt` in `<pre>`, images in viewer, `.prompt` via Claude API,
-  other files as downloads. (The old `.link` extension is **retired** — a link
-  is now the `link_url` axis below, not a special format.)
+- **CommonMark** (`.md`) — **comrak, in-process (SHIPPED 2026-09-09, v0.38.0;
+  replaces Pandoc `commonmark_x`)**. No subprocess and no external dependency
+  for the common case. The extension set mirrors what `commonmark_x` gave
+  posts: tables, footnotes, strikeout, task lists, definition lists,
+  super/subscript, `$` math, `:emoji:` codes, GitHub alerts (`> [!NOTE]`),
+  autolinked bare URLs, smart punctuation, implicit figures (an image alone in
+  its paragraph becomes a `<figure>` captioned by its alt text). Heading ids
+  come from the site's own slug recipe (`slug.rs`), the one the in-page anchor
+  script mirrors, so `#section` links resolve without JavaScript. Bare URLs on
+  their own line expand to rich embed cards via the existing embed system
+  (YouTube, Bluesky, Mastodon, App Store, generic OpenGraph…). That *is* the
+  Markdown equivalent of `video::…[youtube]` — paste the URL, get the
+  player/card.
+- **AsciiDoc** (`.adoc`) — **Asciidoctor as a helper subprocess (SHIPPED
+  2026-09-09)**, in its `secure` safe mode: no includes, no file access (an
+  `include::` degrades to a dead link, verified), invoked like the other
+  helpers (concurrency cap, wall-clock timeout, stdin/stdout). Pandoc was
+  never an option: it has **no AsciiDoc reader**, so `.adoc` had never worked.
+  Asciidoctor natively supports `video::RvRhUHTV_8k[youtube]`, admonitions,
+  and source blocks; its footnotes use its own markup (`sup.footnote`,
+  `#footnotes`), which the sidenote script does not yet pair (residual).
+- **Syntax highlighting — one highlighter for every format (SHIPPED
+  2026-09-09).** `src/highlight.rs` tokenizes fenced code with syntect
+  (pure-Rust regexes, no C library) and emits the kate token classes the
+  stylesheet already themes (`kw`, `dt`, `fu`, `st`, `co`, …) in the
+  `<div class="sourceCode"><pre class="sourceCode X">` shape. It runs as a
+  post-pass over engine output, so comrak's and Asciidoctor's
+  `<pre><code class="language-X">` blocks come out identical; Pandoc emits
+  that markup itself. Unknown languages get the wrapper unhighlighted;
+  blocks over 256 KB are escaped, not tokenized.
+- Everything else as today: `.rst`/`.org`/`.tex` via Pandoc as an **optional**
+  helper (absent, only those formats fail, with a message naming the tool),
+  `.html` passthrough, `.txt` in `<pre>`, images in viewer, `.prompt` via
+  Claude API, other files as downloads. (The old `.link` extension is
+  **retired** — a link is now the `link_url` axis below, not a special format.)
 
 ### Languages (DECIDED 2026-09-09, not yet built; lands before or with the comrak port)
 
@@ -718,16 +733,18 @@ it durably. v0.12.0 does, in five commits (S2.1–S2.4 + tiers).
 origin.** Every serving mode below jails it in an opaque origin, so choosing a
 mode is never a security decision. What shipped:
 
-- **Author HTML sanitized at the source with `ammonia`, NOT a pandoc flag.**
+- **Author HTML sanitized at the source with `ammonia`, NOT an engine flag.**
   Pandoc 3.7's `-raw_html` reader extension is a **no-op** — `commonmark-raw_html`
   (and `gfm`/`commonmark_x` variants) still emit `<script>`/`on*`/`javascript:`
-  verbatim (verified). So instead of trusting a reader flag, every pandoc *output*
+  verbatim (verified), and comrak is run with raw HTML deliberately passed
+  through. So instead of trusting a reader flag, every engine *output*
   (markdown/rst/adoc/org/tex → `RenderedContent::Html`) is run through
   `sanitize::body` (`src/sanitize.rs`, ammonia/html5ever): scripts, event
   handlers, `<iframe>`, `<style>`, inline `style=`, and unsafe-scheme URLs are
-  stripped, while the structural markup pandoc relies on (syntax-highlight
-  classes, footnote/heading ids) is kept. Table alignment — pandoc's one inline
-  style — is rewritten to a `data-align` attribute first. This is strictly better
+  stripped, while the structural markup the engines rely on (syntax-highlight
+  classes, footnote/heading ids, `<section>`, a disabled task-list checkbox,
+  `lang`/`dir`) is kept. Table alignment — Pandoc's one inline style, comrak's
+  legacy `align` attribute — is rewritten to a `data-align` attribute first. This is strictly better
   than a per-format flag (parser-based, no denylist gaps, format-agnostic) and
   the strict CSP below is still the backstop. `.html`/`.htm` is the **one**
   deliberate raw surface — and it is jailed (next point).
@@ -840,8 +857,8 @@ Reference realizations: `static/timeline-glass-mockup.html` (rows) and
   provides — no share buttons either.
 - **Sidenotes (right)** — footnotes render as Tufte-style margin notes when
   there is room, inline note blocks otherwise. Authors just write standard
-  footnote syntax; a Pandoc Lua filter / Asciidoctor postprocess does the
-  rest.
+  footnote syntax; the entry-page script clones the engine's footnote list
+  into the margin (comrak and Pandoc shapes both; Asciidoctor pending).
 - **Heading anchors (left)** — a `#` appears in the left margin on
   hover/focus of a heading, linking to it. **DECIDED (direction)
   2026-07-03: the left margin stays otherwise empty** — anchors are the only
@@ -1002,10 +1019,11 @@ Reference realizations: `static/timeline-glass-mockup.html` (rows) and
   combinators) in real templates; `color-scheme: light dark` with custom
   properties; plain-value fallbacks before modern functions so old browsers
   degrade to a readable page. **Class exceptions** (the only classes the
-  templates use — JS state, JS-injected markup, or pandoc output):
+  templates use — JS state, JS-injected markup, or engine output):
   `.selected`, `.near`, `.anchor`, `.sn`, `.lit`, `.backref`, `.pill`
-  (JS-driven state or JS-injected) and pandoc's `.footnote-ref` /
-  `.footnote-back` / `.sourceCode` / `.footnotes` (renderer output).
+  (JS-driven state or JS-injected) and the engines' `.footnote-ref` /
+  `.footnote-back(ref)` / `.footnotes` / `.sourceCode` / `.markdown-alert` /
+  Asciidoctor's `.admonitionblock`, `.halign-*` (renderer output).
 
 ## Smart features
 
@@ -1116,8 +1134,9 @@ Developer ID + notarization stays open until then.
    fallback), primary-file resolution, and asset URLs all serve. Remaining
    polish: `.prompt` bundle generation and auto gallery/listing for a folder
    with no primary.
-3. **AsciiDoc via Asciidoctor** — fix the broken `.adoc` path; unified
-   highlight theming; `video::` works.
+3. **AsciiDoc via Asciidoctor** — **DONE 2026-09-09** (v0.38.0, with the
+   comrak port of Markdown and the shared syntect highlighter; see
+   "Authoring formats").
 4. **Port the plain design** — entry pages from `entry-page-mockup.html`
    (plain body, way back to root, sidenotes filter, anchors, reader width,
    quote/code actions, continue-reading) and the timeline from
