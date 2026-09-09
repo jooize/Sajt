@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn fenced_code_is_highlighted_in_the_shared_markup() {
         let html = to_html("```rust\nfn main() {}\n```\n\n```\nplain\n```\n");
-        assert!(html.contains(r#"<div class="sourceCode"><pre class="sourceCode rust"><code class="sourceCode rust"><span class="kw">fn</span>"#), "{html}");
+        assert!(html.contains(r#"<div class="sourceCode"><pre class="sourceCode rust"><code class="sourceCode rust"><span><span class="kw">fn</span>"#), "{html}");
         assert!(html.contains("<pre><code>plain\n</code></pre>"), "{html}");
     }
 

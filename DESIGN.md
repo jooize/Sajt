@@ -615,7 +615,11 @@ opaque `file`.
   post-pass over engine output, so comrak's and Asciidoctor's
   `<pre><code class="language-X">` blocks come out identical. Unknown
   languages get the wrapper unhighlighted; blocks over 256 KB are escaped,
-  not tokenized.
+  not tokenized. Every line is a bare `<span>` child of `<code>` holding its
+  tokens and its own line end (the fence newline dropped), so the stylesheet
+  gives the line under the pointer a faint full-width row without a class
+  (`pre > code > span:hover`); a bare unlabeled `<pre><code>` block is left
+  untouched and has no rows.
 - **Pandoc is gone (DECIDED 2026-09-09, v0.39.0).** It had been kept as an
   optional helper for `.rst`/`.org`/`.tex` only. More formats are a later
   exploration, each with its own engine and the same three post-passes.
@@ -889,15 +893,18 @@ Reference realizations: `static/timeline-glass-mockup.html` (rows) and
   margin. Very long entries only (threshold: several `h2`s / long reading
   time) get a collapsed "On this page" disclosure; short entries never show
   it. Collapsed by default, plain text links, no scroll-spy machinery.
-- **Reader-adjustable width (edge line, DECIDED 2026-09-09)** — a hairline
-  down the right edge of the content column, from the top of `<main>` to its
-  foot, grabbable anywhere along it; a short violet marker rides under the
-  pointer. It scrolls with the page like any rule (the earlier two-bar grip
-  was fixed to the viewport's middle and followed the reader, which read as
-  furniture). Keyboard: arrows step, Home resets; double-click resets;
-  persisted per site, shared by timeline and post. The script creates the
-  element, since it does nothing without JS. Sidenotes move between margin
-  and inline automatically; they start 3rem out, the line sits at 1rem.
+- **Reader-adjustable width (fading segment, DECIDED 2026-09-09)** — a
+  full-height grab zone down the right edge of the content column, 1.5rem
+  out, that draws nothing at rest. As the pointer nears the edge (56px) a
+  hairline window fades in around the pointer's height, soft over 3rem at
+  both ends, violet on direct hover and while dragging. It scrolls with the
+  page (the earlier two-bar grip was fixed to the viewport's middle and
+  followed the reader; a full-height resting line was tried the same day
+  and fought the timeline's glass rows). Keyboard: arrows step, Home
+  resets; double-click resets; persisted per site, shared by timeline and
+  post. The script creates the element, since it does nothing without JS.
+  Sidenotes move between margin and inline automatically; they start 3rem
+  out, clear of the zone.
 - **Quote actions** — two discreet buttons on blockquote hover/focus:
   **quote** copies the quotation with attribution; **link** copies a deep
   link using a text fragment (`#:~:text=…`) that highlights the passage for

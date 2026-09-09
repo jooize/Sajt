@@ -209,7 +209,11 @@ pub fn highlight(lang: &str, code: &str) -> Option<String> {
         owned = format!("{code}\n");
         &owned
     };
+    // Every line is a bare <span> child of <code> holding its tokens and its
+    // own line end (see `wrap_line`), so the stylesheet can address the line
+    // under the pointer without a class.
     for line in LinesWithEndings::from(source) {
+        out.push_str("<span>");
         let ops = state.parse_line(line, &SYNTAXES).ok()?;
         let mut at = 0;
         for (offset, op) in &ops {
@@ -218,16 +222,32 @@ pub fn highlight(lang: &str, code: &str) -> Option<String> {
             at = *offset;
         }
         emit(&mut out, &mut open, &line[at..], class_for(stack.as_slice()));
-    }
-    if open.is_some() {
+        debug_assert!(open.is_none(), "emit closes the token span at a line end");
         out.push_str("</span>");
     }
-    // The fence's own trailing newline is not content; Pandoc's markup ends
-    // right after the last token and the stylesheet's padding does the rest.
-    if out.ends_with('\n') {
-        out.pop();
+    Some(trim_fence_newline(out))
+}
+
+/// The fence's own trailing newline is not content: the last line's span ends
+/// right after its last token, and the stylesheet's padding does the rest.
+fn trim_fence_newline(mut out: String) -> String {
+    if out.ends_with("\n</span>") {
+        out.truncate(out.len() - "\n</span>".len());
+        out.push_str("</span>");
     }
-    Some(out)
+    out
+}
+
+/// The same per-line shape for a block without a grammar: escaped text, one
+/// bare <span> per line, the line end inside it, the fence newline dropped.
+fn plain_lines(code: &str) -> String {
+    let mut out = String::with_capacity(code.len() + 16);
+    for line in LinesWithEndings::from(code) {
+        out.push_str("<span>");
+        escape(line, &mut out);
+        out.push_str("</span>");
+    }
+    trim_fence_newline(out)
 }
 
 /// Render one code block in the shared markup. `lang` is the fence label as
@@ -243,11 +263,7 @@ fn render_block(lang: &str, code: &str) -> String {
     } else {
         format!("sourceCode {label}")
     };
-    let inner = highlight(lang, code).unwrap_or_else(|| {
-        let mut plain = String::with_capacity(code.len());
-        escape(code.strip_suffix('\n').unwrap_or(code), &mut plain);
-        plain
-    });
+    let inner = highlight(lang, code).unwrap_or_else(|| plain_lines(code));
     format!(
         "<div class=\"sourceCode\"><pre class=\"{class}\"><code class=\"{class}\">{inner}</code></pre></div>"
     )
@@ -397,8 +413,11 @@ mod tests {
         assert!(html.contains(r#"<span class="sc">\n</span>"#), "{html}");
         assert!(html.contains(r#"<span class="co">// note</span>"#), "{html}");
         // Line ends stay outside spans and the fence newline is not content.
-        assert!(!html.contains("\n</span>"), "{html}");
-        assert!(!html.ends_with('\n'), "{html}");
+        // token spans never hold a line end; only the line spans do
+        assert!(!html.contains("\n</span></span>") && !html.contains("\n</span><span class"), "{html}");
+        assert!(html.starts_with("<span><span class=\"kw\">fn</span>"), "{html}");
+        assert_eq!(html.matches("<span>").count(), 3, "one bare span per line: {html}");
+        assert!(html.ends_with("</span></span>") && !html.ends_with("\n</span>"), "fence newline dropped: {html}");
     }
 
     #[test]
@@ -437,11 +456,22 @@ mod tests {
     }
 
     #[test]
-    fn unknown_language_keeps_the_wrapper_without_spans() {
+    fn every_line_is_a_bare_span_holding_its_own_line_end() {
+        // Empty lines keep their span (so the hover row exists), the last line
+        // carries no newline (the fence's own), and it holds with a grammar too.
+        assert_eq!(plain_lines("a\n\nb <c>\n"), "<span>a\n</span><span>\n</span><span>b &lt;c&gt;</span>");
+        assert_eq!(plain_lines("only"), "<span>only</span>");
+        assert_eq!(plain_lines(""), "");
+        let html = highlight("rust", "let a = 1;\n\nlet b = 2;\n").unwrap();
+        assert!(html.contains("</span><span>\n</span><span>"), "empty line span: {html}");
+    }
+
+    #[test]
+    fn unknown_language_keeps_the_wrapper_without_token_spans() {
         let out = code_blocks("<pre><code class=\"language-nosuch\">a &lt; b\n</code></pre>");
         assert_eq!(
             out,
-            r#"<div class="sourceCode"><pre class="sourceCode nosuch"><code class="sourceCode nosuch">a &lt; b</code></pre></div>"#
+            r#"<div class="sourceCode"><pre class="sourceCode nosuch"><code class="sourceCode nosuch"><span>a &lt; b</span></code></pre></div>"#
         );
     }
 

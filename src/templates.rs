@@ -99,46 +99,47 @@ main {
 }
 
 /* ---------- reading-width handle (both pages) ----------
-   A hairline down the right edge of the column, from the top of <main> to its
-   foot, grabbable anywhere along its length (16px hit zone). A short violet
-   marker rides under the pointer so the grab point is visible. The script
-   creates it (it does nothing without JS), so the markup only exists when it
-   works. Sidenotes start 3rem out; the line sits at 1rem, clear of them. */
+   A full-height grab zone (16px) down the right edge of <main>, 1.5rem out,
+   drawing NOTHING at rest. As the pointer nears the edge a hairline window
+   fades in around the pointer's height (--grip-y), soft over 3rem at both
+   ends, and turns violet on direct hover. The script creates the element
+   (it does nothing without JS). Sidenotes start 3rem out, clear of the zone. */
 
 #grip {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: -1rem;
-  width: 1px;
-  background: var(--hair);
+  right: -1.5rem;
+  width: 16px;
   cursor: col-resize;
   touch-action: none;
   z-index: 5;
-  transition: background .15s ease;
 }
-#grip::before { content: ""; position: absolute; inset: 0 -8px; }
 #grip::after {
   content: "";
   position: absolute;
-  left: -1px;
-  top: var(--grip-y, 50%);
-  translate: 0 -50%;
-  width: 3px;
-  height: 2.4rem;
-  border-radius: 999px;
-  background: var(--violet);
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  translate: -50% 0;
+  width: 1px;
+  background: var(--hair);
   opacity: 0;
-  transition: opacity .15s ease;
+  transition: opacity .18s ease, background .15s ease;
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent calc(var(--grip-y, 50%) - 5.5rem), #000 calc(var(--grip-y, 50%) - 2.5rem),
+    #000 calc(var(--grip-y, 50%) + 2.5rem), transparent calc(var(--grip-y, 50%) + 5.5rem));
+  mask-image: linear-gradient(to bottom,
+    transparent calc(var(--grip-y, 50%) - 5.5rem), #000 calc(var(--grip-y, 50%) - 2.5rem),
+    #000 calc(var(--grip-y, 50%) + 2.5rem), transparent calc(var(--grip-y, 50%) + 5.5rem));
 }
-#grip:hover,
-#grip:focus-visible,
-#grip.active { background: color-mix(in oklab, var(--hair), var(--violet) 45%); }
+#grip.near::after { opacity: .7; }
 #grip:hover::after,
 #grip:focus-visible::after,
-#grip.active::after { opacity: 1; }
+#grip.active::after { opacity: 1; background: var(--violet); }
+#grip.active::after { width: 2px; }
 #grip:focus-visible { outline: none; }
-@media (prefers-reduced-motion: reduce) { #grip, #grip::after { transition: none; } }
+@media (prefers-reduced-motion: reduce) { #grip::after { transition: none; } }
 @media (max-width: 56rem) { #grip { display: none; } }
 
 #readout {
@@ -698,6 +699,11 @@ main > article > section pre { position: relative; overflow-x: auto; padding: 1e
 main > article > section pre code { background: none; padding: 0; border: 0; font-size: inherit; }
 main > article > section div.sourceCode { position: relative; margin: 0 0 1.4rem; }
 main > article > section div.sourceCode > pre { margin: 0; }
+/* the line under the pointer gets a faint full-width row (GitBook-style): the
+   highlighter wraps every line in a bare <span> child of <code>, tokens nested
+   inside. The row bleeds into the block's padding so it reads edge to edge. */
+main > article > section pre > code > span { display: block; width: max-content; min-width: calc(100% + 2.2em); margin: 0 -1.1em; padding: 0 1.1em; }
+main > article > section pre > code > span:hover { background: var(--violet-soft); }
 /* A plain-text post (txt, and rst/org/tex until they get an engine) is the file
    as written: monospace so hand-made tables and aligned columns survive, line
    breaks kept, long lines wrapped, but no box and no code styling. The article
@@ -1321,6 +1327,18 @@ pub const JS: &str = r##"
     };
     grip.addEventListener("pointerup", release);
     grip.addEventListener("pointercancel", release);
+    /* proximity: the window fades in as the pointer nears the edge, from
+       anywhere on the page, before it is over the zone itself */
+    document.addEventListener("pointermove", function (e) {
+      if (dragging) return;
+      var r = grip.getBoundingClientRect();
+      var dx = Math.max(r.left - e.clientX, e.clientX - r.right, 0);
+      if (r.width && dx < 56 && e.clientY >= r.top && e.clientY <= r.bottom) {
+        grip.classList.add("near"); markAt(e.clientY);
+      } else {
+        grip.classList.remove("near");
+      }
+    }, { passive: true });
     /* keyboard: the marker sits at the middle of the visible part of the line */
     grip.addEventListener("focus", function () {
       var r = grip.getBoundingClientRect();
