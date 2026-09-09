@@ -621,8 +621,9 @@ opaque `file`.
   exploration, each with its own engine and the same three post-passes.
 - **Plain-text posts (v0.40.0).** `.txt`, and `.rst`/`.org`/`.tex` until each
   gets an engine, are posts shown as written: HTML-escaped at the sink
-  (`templates::Body::Plain`), set in the body face with line breaks kept
-  (`article[data-body="plain"]`), never as a code block. Their raw URL is
+  (`templates::Body::Plain`), set monospace with line breaks kept and long
+  lines wrapped (`article[data-body="plain"]`), so hand-made tables survive,
+  but without the code-block box. Their raw URL is
   served `text/plain; charset=utf-8` outright (the MIME guess table would
   make a browser save them), so the source opens in the browser. One
   predicate, `entry::is_plain_text_ext`, drives the medium (`text`), the

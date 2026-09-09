@@ -699,10 +699,11 @@ main > article > section pre code { background: none; padding: 0; border: 0; fon
 main > article > section div.sourceCode { position: relative; margin: 0 0 1.4rem; }
 main > article > section div.sourceCode > pre { margin: 0; }
 /* A plain-text post (txt, and rst/org/tex until they get an engine) is the file
-   as written: prose in the body face with its line breaks kept, not a code
-   block. The article carries data-body="plain" (templates::Body::Plain). */
+   as written: monospace so hand-made tables and aligned columns survive, line
+   breaks kept, long lines wrapped, but no box and no code styling. The article
+   carries data-body="plain" (templates::Body::Plain). */
 main > article[data-body="plain"] > section > pre {
-  font: inherit; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: .85em/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
   padding: 0; margin: 0; border: 0; border-radius: 0; background: none; overflow: visible;
 }
 
