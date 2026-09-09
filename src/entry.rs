@@ -259,7 +259,7 @@ impl Entry {
             _ if is_html_document(&self.extension) => "html",
             // md/txt and friends differ in *rendering* (formatted vs preformatted),
             // not medium — all poured into the site shell.
-            "md" | "txt" | "rst" | "org" | "adoc" | "tex" => "text",
+            "md" | "txt" | "adoc" => "text",
             // Dotless bare files (README, LICENSE): UTF-8-decodable → text
             // (rendered preformatted), else an opaque download. Only a folder is
             // ever `folder` (a listing — see §6).

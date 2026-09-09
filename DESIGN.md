@@ -594,22 +594,36 @@ opaque `file`.
   helpers (concurrency cap, wall-clock timeout, stdin/stdout). Pandoc was
   never an option: it has **no AsciiDoc reader**, so `.adoc` had never worked.
   Asciidoctor natively supports `video::RvRhUHTV_8k[youtube]`, admonitions,
-  and source blocks; its footnotes use its own markup (`sup.footnote`,
-  `#footnotes`), which the sidenote script does not yet pair (residual).
+  and source blocks. Absent, only `.adoc` posts fail, with a message naming
+  the tool.
+- **Footnotes — one shape for every format (SHIPPED 2026-09-09, v0.39.0).**
+  comrak emits the GitHub shape (`sup.footnote-ref > a[href="#fn-N"]`,
+  `section.footnotes > ol > li#fn-N`, `a.footnote-backref`); Asciidoctor has
+  its own (`sup.footnote`, `div#footnotes`). `src/footnotes.rs` rewrites the
+  latter into the former as a post-pass, down to comrak's numbering of a note
+  cited twice (`fnref-N-2`, a second back link), so the stylesheet and the
+  sidenote script know one shape. Pairing on the client follows the links
+  (`href` to `id`, scoped to the post), never position, so a repeated
+  citation gets its own sidenote and Continue-appended articles with
+  repeated ids cannot cross-pair. Verified byte-identical to comrak's output
+  for the same notes after sanitizing.
 - **Syntax highlighting — one highlighter for every format (SHIPPED
   2026-09-09).** `src/highlight.rs` tokenizes fenced code with syntect
   (pure-Rust regexes, no C library) and emits the kate token classes the
   stylesheet already themes (`kw`, `dt`, `fu`, `st`, `co`, …) in the
   `<div class="sourceCode"><pre class="sourceCode X">` shape. It runs as a
   post-pass over engine output, so comrak's and Asciidoctor's
-  `<pre><code class="language-X">` blocks come out identical; Pandoc emits
-  that markup itself. Unknown languages get the wrapper unhighlighted;
-  blocks over 256 KB are escaped, not tokenized.
-- Everything else as today: `.rst`/`.org`/`.tex` via Pandoc as an **optional**
-  helper (absent, only those formats fail, with a message naming the tool),
-  `.html` passthrough, `.txt` in `<pre>`, images in viewer, `.prompt` via
-  Claude API, other files as downloads. (The old `.link` extension is
-  **retired** — a link is now the `link_url` axis below, not a special format.)
+  `<pre><code class="language-X">` blocks come out identical. Unknown
+  languages get the wrapper unhighlighted; blocks over 256 KB are escaped,
+  not tokenized.
+- **Pandoc is gone (DECIDED 2026-09-09, v0.39.0).** It had been kept as an
+  optional helper for `.rst`/`.org`/`.tex` only; those extensions are now
+  ordinary files (opaque downloads, kind `file`). More formats are a later
+  exploration, each with its own engine and the same three post-passes.
+- Everything else as today: `.html` passthrough, `.txt` in `<pre>`, images in
+  viewer, `.prompt` via Claude API, other files as downloads. (The old `.link`
+  extension is **retired** — a link is now the `link_url` axis below, not a
+  special format.)
 
 ### Languages (DECIDED 2026-09-09, not yet built; lands before or with the comrak port)
 
@@ -858,7 +872,7 @@ Reference realizations: `static/timeline-glass-mockup.html` (rows) and
 - **Sidenotes (right)** — footnotes render as Tufte-style margin notes when
   there is room, inline note blocks otherwise. Authors just write standard
   footnote syntax; the entry-page script clones the engine's footnote list
-  into the margin (comrak and Pandoc shapes both; Asciidoctor pending).
+  into the margin (one shape for every engine, see "Authoring formats").
 - **Heading anchors (left)** — a `#` appears in the left margin on
   hover/focus of a heading, linking to it. **DECIDED (direction)
   2026-07-03: the left margin stays otherwise empty** — anchors are the only
@@ -1022,7 +1036,7 @@ Reference realizations: `static/timeline-glass-mockup.html` (rows) and
   templates use — JS state, JS-injected markup, or engine output):
   `.selected`, `.near`, `.anchor`, `.sn`, `.lit`, `.backref`, `.pill`
   (JS-driven state or JS-injected) and the engines' `.footnote-ref` /
-  `.footnote-back(ref)` / `.footnotes` / `.sourceCode` / `.markdown-alert` /
+  `.footnote-backref` / `.footnotes` / `.sourceCode` / `.markdown-alert` /
   Asciidoctor's `.admonitionblock`, `.halign-*` (renderer output).
 
 ## Smart features

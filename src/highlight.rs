@@ -308,7 +308,8 @@ struct Block<'a> {
 }
 
 /// The value of `name="..."` inside a tag's attribute text, if present.
-fn attr<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
+/// Shared with the other engine-output post-pass (`footnotes.rs`).
+pub(crate) fn attr<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
     let mut rest = attrs;
     while let Some(i) = rest.find(name) {
         let after = &rest[i + name.len()..];

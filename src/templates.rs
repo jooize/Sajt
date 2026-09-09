@@ -752,11 +752,11 @@ main > article > section blockquote > menu:focus-within { opacity: 1; }
 /* footnote refs, right-margin sidenotes, and the bottom footnote list.
    Two modes switch on <html data-sn>: with room JS clones each note into a
    right-margin .sn and hides the bottom list; otherwise the bottom list shows
-   (also the no-JS default — no data-sn attribute). Two engine shapes are
-   served: comrak's <sup class="footnote-ref"><a> with .footnote-backref, and
-   Pandoc's <a class="footnote-ref"><sup> with .footnote-back. */
-main > article > section :is(a.footnote-ref, sup.footnote-ref > a) { color: var(--violet); }
-main > article > section :is(a.footnote-ref sup, sup.footnote-ref) { font: 650 .72em var(--sans); line-height: 0; }
+   (also the no-JS default — no data-sn attribute). Every engine's footnotes
+   arrive in one shape (footnotes.rs): <sup class="footnote-ref"><a> refs and a
+   <section class="footnotes"> list whose .footnote-backref links point back. */
+main > article > section sup.footnote-ref > a { color: var(--violet); }
+main > article > section sup.footnote-ref { font: 650 .72em var(--sans); line-height: 0; }
 
 main > article .sn { display: none; }
 html[data-sn="margin"] main > article .sn {
@@ -773,7 +773,6 @@ main > article .footnotes {
   margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--hair);
   font: .85rem/1.55 var(--sans); color: var(--soft);
 }
-main > article .footnotes hr { display: none; }
 main > article .footnotes::before {
   content: "Footnotes"; display: block; margin: 0 0 .55rem;
   font: 500 .74rem var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--faint);
@@ -783,7 +782,7 @@ main > article .footnotes li { margin: 0; border-radius: 6px; padding: .1rem .4r
 main > article .footnotes li::marker { color: var(--violet); font: 650 .85em var(--sans); }
 main > article .footnotes li.lit { background: var(--violet-soft); }
 main > article .footnotes li p { margin: 0; }
-main > article .footnotes :is(.footnote-back, .footnote-backref) { margin-left: .35em; }
+main > article .footnotes .footnote-backref { margin-left: .35em; }
 @media (prefers-reduced-motion: reduce) {
   html[data-sn="margin"] main > article .sn, main > article .footnotes li { transition: none; }
 }
@@ -1325,41 +1324,41 @@ pub const JS: &str = r##"
 
     /* two-mode footnotes: clone the engine's bottom footnote list into
        right-margin .sn spans (shown only when there's room — see
-       updateSidenotes). Pairing is positional: the Nth ref pairs with the Nth
-       <li> / .sn. URL stays clean. Both engine shapes are handled: comrak's
-       sup.footnote-ref > a / .footnote-backref and Pandoc's a.footnote-ref /
-       .footnote-back. */
+       updateSidenotes). URL stays clean. Every engine's footnotes arrive in
+       one shape (footnotes.rs): sup.footnote-ref > a[href="#fn-N"] cites
+       li#fn-N, and the list's a.footnote-backref links point back at the
+       ref's id. Pairing follows those links, so a note cited twice gets a
+       sidenote at each citation. Ids are matched inside the post, never
+       document-wide: articles appended by Continue repeat them. */
     function buildFootnotes(post) {
       var fnSection = post.querySelector(".footnotes");
       if (!fnSection) return;
-      var refs = post.querySelectorAll("a.footnote-ref, sup.footnote-ref > a");
-      var items = fnSection.querySelectorAll("ol > li");
-      var sns = [];
-      items.forEach(function (li, i) {
-        var ref = refs[i];
-        if (!ref) { sns.push(null); return; }
-        var clone = li.cloneNode(true);
-        var back = clone.querySelector(".footnote-back, .footnote-backref");
-        if (back) back.remove();
-        var lone = clone.children.length === 1 && clone.firstElementChild.tagName === "P"
-          ? clone.firstElementChild : null;
-        var sn = document.createElement("span");
-        sn.className = "sn";
-        var sup = document.createElement("sup");
-        sup.textContent = String(i + 1);
-        sn.appendChild(sup);
-        var host = document.createElement("span");
-        host.innerHTML = (lone ? lone.innerHTML : clone.innerHTML).trim();
-        sn.appendChild(host);
-        ref.after(sn);
-        sns.push(sn);
-      });
-      refs.forEach(function (ref, i) {
-        var sn = sns[i], li = items[i];
+      var target = function (a) { return (a.getAttribute("href") || "").slice(1); };
+      var items = {}, refsById = {};
+      fnSection.querySelectorAll("ol > li[id]").forEach(function (li) { items[li.id] = li; });
+      post.querySelectorAll("sup.footnote-ref > a[href^='#']").forEach(function (ref) {
+        if (ref.id) refsById[ref.id] = ref;
+        var li = items[target(ref)], sn = null;
+        if (li) {
+          var clone = li.cloneNode(true);
+          clone.querySelectorAll(".footnote-backref").forEach(function (b) { b.remove(); });
+          var lone = clone.children.length === 1 && clone.firstElementChild.tagName === "P"
+            ? clone.firstElementChild : null;
+          sn = document.createElement("span");
+          sn.className = "sn";
+          var sup = document.createElement("sup");
+          sup.textContent = ref.textContent;
+          sn.appendChild(sup);
+          var host = document.createElement("span");
+          host.innerHTML = (lone ? lone.innerHTML : clone.innerHTML).trim();
+          sn.appendChild(host);
+          ref.parentElement.after(sn);
+        }
         ref.addEventListener("click", function (e) {
+          if (!li) return;
           e.preventDefault();
           if (rootEl.dataset.sn === "margin") { if (sn) glow(sn); }
-          else if (li) { li.scrollIntoView({ block: "center", behavior: behave() }); glow(li); }
+          else { li.scrollIntoView({ block: "center", behavior: behave() }); glow(li); }
         });
         ref.addEventListener("mouseenter", function () {
           if (rootEl.dataset.sn === "margin" && sn) sn.classList.add("lit");
@@ -1369,12 +1368,12 @@ pub const JS: &str = r##"
         });
       });
       fnSection.addEventListener("click", function (e) {
-        var back = e.target.closest(".footnote-back, .footnote-backref");
+        var back = e.target.closest(".footnote-backref");
         if (!back) return;
+        var ref = refsById[target(back)];
+        if (!ref) return;
         e.preventDefault();
-        var li = back.closest("li");
-        var i = Array.prototype.indexOf.call(items, li);
-        if (i >= 0 && refs[i]) refs[i].scrollIntoView({ block: "center", behavior: behave() });
+        ref.scrollIntoView({ block: "center", behavior: behave() });
       });
     }
 

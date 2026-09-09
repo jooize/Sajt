@@ -511,7 +511,7 @@ fn extract_excerpt(path: &Path, ext: &str) -> Option<String> {
     const MAX_READ: u64 = 16 * 1024;
     let text_like = matches!(
         ext.to_ascii_lowercase().as_str(),
-        "md" | "markdown" | "txt" | "text" | "adoc" | "asciidoc" | "rst" | "org" | "tex"
+        "md" | "markdown" | "txt" | "text" | "adoc" | "asciidoc"
     );
     if !text_like {
         return None;
@@ -541,7 +541,7 @@ fn extract_h1(path: &Path, ext: &str) -> Option<String> {
     const MAX_READ: u64 = 16 * 1024;
     let text_like = matches!(
         ext.to_ascii_lowercase().as_str(),
-        "md" | "markdown" | "txt" | "text" | "adoc" | "asciidoc" | "rst" | "org" | "tex"
+        "md" | "markdown" | "txt" | "text" | "adoc" | "asciidoc"
     );
     if !text_like {
         return None;

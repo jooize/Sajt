@@ -7,17 +7,15 @@
 //!   no external dependency, the common case.
 //! * AsciiDoc (`.adoc`) -- Asciidoctor as a helper subprocess in its secure
 //!   safe mode (no includes, no file access; an `include::` degrades to a
-//!   dead link). The Nix shell carries it.
-//! * reStructuredText, Org, LaTeX (`.rst`, `.org`, `.tex`) -- Pandoc as an
-//!   optional helper subprocess. Absent, those posts fail to render with a
-//!   message naming the tool; nothing else is affected.
+//!   dead link). The Nix shell carries it. Absent, those posts fail to
+//!   render with a message naming the tool; nothing else is affected.
 //!
-//! Every engine's output goes through the same two steps: fenced code is
-//! highlighted into one markup by `highlight::code_blocks` (Pandoc already
-//! emits that markup itself), and the body is sanitized by `sanitize::body`,
-//! the fail-closed boundary between author markup and the trusted origin.
-//! Helpers run under a concurrency cap and a wall-clock timeout, so a
-//! pathological document cannot pin the server.
+//! Every engine's output ends in one markup and one trust boundary: fenced
+//! code is highlighted by `highlight::code_blocks`, footnotes are brought to
+//! the shared shape by `footnotes::normalize`, and the body is sanitized by
+//! `sanitize::body`, the fail-closed boundary between author markup and the
+//! trusted origin. Helpers run under a concurrency cap and a wall-clock
+//! timeout, so a pathological document cannot pin the server.
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -26,7 +24,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::sync::Semaphore;
 
-/// At most this many helper subprocesses (Asciidoctor, Pandoc) at once.
+/// At most this many helper subprocesses (Asciidoctor) at once.
 static HELPER_SEMAPHORE: Semaphore = Semaphore::const_new(4);
 
 const HELPER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -51,16 +49,6 @@ pub enum RenderedContent {
     Download {
         mime: String,
     },
-}
-
-/// The Pandoc reader for the formats Pandoc still handles.
-fn pandoc_format(ext: &str) -> Option<&'static str> {
-    match ext {
-        "rst" => Some("rst"),
-        "tex" => Some("latex"),
-        "org" => Some("org"),
-        _ => None,
-    }
 }
 
 /// Whether an image post renders as an image page (header + `<img>` + privacy
@@ -102,14 +90,7 @@ pub async fn render_entry(extension: &str, file_content: &[u8]) -> Result<Render
         )
         .await?;
         let html = crate::highlight::code_blocks(&html);
-        Ok(RenderedContent::Html(crate::sanitize::body(&html)))
-    } else if let Some(format) = pandoc_format(ext) {
-        let html = run_helper(
-            "pandoc",
-            &["-f", format, "-t", "html", "--highlight-style=kate", "--sandbox"],
-            file_content,
-        )
-        .await?;
+        let html = crate::footnotes::normalize(&html);
         Ok(RenderedContent::Html(crate::sanitize::body(&html)))
     } else if crate::entry::is_html_document(ext) {
         // Every HTML/XHTML post is served as its own sandboxed document (the
@@ -224,10 +205,11 @@ mod tests {
     }
 
     /// Asciidoctor is part of the Nix shell, so this is a real render, not a
-    /// mock: secure mode must hold and code must land in the shared markup.
+    /// mock: secure mode must hold, and code and footnotes must land in the
+    /// shared markup after sanitizing.
     #[tokio::test]
     async fn asciidoc_renders_through_asciidoctor_secure_mode() {
-        let adoc = b"= Title\n\nHello *there*.\n\n[source,rust]\n----\nfn x() {}\n----\n\ninclude::/etc/passwd[]\n";
+        let adoc = b"= Title\n\nHello *there*.footnote:[A note.] Again.footnote:[Two.]\n\n[source,rust]\n----\nfn x() {}\n----\n\ninclude::/etc/passwd[]\n";
         let Ok(RenderedContent::Html(html)) = render_entry("asciidoc", adoc).await else {
             panic!("asciidoc must render as an HTML fragment (is asciidoctor on PATH?)");
         };
@@ -236,12 +218,22 @@ mod tests {
         assert!(html.contains(r#"<pre class="sourceCode rust">"#), "{html}");
         assert!(html.contains(r#"<span class="kw">fn</span>"#), "{html}");
         assert!(!html.contains("root:"), "secure mode: no include: {html}");
+        assert!(
+            html.contains(r##"<sup class="footnote-ref"><a href="#fn-1" id="fnref-1">1</a></sup>"##),
+            "footnote references in the shared shape: {html}"
+        );
+        assert!(html.contains(r#"<section class="footnotes">"#), "{html}");
+        assert!(
+            html.contains("<li id=\"fn-2\">\n<p>Two. <a href=\"#fnref-2\" class=\"footnote-backref\">\u{21a9}</a></p>"),
+            "footnote list in the shared shape: {html}"
+        );
+        assert!(!html.contains("_footnote"), "no Asciidoctor footnote ids remain: {html}");
     }
 
     #[tokio::test]
     async fn missing_helper_names_the_tool() {
-        // rst goes to Pandoc; whether or not it is installed the outcome is
-        // explicit. Run with a PATH that cannot hold it to pin the message.
+        // A helper that is not installed fails only the post that needs it,
+        // with a message naming the tool.
         let err = run_helper("sajt-no-such-helper", &[], b"x").await.unwrap_err();
         assert!(err.contains("sajt-no-such-helper is not installed"), "{err}");
     }

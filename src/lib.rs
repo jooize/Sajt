@@ -12,6 +12,7 @@ pub mod config;
 pub mod content;
 pub mod embed;
 pub mod entry;
+pub mod footnotes;
 pub mod grade;
 pub mod highlight;
 pub mod markdown;
