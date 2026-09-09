@@ -37,7 +37,8 @@ pub enum RenderedContent {
     Html(String),
     /// Complete HTML document — served as-is
     Standalone(String),
-    /// Plain text wrapped in <pre>
+    /// Plain text shown as written (`templates::Body::Plain` escapes it and
+    /// keeps its line breaks) — txt and the engine-less formats rst/org/tex.
     PreformattedText(String),
     /// Link embed card
     Embed(String),
@@ -45,7 +46,8 @@ pub enum RenderedContent {
     Image {
         mime: String,
     },
-    /// Serve as download
+    /// Serve as download (`kind = file`): anything without a text, image or
+    /// document lane.
     Download {
         mime: String,
     },
@@ -99,7 +101,9 @@ pub async fn render_entry(extension: &str, file_content: &[u8]) -> Result<Render
         // running arbitrary HTML/JS jailed is the whole feature) can only ever
         // execute in the jail.
         Ok(RenderedContent::Standalone(String::from_utf8_lossy(file_content).to_string()))
-    } else if ext == "txt" {
+    } else if crate::entry::is_plain_text_ext(ext) {
+        // txt, and the formats without an engine (rst/org/tex): the post is the
+        // file as written. `templates::Body::Plain` escapes it at the sink.
         let text = String::from_utf8_lossy(file_content).to_string();
         Ok(RenderedContent::PreformattedText(text))
     } else if is_image(ext) {
@@ -189,6 +193,18 @@ mod tests {
                 ),
                 "{ext} post must render as an image page"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn plain_text_formats_are_posts_shown_as_written() {
+        // txt, and the formats that lost their engine with Pandoc: the post is
+        // the file, escaped later by templates::Body::Plain, never a download.
+        for ext in ["txt", "text", "rst", "org", "tex"] {
+            match render_entry(ext, b"Title\n=====\n\n<b>as written</b>\n").await {
+                Ok(RenderedContent::PreformattedText(t)) => assert!(t.contains("<b>as written</b>"), "{ext}"),
+                other => panic!("{ext} must be plain text, got {other:?}"),
+            }
         }
     }
 

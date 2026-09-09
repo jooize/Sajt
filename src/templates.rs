@@ -92,46 +92,53 @@ a { color: var(--violet); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 main {
+  position: relative; /* the reading-width grip runs down its right edge */
   max-width: var(--content-w);
   margin-inline: auto;
   padding: 0 0 4rem;
 }
 
-/* ---------- reading-width handle (both pages) ---------- */
+/* ---------- reading-width handle (both pages) ----------
+   A hairline down the right edge of the column, from the top of <main> to its
+   foot, grabbable anywhere along its length (16px hit zone). A short violet
+   marker rides under the pointer so the grab point is visible. The script
+   creates it (it does nothing without JS), so the markup only exists when it
+   works. Sidenotes start 3rem out; the line sits at 1rem, clear of them. */
 
 #grip {
-  position: fixed;
-  top: 50%;
-  translate: 0 -50%;
-  left: calc(50% + var(--content-w) / 2 + .55rem);
-  width: 1.1rem;
-  height: 3.8rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: .3rem;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -1rem;
+  width: 1px;
+  background: var(--hair);
   cursor: col-resize;
   touch-action: none;
-  border-radius: 999px;
   z-index: 5;
+  transition: background .15s ease;
 }
-#grip::before,
+#grip::before { content: ""; position: absolute; inset: 0 -8px; }
 #grip::after {
   content: "";
-  width: 4px;
-  height: 1.05rem;
+  position: absolute;
+  left: -1px;
+  top: var(--grip-y, 50%);
+  translate: 0 -50%;
+  width: 3px;
+  height: 2.4rem;
   border-radius: 999px;
-  background: var(--hair);
-  transition: background .15s ease, height .15s ease;
+  background: var(--violet);
+  opacity: 0;
+  transition: opacity .15s ease;
 }
-#grip:hover::before,
+#grip:hover,
+#grip:focus-visible,
+#grip.active { background: color-mix(in oklab, var(--hair), var(--violet) 45%); }
 #grip:hover::after,
-#grip:focus-visible::before,
 #grip:focus-visible::after,
-#grip.active::before,
-#grip.active::after { background: var(--violet); height: 1.35rem; }
-@media (prefers-reduced-motion: reduce) { #grip::before, #grip::after { transition: none; } }
+#grip.active::after { opacity: 1; }
+#grip:focus-visible { outline: none; }
+@media (prefers-reduced-motion: reduce) { #grip, #grip::after { transition: none; } }
 @media (max-width: 56rem) { #grip { display: none; } }
 
 #readout {
@@ -691,6 +698,13 @@ main > article > section pre { position: relative; overflow-x: auto; padding: 1e
 main > article > section pre code { background: none; padding: 0; border: 0; font-size: inherit; }
 main > article > section div.sourceCode { position: relative; margin: 0 0 1.4rem; }
 main > article > section div.sourceCode > pre { margin: 0; }
+/* A plain-text post (txt, and rst/org/tex until they get an engine) is the file
+   as written: prose in the body face with its line breaks kept, not a code
+   block. The article carries data-body="plain" (templates::Body::Plain). */
+main > article[data-body="plain"] > section > pre {
+  font: inherit; white-space: pre-wrap; overflow-wrap: anywhere;
+  padding: 0; margin: 0; border: 0; border-radius: 0; background: none; overflow: visible;
+}
 
 /* shared pill look for JS-injected copy + quote/link buttons */
 main > article button.pill {
@@ -1195,10 +1209,9 @@ pub const JS: &str = r##"
   if (help) help.addEventListener("click", function (e) { if (e.target === help) help.close(); });
 
   /* ---------- reading width: shared grip + store on both pages ---------- */
-  var grip = document.getElementById("grip");
-  var readout = document.getElementById("readout");
   var rootEl = document.documentElement;
   var mainEl = document.querySelector("main");
+  var grip = null, readout = null;
   /* header refs live inside #site, which the timeline swaps wholesale on an
      in-place filter change — so acquire them (and bind the magnifier) through
      bindHeader(), re-run after every swap. */
@@ -1218,6 +1231,23 @@ pub const JS: &str = r##"
   var width = parseFloat(store.getItem(WIDTH)) || null;
   var remPx = parseFloat(getComputedStyle(rootEl).fontSize) || 16;
   var chPx = 0;
+  /* the grip does nothing without a script, so the script makes it: a line
+     down the right edge of <main> (see the stylesheet), plus the readout chip */
+  if (mainEl) {
+    grip = document.createElement("div");
+    grip.id = "grip";
+    grip.setAttribute("role", "slider");
+    grip.tabIndex = 0;
+    grip.setAttribute("aria-label", "Reading width");
+    grip.setAttribute("aria-orientation", "horizontal");
+    grip.setAttribute("aria-valuemin", MINW);
+    grip.title = "Drag to set reading width. Double-click resets.";
+    mainEl.appendChild(grip);
+    readout = document.createElement("div");
+    readout.id = "readout";
+    readout.setAttribute("aria-hidden", "true");
+    document.body.appendChild(readout);
+  }
 
   function measureCh() {
     if (!mainEl) return;
@@ -1264,19 +1294,36 @@ pub const JS: &str = r##"
   }
   if (grip && mainEl) {
     var dragging = false, grabDX = 0;
+    /* the marker (and, while dragging, the readout) follow the pointer's y */
+    var markAt = function (clientY) {
+      grip.style.setProperty("--grip-y", (clientY - grip.getBoundingClientRect().top) + "px");
+    };
     grip.addEventListener("pointerdown", function (e) {
       dragging = true; grip.classList.add("active"); grip.setPointerCapture(e.pointerId);
       grabDX = e.clientX - mainEl.getBoundingClientRect().right;
+      readout.style.top = e.clientY + "px";
+      e.preventDefault();
     });
     grip.addEventListener("pointermove", function (e) {
+      markAt(e.clientY);
       if (!dragging) return;
       var right = e.clientX - grabDX;
       width = clampW((right - window.innerWidth / 2) * 2);
+      readout.style.top = e.clientY + "px";
       applyWidth();
     });
-    grip.addEventListener("pointerup", function () {
+    var release = function () {
+      if (!dragging) return;
       dragging = false; grip.classList.remove("active");
+      readout.style.top = "";
       if (width) store.setItem(WIDTH, width);
+    };
+    grip.addEventListener("pointerup", release);
+    grip.addEventListener("pointercancel", release);
+    /* keyboard: the marker sits at the middle of the visible part of the line */
+    grip.addEventListener("focus", function () {
+      var r = grip.getBoundingClientRect();
+      markAt(Math.min(Math.max(window.innerHeight / 2, r.top), r.bottom));
     });
     grip.addEventListener("dblclick", function () {
       width = null; store.removeItem(WIDTH); applyWidth();
@@ -2069,8 +2116,6 @@ fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> Str
 <script src="{boot_href}"></script>
 </head>
 <body data-page="{page_kind}"{view_attr}>
-<div id="grip" role="slider" tabindex="0" aria-label="Reading width" aria-orientation="horizontal" aria-valuemin="480" aria-valuemax="1160" aria-valuenow="736" title="Drag to set reading width. Double-click resets."></div>
-<div id="readout" aria-hidden="true"></div>
 {body}
 <footer><button type="button" id="helpbtn"><kbd>?</kbd> shortcuts</button>{typeface}</footer>
 <dialog id="help" aria-label="Keyboard shortcuts">
@@ -2877,12 +2922,34 @@ fn list_fix(intro: &str, names: &[String]) -> String {
 
 /// Render a single entry page: shared header (linking to the timeline), crumbs,
 /// then the post in plain typography, and a Continue teaser for the next entry.
+/// A post body on its way into the `<section>` of an article. `Html` is engine
+/// output that has already been through `sanitize::body` and is inserted as-is;
+/// `Plain` is a plain-text post (`RenderedContent::PreformattedText`) that is
+/// HTML-escaped HERE, at the sink, and marked `data-body="plain"` on the article
+/// so the stylesheet sets it as prose with its line breaks kept rather than as
+/// a code block.
+pub enum Body {
+    Html(String),
+    Plain(String),
+}
+
+impl Body {
+    /// The article attribute and the section markup for this body.
+    fn parts(&self) -> (&'static str, String) {
+        match self {
+            Body::Html(html) => ("", html.clone()),
+            Body::Plain(text) => (r#" data-body="plain""#, format!("<pre>{}</pre>", html_escape(text))),
+        }
+    }
+}
+
 pub fn entry_page(
     entry: &Entry,
-    rendered_html: &str,
+    body: Body,
     all_entries: &[&Entry],
     next: Option<&Entry>,
 ) -> String {
+    let (body_attr, rendered_html) = body.parts();
     let cloud = compute_cloud(all_entries);
     let view = ViewFilter::default();
     let ctx = HeaderContext::plain(&cloud, &view);
@@ -2899,7 +2966,7 @@ pub fn entry_page(
         r#"{header}
 {crumbs}
 <main>
-<article id="post" data-canonical="{canonical}" data-title="{data_title}">
+<article id="post" data-canonical="{canonical}" data-title="{data_title}"{body_attr}>
 {post_header}
 <section>{content}</section>
 {cite}
@@ -2915,6 +2982,7 @@ pub fn entry_page(
         data_title = html_escape(label),
         post_header = post_header(entry),
         content = rendered_html,
+        body_attr = body_attr,
         cite = cite_section(entry),
         attachments = attachments_section(entry, all_entries),
         extras = post_extras(entry, all_entries),
@@ -3025,27 +3093,28 @@ pub fn standalone_fullscreen_page(entry: &Entry, all_entries: &[&Entry]) -> Stri
 /// cloud, crumbs, continue nav, footer). `inner_html` is trusted rendered
 /// content from the same pipeline `render::render_entry` feeds the live site,
 /// and is inserted as-is (exactly like `entry_page`'s content).
-pub fn post_body_fragment(entry: &Entry, inner_html: &str) -> String {
+pub fn post_body_fragment(entry: &Entry, body: Body) -> String {
+    let (body_attr, content) = body.parts();
     format!(
-        r#"<main><article>
+        r#"<main><article{body_attr}>
 {post_header}
 <section>{content}</section>
 </article></main>"#,
         post_header = post_header(entry),
-        content = inner_html,
+        content = content,
     )
 }
 
 /// Render a browsable folder listing (`post-model.md` §6): a gallery of images,
 /// or a file list for mixed content, under the same site chrome as a post. The
 /// public allowlist was decided at scan time (`entry.listing`); this only renders
-/// it. `intro_html` is an optional already-rendered intro document (the `index/`
+/// it. `intro` is an optional already-rendered intro document (the `index/`
 /// "gallery with a story" case), inserted as-is like `entry_page`'s content.
 pub fn listing_page(
     entry: &Entry,
     listing: &Listing,
     all_entries: &[&Entry],
-    intro_html: Option<&str>,
+    intro: Option<Body>,
 ) -> String {
     let cloud = compute_cloud(all_entries);
     let view = ViewFilter::default();
@@ -3061,7 +3130,7 @@ pub fn listing_page(
         &canon_href,
         &post_header(entry),
         listing,
-        intro_html,
+        intro,
         &render_site_header(&ctx),
     );
     page_shell(&site_title(label), &body, "listing", false)
@@ -3104,18 +3173,18 @@ fn listing_body(
     canon_href: &str,
     header_html: &str,
     listing: &Listing,
-    intro_html: Option<&str>,
+    intro: Option<Body>,
     site_header: &str,
 ) -> String {
-    let intro = match intro_html {
-        Some(h) if !h.is_empty() => format!("<section>{}</section>", h),
-        _ => String::new(),
+    let (body_attr, intro) = match intro.as_ref().map(Body::parts) {
+        Some((attr, h)) if !h.is_empty() => (attr, format!("<section>{}</section>", h)),
+        _ => ("", String::new()),
     };
     format!(
         r#"{header}
 {crumbs}
 <main>
-<article id="listing" data-canonical="{canonical}">
+<article id="listing" data-canonical="{canonical}"{body_attr}>
 {post_header}
 <h1>{title} <small>{count}</small></h1>
 {collision}{intro}{grid}
@@ -3130,6 +3199,7 @@ fn listing_body(
         count = html_escape(&listing_count(listing)),
         collision = listing_collision_notice(listing),
         intro = intro,
+        body_attr = body_attr,
         grid = listing_grid(base_path, listing),
     )
 }
@@ -3612,6 +3682,16 @@ mod tests {
             last_active: NaiveDate::from_ymd_opt(2026, 7, 5).unwrap(),
             color: 0,
         }
+    }
+
+    #[test]
+    fn plain_body_is_escaped_at_the_sink_and_marked_on_the_article() {
+        let (attr, html) = Body::Plain("a <b> & \"c\"\nline two".to_string()).parts();
+        assert_eq!(attr, r#" data-body="plain""#);
+        assert_eq!(html, "<pre>a &lt;b&gt; &amp; &quot;c&quot;\nline two</pre>");
+        let (attr, html) = Body::Html("<p>ready</p>".to_string()).parts();
+        assert_eq!(attr, "");
+        assert_eq!(html, "<p>ready</p>");
     }
 
     #[test]

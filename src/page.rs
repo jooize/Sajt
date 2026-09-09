@@ -990,18 +990,16 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
                 Ok(bytes) => match render_entry(&listing.intro_ext, &bytes).await {
                     Ok(RenderedContent::Html(h)) => {
                         let h = crate::embed::expand_inline_embeds(&h, &store.embed_cache);
-                        Some(crate::outbound::sanitize_body_links(&h))
+                        Some(templates::Body::Html(crate::outbound::sanitize_body_links(&h)))
                     }
-                    Ok(RenderedContent::PreformattedText(t)) => {
-                        Some(format!("<pre>{}</pre>", html_escape_content(&t)))
-                    }
+                    Ok(RenderedContent::PreformattedText(t)) => Some(templates::Body::Plain(t)),
                     _ => None,
                 },
                 Err(_) => None,
             },
             None => None,
         };
-        return Reply::html(templates::listing_page(entry, listing, &all, intro_html.as_deref()))
+        return Reply::html(templates::listing_page(entry, listing, &all, intro_html))
             .from_file(&entry.path, "public");
     }
 
@@ -1036,14 +1034,14 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
                 let cache_dir =
                     crate::embed::cache_dir_for(&store.cache_dir, &store.content_dir, &entry.path);
                 let card_html = crate::embed::render_embed_card(embed_data, &cache_dir);
-                return Reply::html(templates::entry_page(entry, &card_html, &all, next)).from_file(&entry.path, "public");
+                return Reply::html(templates::entry_page(entry, templates::Body::Html(card_html), &all, next)).from_file(&entry.path, "public");
             }
         }
         // A link post with no usable embed (fetch failed / upstream deleted / not
         // yet fetched): render the bare destination cite rather than fall through to
         // a raw `.webloc`/`.url` byte download, so the page stays a working link.
         let body = templates::bare_link_body(entry);
-        return Reply::html(templates::entry_page(entry, &body, &all, next)).from_file(&entry.path, "public");
+        return Reply::html(templates::entry_page(entry, templates::Body::Html(body), &all, next)).from_file(&entry.path, "public");
     }
 
     let content = match std::fs::read(&entry.path) {
@@ -1059,17 +1057,16 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
             // rel="noreferrer" (post-model.md §7).
             let html = crate::embed::expand_inline_embeds(&html, &store.embed_cache);
             let html = crate::outbound::sanitize_body_links(&html);
-            Reply::html(templates::entry_page(entry, &html, &all, next)).from_file(&entry.path, "public")
+            Reply::html(templates::entry_page(entry, templates::Body::Html(html), &all, next)).from_file(&entry.path, "public")
         }
         Ok(RenderedContent::Standalone(html)) => {
             Reply::html(html).from_file(&entry.path, "public")
         }
         Ok(RenderedContent::PreformattedText(text)) => {
-            let pre = format!("<pre>{}</pre>", html_escape_content(&text));
-            Reply::html(templates::entry_page(entry, &pre, &all, next)).from_file(&entry.path, "public")
+            Reply::html(templates::entry_page(entry, templates::Body::Plain(text), &all, next)).from_file(&entry.path, "public")
         }
         Ok(RenderedContent::Embed(card_html)) => {
-            Reply::html(templates::entry_page(entry, &card_html, &all, next)).from_file(&entry.path, "public")
+            Reply::html(templates::entry_page(entry, templates::Body::Html(card_html), &all, next)).from_file(&entry.path, "public")
         }
         Ok(RenderedContent::Image { mime }) => {
             // The exact-bytes opt-in is per file; the loud "publishes your
@@ -1093,7 +1090,7 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
         Err(e) => {
             tracing::error!("Render error for {}: {}", entry.path.display(), e);
             let body = format!("<p>Rendering error: {}</p>", html_escape_content(&e));
-            Reply::html(templates::entry_page(entry, &body, &all, next)).from_file(&entry.path, "public")
+            Reply::html(templates::entry_page(entry, templates::Body::Html(body), &all, next)).from_file(&entry.path, "public")
         }
     }
 }
@@ -1483,6 +1480,13 @@ fn document_content_type(ext: &str) -> &'static str {
 /// its guessed type (non-HTML documents like SVG/XML are still hard-jailed by the
 /// header middleware's fail-closed default).
 fn raw_content_type(ext: &str) -> String {
+    // The plain-text post formats are declared text/plain outright: the guess
+    // table has no entry for `rst`, files `org` under Lotus Organizer and `tex`
+    // under an application type, all of which make a browser save the file
+    // instead of showing it.
+    if crate::entry::is_plain_text_ext(ext) {
+        return "text/plain; charset=utf-8".to_string();
+    }
     let mime = mime_guess::from_ext(ext).first_or_octet_stream();
     match mime.essence_str() {
         "text/html" | "application/xhtml+xml" => "text/plain; charset=utf-8".to_string(),

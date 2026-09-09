@@ -523,25 +523,23 @@ async fn render_post_body(entry: &Entry) -> String {
         Err(e) => {
             return templates::post_body_fragment(
                 entry,
-                &format!("<p>Could not read the post file: {}</p>", esc(&e.to_string())),
+                templates::Body::Html(format!("<p>Could not read the post file: {}</p>", esc(&e.to_string()))),
             )
         }
     };
 
     match render_entry(&entry.extension, &bytes).await {
-        Ok(RenderedContent::Html(html)) => templates::post_body_fragment(entry, &html),
+        Ok(RenderedContent::Html(html)) => templates::post_body_fragment(entry, templates::Body::Html(html)),
         Ok(RenderedContent::Standalone(doc)) => standalone_iframe(&doc),
-        Ok(RenderedContent::PreformattedText(text)) => {
-            templates::post_body_fragment(entry, &format!("<pre>{}</pre>", esc(&text)))
-        }
-        Ok(RenderedContent::Embed(card)) => templates::post_body_fragment(entry, &card),
+        Ok(RenderedContent::PreformattedText(text)) => templates::post_body_fragment(entry, templates::Body::Plain(text)),
+        Ok(RenderedContent::Embed(card)) => templates::post_body_fragment(entry, templates::Body::Html(card)),
         Ok(RenderedContent::Image { .. }) => {
             let inner = format!(
                 r#"<figure><img src="/_raw/{href}" alt="{alt}"></figure>"#,
                 href = href_label(label),
                 alt = esc(label),
             );
-            templates::post_body_fragment(entry, &inner)
+            templates::post_body_fragment(entry, templates::Body::Html(inner))
         }
         Ok(RenderedContent::Download { mime }) => {
             let inner = format!(
@@ -549,9 +547,9 @@ async fn render_post_body(entry: &Entry) -> String {
                 mime = esc(&mime),
                 href = href_label(label),
             );
-            templates::post_body_fragment(entry, &inner)
+            templates::post_body_fragment(entry, templates::Body::Html(inner))
         }
-        Err(e) => templates::post_body_fragment(entry, &format!("<p>Rendering error: {}</p>", esc(&e))),
+        Err(e) => templates::post_body_fragment(entry, templates::Body::Html(format!("<p>Rendering error: {}</p>", esc(&e)))),
     }
 }
 

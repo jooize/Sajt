@@ -257,9 +257,9 @@ impl Entry {
             // The HTML/XHTML family: complete self-contained documents served as
             // their own sandboxed standalone page (bypassing site chrome).
             _ if is_html_document(&self.extension) => "html",
-            // md/txt and friends differ in *rendering* (formatted vs preformatted),
-            // not medium — all poured into the site shell.
-            "md" | "txt" | "adoc" => "text",
+            // Rendered (md/adoc) and plain (txt/rst/org/tex) text differ in
+            // *rendering*, not medium — all poured into the site shell.
+            _ if is_text_ext(&self.extension) => "text",
             // Dotless bare files (README, LICENSE): UTF-8-decodable → text
             // (rendered preformatted), else an opaque download. Only a folder is
             // ever `folder` (a listing — see §6).
@@ -288,6 +288,28 @@ impl Entry {
             Err(_) => false,
         }
     }
+}
+
+/// Text formats the engine renders: Markdown (comrak) and AsciiDoc
+/// (Asciidoctor). Aliases fold through `normalize_ext` first.
+pub fn is_rendered_text_ext(ext: &str) -> bool {
+    matches!(normalize_ext(ext).as_str(), "md" | "adoc")
+}
+
+/// Text formats the engine does NOT render but still treats as posts: shown as
+/// written (line breaks kept, in the body face, see `templates::Body::Plain`)
+/// and served raw as `text/plain`, so a browser shows the file instead of
+/// downloading it. `rst`/`org`/`tex` lost their renderer with Pandoc (v0.39.0);
+/// any of them can grow an engine later without changing its medium.
+pub fn is_plain_text_ext(ext: &str) -> bool {
+    matches!(normalize_ext(ext).as_str(), "txt" | "rst" | "org" | "tex")
+}
+
+/// Every text format that is a post in the site shell (rendered or plain).
+/// The medium classifier, the excerpt/title extractors and the render path all
+/// key on this one predicate, so no text format can fall through to a download.
+pub fn is_text_ext(ext: &str) -> bool {
+    is_rendered_text_ext(ext) || is_plain_text_ext(ext)
 }
 
 /// Normalize extension aliases to their canonical form (case-insensitive):
@@ -342,6 +364,23 @@ mod tests {
         assert_eq!(normalize_ext("JPG"), "jpg");
         assert_eq!(normalize_ext("md"), "md");
         assert_eq!(normalize_ext(""), "");
+    }
+
+    #[test]
+    fn text_formats_split_into_rendered_and_plain() {
+        for ext in ["md", "markdown", "adoc", "ASCIIDOC"] {
+            assert!(is_rendered_text_ext(ext), "{ext} is rendered");
+            assert!(!is_plain_text_ext(ext), "{ext} is not plain");
+            assert!(is_text_ext(ext));
+        }
+        for ext in ["txt", "text", "rst", "org", "tex", "TEX"] {
+            assert!(is_plain_text_ext(ext), "{ext} is plain text");
+            assert!(!is_rendered_text_ext(ext), "{ext} has no renderer");
+            assert!(is_text_ext(ext));
+        }
+        for ext in ["html", "pdf", "jpg", "zip", "", "latex", "rest"] {
+            assert!(!is_text_ext(ext), "{ext} is not a text post format");
+        }
     }
 
     #[test]

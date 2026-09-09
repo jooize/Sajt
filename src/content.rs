@@ -509,11 +509,7 @@ fn row_description(comment_path: &Path, text_path: &Path, ext: &str) -> Option<S
 /// whose `<style>`/`<script>` text must never leak into a description.
 fn extract_excerpt(path: &Path, ext: &str) -> Option<String> {
     const MAX_READ: u64 = 16 * 1024;
-    let text_like = matches!(
-        ext.to_ascii_lowercase().as_str(),
-        "md" | "markdown" | "txt" | "text" | "adoc" | "asciidoc"
-    );
-    if !text_like {
+    if !crate::entry::is_text_ext(ext) {
         return None;
     }
     // A description never needs the whole file — read only a prefix.
@@ -539,11 +535,7 @@ fn extract_excerpt(path: &Path, ext: &str) -> Option<String> {
 /// must not leak into a title (same rule as the excerpt).
 fn extract_h1(path: &Path, ext: &str) -> Option<String> {
     const MAX_READ: u64 = 16 * 1024;
-    let text_like = matches!(
-        ext.to_ascii_lowercase().as_str(),
-        "md" | "markdown" | "txt" | "text" | "adoc" | "asciidoc"
-    );
-    if !text_like {
+    if !crate::entry::is_text_ext(ext) {
         return None;
     }
     let mut buf = Vec::new();
