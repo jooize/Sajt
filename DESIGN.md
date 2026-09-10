@@ -219,7 +219,10 @@ where symlinks and xattrs do not.
   breaks the post. A routine Cmd-D backup and a `foo copy` that a later `foo`
   shadows are indistinguishable to a stateless scan (age can't separate them),
   so each collapse is **logged** but carries no reader-facing notice; both just
-  work, and recovery from an unwanted collapse is one rename.
+  work, and recovery from an unwanted collapse is one rename. **A family is one
+  file's history** (SHIPPED 2026-09-10, v0.42.0): a copy snapshots the file
+  whose name it carries, language subtag included, so `brev.sv copy.md` is the
+  history of the Swedish version and never of `brev.md` — see "Languages".
 - **Listings (SHIPPED 2026-07-08 — `post-model.md` §6).** A folder with **no
   single document primary** renders as a **browsable index** rather than
   erroring: all-images → a gallery, mixed → a file list. Primary candidates are
@@ -681,8 +684,7 @@ registry via the `language-tags` crate, canonical form `pt-BR`; autonyms via
   path (`/brev/brev.sv.md`) 301s to its canonical raw address, as the
   primary's does. A version is one per language, served only with its own
   `public` tag; two files in one language serve neither (logged). Versions
-  leave the attachment list; a version's own ` copy [n]` snapshots are
-  neither revisions (version pages carry no revision nav) nor posts (logged).
+  leave the attachment list.
   At the top level every foreign file of a paired group is absorbed, served
   or withheld; a group with no site-language file, or with several
   (`notes.md` + `notes.txt`), does not pair and every file stays a post of
@@ -691,6 +693,27 @@ registry via the `language-tags` crate, canonical form `pt-BR`; autonyms via
   the version and revision views are clones that keep it, so name-claim and
   ownership checks recognise them (`Entry::same_post`, never pointer
   equality).
+- **A version is not a revision (DECIDED + SHIPPED 2026-09-10, v0.42.0).** A
+  **version** is the same post in another language: a sibling file with a
+  language tag, served at its own address. A **revision** is an older snapshot
+  of one file: a ` copy [n]` next to it, served as that file's history. The
+  two axes are orthogonal, and a copy snapshots the file whose name it
+  carries, subtag included — so **a version's copies are that version's
+  revisions**. `brev.sv copy.md` is the Swedish version's history, addressed
+  as a revision address plus the tag: `/2026/03/12/091500/brev.sv`, dated by
+  the copy's own mtime, listed in the revision nav of `/brev.sv` and never in
+  `/brev`'s. Everything the family model does applies per file: the copy is
+  served only with its own `public` tag, snapshots sort newest first, and a
+  deleted version file is recovered at the top level by promoting the newest
+  copy to be that version of the paired post (so `/brev.sv` keeps resolving —
+  the same recovery property the site-language file has). Inside a folder a
+  copy never stands in for a missing file, exactly as it never becomes the
+  folder's primary: a snapshot in a language the post serves no version in is
+  left out and logged. A snapshot is one frozen file, so its page carries no
+  `hreflang` alternates, no `Link` header and no version line — nothing says
+  another language's file was in the same state at that moment. The timeline
+  row is untouched: it is the site-language version, and its disclosure is
+  that file's revisions.
 - **Markup**: every version carries `<link rel="alternate" hreflang>` for all
   versions plus `x-default` for the bare address, absolute with the
   configured `domain`, else paths; and the HTTP `Link` header with the same
