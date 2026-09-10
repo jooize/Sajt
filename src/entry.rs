@@ -139,6 +139,15 @@ pub fn is_image_ext(ext: &str) -> bool {
 /// aliases, revisions). See `entry-model.md` for the model this represents.
 #[derive(Debug, Clone)]
 pub struct Entry {
+    /// The post's identity: the top-level content item it was scanned from —
+    /// the folder of a folder post, the file of a bare-file post. Two `Entry`
+    /// values are the same post exactly when their `id`s match; compare with
+    /// [`Entry::same_post`]. The views a post is served through (a language
+    /// version via [`Entry::show_version`], an archived revision) are clones
+    /// whose `path` and `extension` point at other bytes but whose `id` is
+    /// untouched, so name-claim and ownership checks still recognise them.
+    /// Never compare entries by pointer: a clone is not at the scanned address.
+    pub id: PathBuf,
     /// The primary content file to render and serve. For a bare-file post this is
     /// the file itself; for a folder post it is the resolved primary inside the
     /// folder. For an errored folder post it is the folder itself (unreadable as
@@ -228,6 +237,11 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// Whether `other` is this post (possibly a version or revision view of it).
+    pub fn same_post(&self, other: &Entry) -> bool {
+        self.id == other.id
+    }
+
     /// The version in a language, matched case-insensitively (`/brev/SV` is
     /// answered by the `sv` version, then redirected to its canonical case).
     pub fn version(&self, lang: &str) -> Option<&Version> {

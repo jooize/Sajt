@@ -278,6 +278,7 @@ fn build_bare_post(item: &TopItem, claim: Option<&str>) -> Entry {
     };
 
     Entry {
+        id: item.path.clone(),
         path: item.path.clone(),
         dir: None,
         timestamp,
@@ -379,6 +380,7 @@ fn build_folder_post(item: &TopItem, claim: Option<&str>) -> Entry {
     };
 
     Entry {
+        id: dir.clone(),
         path: primary.path,
         dir: Some(dir.clone()),
         timestamp,
@@ -436,6 +438,7 @@ fn build_listing_post(
     };
 
     Entry {
+        id: dir.clone(),
         path: dir.clone(),
         dir: Some(dir.clone()),
         timestamp,
@@ -465,6 +468,7 @@ fn build_listing_post(
 /// effective name (the claimed base for a promoted copy, else the folder name).
 fn errored_folder(item: &TopItem, label: &str, tags: Vec<Tag>, error: PostError) -> Entry {
     Entry {
+        id: item.path.clone(),
         path: item.path.clone(),
         dir: Some(item.path.clone()),
         timestamp: PostDate::from_mtime(mtime_local(&item.path).unwrap_or_else(epoch)),

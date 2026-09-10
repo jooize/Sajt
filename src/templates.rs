@@ -2287,7 +2287,7 @@ fn name_shares<'a>(entry: &Entry, all_entries: &[&'a Entry]) -> Vec<&'a Entry> {
     };
     name_claimants(slug, all_entries)
         .into_iter()
-        .filter(|e| !std::ptr::eq(*e, entry))
+        .filter(|e| !e.same_post(entry))
         .collect()
 }
 
@@ -2338,7 +2338,7 @@ fn canonical_post(entry: &Entry, all_entries: &[&Entry]) -> Canonical {
 
     // The oldest claim owns the bare slug; this entry owns it only if it is
     // that unique-oldest claimant (an alias or a tie sends it to a date path).
-    let owns_bare = name_owner(slug, all_entries).map_or(false, |o| std::ptr::eq(o, entry));
+    let owns_bare = name_owner(slug, all_entries).map_or(false, |o| o.same_post(entry));
     if owns_bare {
         return Canonical { path: format!("/{}", slug) };
     }
@@ -3943,6 +3943,7 @@ mod tests {
 
     fn mkentry(label: &str, at: &str) -> Entry {
         Entry {
+            id: std::path::PathBuf::from(format!("/c/{}.md", label)),
             path: std::path::PathBuf::from(format!("/c/{}.md", label)),
             dir: None,
             timestamp: ts(at),
@@ -4021,6 +4022,8 @@ mod tests {
     fn oldest_claim_owns_bare_label() {
         let old = mkentry("foo", "2026-03-01T120000");
         let mut newer = mkentry("foo", "2026-03-10T120000");
+        newer.id = "/c/foo-folder".into();
+        newer.dir = Some("/c/foo-folder".into());
         newer.path = "/c/foo-folder/foo.md".into();
         let all = vec![&old, &newer];
 
@@ -4028,6 +4031,37 @@ mod tests {
         assert_eq!(canonical(&old, &all).path, "/foo");
         assert_eq!(canonical(&newer, &all).path, "/2026/03/10/foo");
         assert!(std::ptr::eq(name_owner("foo", &all).unwrap(), &old));
+    }
+
+    #[test]
+    fn a_version_view_keeps_its_posts_claim_on_the_name() {
+        // `brev/` (old, with a Swedish version) shares its name with a newer
+        // bare file. The version view is a clone at another file, yet it is
+        // still the old post: it owns the bare address (plus the tag) and does
+        // not list itself as a stranger sharing its own name.
+        let mut old = mkentry("brev", "2026-03-01T120000");
+        old.id = "/c/brev".into();
+        old.dir = Some("/c/brev".into());
+        old.path = "/c/brev/brev.md".into();
+        old.versions.push(crate::entry::Version {
+            lang: "sv".to_string(),
+            path: "/c/brev/brev.sv.md".into(),
+            extension: "md".to_string(),
+            mtime: old.timestamp.to_local_instant().unwrap(),
+            display_label: None,
+        });
+        let mut newer = mkentry("brev", "2026-03-10T120000");
+        newer.id = "/c/brev (newer).md".into();
+        let all = vec![&old, &newer];
+
+        let shown = old.show_version(&old.versions[0]);
+        assert!(shown.same_post(&old));
+        assert!(!shown.same_post(&newer));
+        assert_eq!(canonical(&shown, &all).path, "/brev/sv");
+        assert_eq!(canonical(&newer, &all).path, "/2026/03/10/brev");
+        let shares: Vec<&Entry> = name_shares(&shown, &all);
+        assert_eq!(shares.len(), 1);
+        assert!(shares[0].same_post(&newer));
     }
 
     #[test]
@@ -4048,6 +4082,7 @@ mod tests {
     fn tied_oldest_has_no_owner() {
         let a = mkentry("dup", "2026-03-01T120000");
         let mut b = mkentry("dup", "2026-03-01T120000");
+        b.id = "/c/dup2.md".into();
         b.path = "/c/dup2.md".into();
         let all = vec![&a, &b];
         assert!(name_owner("dup", &all).is_none());
@@ -4057,6 +4092,9 @@ mod tests {
     fn errored_posts_do_not_claim_names() {
         let good = mkentry("x", "2026-03-01T120000");
         let mut bad = mkentry("x", "2026-01-01T120000");
+        bad.id = "/c/x".into();
+        bad.dir = Some("/c/x".into());
+        bad.path = "/c/x".into();
         bad.error = Some(PostError::NoPrimary);
         let all = vec![&good, &bad];
         // Even though `bad` is older, it does not claim the name — `good` owns it.
@@ -4069,6 +4107,8 @@ mod tests {
         // "Fog Over The Bay" and "fog-over-the-bay" reduce to one address.
         let old = mkentry("Fog Over The Bay", "2026-03-01T120000");
         let mut newer = mkentry("fog-over-the-bay", "2026-03-10T120000");
+        newer.id = "/c/fog".into();
+        newer.dir = Some("/c/fog".into());
         newer.path = "/c/fog/fog-over-the-bay.md".into();
         let all = vec![&old, &newer];
 
