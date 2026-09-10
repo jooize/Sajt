@@ -1,6 +1,6 @@
 [package]
 name = "sajt"
-version = "0.40.0"
+version = "0.41.0"
 edition = "2024"
 # Minimum supported toolchain. rust-toolchain.toml pins the exact version
 # every build uses; this is the floor crates.io advertises.
@@ -73,3 +73,10 @@ comrak = { version = "0.55", default-features = false, features = ["shortcodes"]
 # syntect tokenizes fenced code for every authoring format (src/highlight.rs)
 # with pure-Rust regexes: no C library, one highlighter, one stylesheet.
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+# BCP 47 language tags checked against the IANA Language Subtag Registry
+# (src/lang.rs): a filename subtag or a Sajt.toml language is a language only
+# when the registry says so, in canonical case (pt-BR, zh-Hant).
+language-tags = "0.3"
+# Autonyms (svenska, Deutsch) for the version links, from ISO 639 data. The
+# English names are the fallback for a language without an autonym.
+isolang = { version = "2", default-features = false, features = ["local_names", "english_names"] }

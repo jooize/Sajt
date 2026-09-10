@@ -15,6 +15,7 @@ pub mod entry;
 pub mod footnotes;
 pub mod grade;
 pub mod highlight;
+pub mod lang;
 pub mod markdown;
 pub mod media;
 pub mod outbound;

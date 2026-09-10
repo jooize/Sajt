@@ -328,6 +328,14 @@ async fn resolve(store: &ContentStore, path: &str, flags: &RequestFlags) -> Repl
 
     let all_entries: Vec<&Entry> = store.entries.iter().collect();
 
+    // A language version (`/{post}/{tag}`, raw at `/{post}/{tag}.{ext}`): a post
+    // address plus a registered language tag, answered only when that version
+    // exists (DESIGN.md "Languages"). Resolved first: the version address is
+    // canonical and stable, so a same-named asset or subfolder never shadows it.
+    if let Some(resp) = try_version(store, &all_entries, &path, flags).await {
+        return resp;
+    }
+
     // Folder-post asset (`/{folder}/{asset…}`): resolved before the query parser,
     // which would otherwise misread the multi-segment path as a label. Rendition
     // rungs (`…/photo.tif/jpeg`, `…/jpeg/thumb`) are parsed off the tail there.
@@ -453,7 +461,7 @@ async fn resolve(store: &ContentStore, path: &str, flags: &RequestFlags) -> Repl
         // Served with 404, identically to any missing path (no existence oracle).
         if is_bare_label(&query) {
             if let Some(label) = query.label.as_deref() {
-                return not_found_response(templates::not_found_label_page(label, &all_entries));
+                return not_found_response(templates::not_found_label_page(&requested, label, &all_entries));
             }
         }
         return not_found();
@@ -462,6 +470,136 @@ async fn resolve(store: &ContentStore, path: &str, flags: &RequestFlags) -> Repl
     // Multiple matches — show as listing
     let base = strip_view_segments(&requested);
     render_listing(&matching, &all_entries, &query, &view, &base)
+}
+
+/// Resolve a language-version address. The last segment (rendition rungs
+/// peeled) must be a registered language tag, optionally with an extension;
+/// the head must resolve to exactly one post, and that post must carry a
+/// version in that language. Anything else is `None`, so the caller falls
+/// through and no existing address changes meaning. A non-canonical spelling
+/// (case, an alias, a trailing slash) 301s to the canonical one.
+async fn try_version(
+    store: &ContentStore,
+    all_entries: &[&Entry],
+    path: &str,
+    flags: &RequestFlags,
+) -> Option<Reply> {
+    let requested = format!("/{}", path);
+    let mut segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.len() < 2 {
+        return None;
+    }
+    // Rendition rungs hang off a raw image version (`/x/sv.tif/jpeg/thumb`).
+    let mut thumb = false;
+    let mut as_jpeg = false;
+    if segments.last() == Some(&"thumb") {
+        thumb = true;
+        segments.pop();
+    }
+    if segments.last() == Some(&"jpeg") {
+        as_jpeg = true;
+        segments.pop();
+    }
+    if segments.len() < 2 {
+        return None;
+    }
+    let last = segments.pop()?;
+    let (tag_token, ext) = match last.rsplit_once('.') {
+        Some((t, e)) if !t.is_empty() && !e.is_empty() => (t, Some(e)),
+        _ => (last, None),
+    };
+    let tag = crate::lang::parse(tag_token)?;
+    if (thumb || as_jpeg) && ext.is_none() {
+        return None; // rungs hang off files, not pages
+    }
+    let entry = resolve_one(all_entries, &segments.join("/"))?;
+    let version = entry.version(&tag)?;
+    if let Some(e) = ext {
+        if !e.eq_ignore_ascii_case(&version.extension) {
+            return None; // `/x/sv.txt` for a `.md` version names nothing
+        }
+    }
+    let shown = entry.show_version(version);
+
+    // The page: canonical at `/<post>/<tag>`.
+    if ext.is_none() {
+        let canon = templates::canonical(&shown, all_entries);
+        if requested != canon.path {
+            return Some(Reply::redirect(&templates::canonical_location(&shown, all_entries)));
+        }
+        let reply = serve_entry(&shown, store, flags.fullscreen).await;
+        return Some(with_alternates(reply, &shown, all_entries));
+    }
+
+    // The bytes: canonical at `/<post>/<tag>.<ext>`, plus any rendition rungs.
+    let base_href = templates::canonical_raw_href(&shown, all_entries);
+    let mut canon = crate::url::percent_decode(&base_href);
+    if as_jpeg {
+        canon.push_str("/jpeg");
+    }
+    if thumb {
+        canon.push_str("/thumb");
+    }
+    if requested != canon {
+        return Some(Reply::redirect(&templates::encode_path(&canon)));
+    }
+    Some(serve_raw_bytes(&shown, flags.embed, as_jpeg, thumb, &base_href, &store.cache_dir).await)
+}
+
+/// Resolve a decoded post address (no leading slash) to exactly one current
+/// post, the way `resolve` does for a page request: a bare `/name` goes to its
+/// owner (oldest claim), a dated address to its single match. `None` for a
+/// scope, a raw file, a listing, or anything ambiguous.
+fn resolve_one<'a>(all_entries: &[&'a Entry], head: &str) -> Option<&'a Entry> {
+    let query = parse_url_path(&format!("/{}", head));
+    if query.raw_extension.is_some()
+        || query.is_listing
+        || !query.and_tags.is_empty()
+        || !query.or_tags.is_empty()
+        || query.notable
+        || query.favorites
+        || query.rendition_jpeg
+        || query.rendition_thumb
+    {
+        return None;
+    }
+    if is_bare_label(&query) {
+        if let Some(owner) = templates::name_owner(query.label.as_deref()?, all_entries) {
+            return Some(owner);
+        }
+    }
+    let matching: Vec<&Entry> = all_entries
+        .iter()
+        .copied()
+        .filter(|e| query.matches(&e.timestamp, &e.slug, &e.tag_names()))
+        .collect();
+    let target = if matching.len() == 1 {
+        Some(matching[0])
+    } else if query.label.is_some() && query.date_prefix.is_none() {
+        oldest_of(&matching)
+    } else {
+        None
+    };
+    target.filter(|e| e.error.is_none())
+}
+
+/// Add the `Link` header naming every language version of a post (RFC 8288
+/// `rel="alternate"; hreflang=…`, the HTTP twin of the `<link>` elements in
+/// the page head) to a successful reply. The static build records it with the
+/// file, so a host adapter can offer the Accept-Language redirect from the
+/// manifest alone, and `verify` checks it like any header. Paths, not
+/// absolute URLs: the header is resolved against the request, so it is true
+/// on every host the same bytes are served from.
+fn with_alternates(mut reply: Reply, entry: &Entry, all_entries: &[&Entry]) -> Reply {
+    if reply.status != 200 || entry.versions.is_empty() {
+        return reply;
+    }
+    let links: Vec<String> = templates::alternates(entry, all_entries)
+        .iter()
+        .map(|a| format!("<{}>; rel=\"alternate\"; hreflang=\"{}\"", a.href, a.hreflang))
+        .collect();
+    reply.headers.push(("link", links.join(", ")));
+    reply
 }
 
 /// Drop the rendition rungs off the tail of an encoded raw-file path, giving
@@ -539,7 +677,7 @@ async fn serve_resolved(
     if entry.error.is_some() {
         return error_response(entry, all_entries);
     }
-    serve_entry(entry, store, fullscreen).await
+    with_alternates(serve_entry(entry, store, fullscreen).await, entry, all_entries)
 }
 
 /// Render a post's fail-closed error page with HTTP 500 (loud, never hidden).
@@ -626,6 +764,15 @@ async fn try_asset(
             format!("/{}.{}", label, owner.extension)
         };
         return Some(Reply::redirect(&templates::encode_path(&decoded)));
+    }
+    // A language version's file is canonical at `/label/<tag>.<ext>` likewise.
+    if let Some(version) = owner
+        .versions
+        .iter()
+        .find(|v| std::fs::canonicalize(&v.path).ok().as_deref() == Some(canon_file.as_path()))
+    {
+        let shown = owner.show_version(version);
+        return Some(Reply::redirect(&templates::canonical_raw_href(&shown, all_entries)));
     }
 
     // Per-file visibility gate (strict — post-model.md [review]): every asset

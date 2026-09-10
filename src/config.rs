@@ -85,14 +85,11 @@ fn valid_name(name: &str) -> bool {
     !trimmed.is_empty() && trimmed.len() <= 200 && !name.chars().any(char::is_control)
 }
 
-/// A language tag as browsers accept it: a 2-3 letter primary subtag, then
-/// any number of 1-8 character alphanumeric subtags, hyphen-separated.
-fn valid_language(tag: &str) -> bool {
-    let mut parts = tag.split('-');
-    let primary = parts.next().unwrap_or("");
-    (2..=3).contains(&primary.len())
-        && primary.chars().all(|c| c.is_ascii_alphabetic())
-        && parts.all(|p| (1..=8).contains(&p.len()) && p.chars().all(|c| c.is_ascii_alphanumeric()))
+/// A language tag the registry knows (`lang::parse`): "en", "sv", "pt-BR".
+/// Returns the canonical form, so every page's `lang` and every comparison
+/// with a version's tag see one spelling.
+fn canonical_language(tag: &str) -> Option<String> {
+    crate::lang::parse(tag)
 }
 
 /// Where the configuration file lives for a site directory.
@@ -130,13 +127,17 @@ pub fn load(path: &Path) -> Result<SiteConfig, String> {
             ));
         }
     }
+    let mut config = config;
     if let Some(language) = &config.language {
-        if !valid_language(language) {
-            return Err(format!(
-                "config {}: language {:?} is not a language tag like \"en\" or \"pt-BR\"",
-                path.display(),
-                language
-            ));
+        match canonical_language(language) {
+            Some(canonical) => config.language = Some(canonical),
+            None => {
+                return Err(format!(
+                    "config {}: language {:?} is not a registered language tag like \"en\" or \"pt-BR\"",
+                    path.display(),
+                    language
+                ));
+            }
         }
     }
     Ok(config)
@@ -204,12 +205,13 @@ mod tests {
     }
 
     #[test]
-    fn languages_are_tags() {
+    fn languages_are_registered_tags_in_canonical_form() {
         for ok in ["en", "sv", "pt-BR", "zh-Hant-TW", "sr-Latn"] {
-            assert!(valid_language(ok), "{ok}");
+            assert_eq!(canonical_language(ok).as_deref(), Some(ok), "{ok}");
         }
-        for bad in ["", "e", "english", "en_US", "en-", "-en", "en--US"] {
-            assert!(!valid_language(bad), "{bad}");
+        assert_eq!(canonical_language("PT-br").as_deref(), Some("pt-BR"));
+        for bad in ["", "e", "english", "en_US", "en-", "-en", "en--US", "xx", "swe"] {
+            assert!(canonical_language(bad).is_none(), "{bad}");
         }
     }
 

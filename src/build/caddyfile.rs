@@ -105,12 +105,134 @@ fn emit_headers(out: &mut String, indent: &str, entry: &FileEntry) -> Result<(),
     Ok(())
 }
 
+/// One language alternate a file's `Link` header names (RFC 8288
+/// `rel="alternate"; hreflang=…`): the page layer emits one per language a
+/// post exists in, site language first (`page::with_alternates`).
+struct Alternate {
+    href: String,
+    hreflang: String,
+}
+
+/// Read the language alternates out of a file's recorded `Link` header.
+/// Anything that is not a `rel="alternate"` link with an `hreflang` is left
+/// alone; a header this adapter cannot read yields no redirect, never a wrong
+/// one.
+fn alternates_of(entry: &FileEntry) -> Vec<Alternate> {
+    let header = match entry.headers.get("link") {
+        Some(h) => h,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for link in header.split(',') {
+        let link = link.trim();
+        let (target, params) = match link.split_once('>') {
+            Some((t, p)) if t.starts_with('<') => (&t[1..], p),
+            _ => continue,
+        };
+        let mut rel_alternate = false;
+        let mut hreflang: Option<String> = None;
+        for param in params.split(';').map(str::trim).filter(|p| !p.is_empty()) {
+            let (name, value) = match param.split_once('=') {
+                Some((n, v)) => (n.trim(), v.trim().trim_matches('"')),
+                None => continue,
+            };
+            match name {
+                "rel" => rel_alternate = value.split_whitespace().any(|r| r == "alternate"),
+                "hreflang" => hreflang = Some(value.to_string()),
+                _ => {}
+            }
+        }
+        if let (true, Some(hreflang)) = (rel_alternate, hreflang) {
+            out.push(Alternate { href: target.to_string(), hreflang });
+        }
+    }
+    out
+}
+
+/// The Accept-Language redirect for a post that exists in several languages
+/// (DESIGN.md "Languages"): edge logic over the same bytes. It fires only on
+/// the site-language address (the first alternate, which is the file itself)
+/// and only for a language the post exists in: a request whose
+/// `Accept-Language` lists such a language FIRST is answered with a 302 to
+/// that version, `Vary: Accept-Language`, and the fragment the page's notice
+/// keys on. A version's own address never redirects; the reader who chose it
+/// keeps it. The first-listed language is the reader's stated preference
+/// (browsers order the header by descending preference), matched on its
+/// primary subtag when the post has one version in that language and on the
+/// exact tag when it has several (`pt` and `pt-BR`).
+fn emit_language_redirects(
+    out: &mut String,
+    matcher: &str,
+    url: &str,
+    alternates: &[Alternate],
+) -> Result<(), String> {
+    let versions: Vec<&Alternate> = alternates.iter().skip(1).collect();
+    for (i, version) in versions.iter().enumerate() {
+        let primary = version.hreflang.split('-').next().unwrap_or(&version.hreflang);
+        let shares_primary = versions
+            .iter()
+            .any(|o| !std::ptr::eq(*o, *version) && o.hreflang.split('-').next() == Some(primary));
+        // RE2 syntax (Caddy's header_regexp): the tag, then a delimiter or the
+        // end. A unique primary also accepts any region of that language.
+        let pattern = if shares_primary {
+            format!("(?i)^[[:space:]]*{}(?:[;,[:space:]]|$)", regex_escape(&version.hreflang))
+        } else {
+            format!("(?i)^[[:space:]]*{}(?:[-;,[:space:]]|$)", regex_escape(primary))
+        };
+        let name = format!("{}_lang{}", matcher, i);
+        writeln!(out, "\t@{} {{", name).unwrap();
+        writeln!(out, "\t\tpath {}", quote_path(url, "published address")?).unwrap();
+        writeln!(
+            out,
+            "\t\theader_regexp Accept-Language {}",
+            quote(&pattern, "Accept-Language pattern")?
+        )
+        .unwrap();
+        writeln!(out, "\t}}").unwrap();
+        writeln!(out, "\thandle @{} {{", name).unwrap();
+        writeln!(out, "\t\theader Vary \"Accept-Language\"").unwrap();
+        writeln!(
+            out,
+            "\t\tredir {} 302",
+            quote(
+                &format!("{}#redirected-for-language", version.href),
+                "language version address"
+            )?
+        )
+        .unwrap();
+        writeln!(out, "\t}}").unwrap();
+    }
+    Ok(())
+}
+
+/// Escape a language tag for a literal match inside the pattern. Tags are
+/// letters, digits and hyphens (a literal outside a character class), so
+/// this is a guard, not an expectation.
+fn regex_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if !c.is_ascii_alphanumeric() && c != '-' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn emit_file_handle(
     out: &mut String,
     matcher: &str,
     url: &str,
     entry: &FileEntry,
 ) -> Result<(), String> {
+    // A multi-language post's site-language address gets its Accept-Language
+    // redirects first (handle blocks are ordered, first match wins), and its
+    // own reply says it varies on that header.
+    let alternates = alternates_of(entry);
+    let negotiates = alternates.first().map_or(false, |first| first.href == url) && alternates.len() > 1;
+    if negotiates {
+        emit_language_redirects(out, matcher, url, &alternates)?;
+    }
     writeln!(
         out,
         "\t@{} path {}",
@@ -120,6 +242,9 @@ fn emit_file_handle(
     .unwrap();
     writeln!(out, "\thandle @{} {{", matcher).unwrap();
     emit_headers(out, "\t\t", entry)?;
+    if negotiates {
+        writeln!(out, "\t\theader Vary \"Accept-Language\"").unwrap();
+    }
     writeln!(
         out,
         "\t\trewrite * {}",
@@ -320,6 +445,44 @@ mod tests {
         // them; no header directive line does).
         assert!(!text.contains("\tetag "));
         assert!(!text.contains("\"abc\""));
+    }
+
+    #[test]
+    fn language_versions_negotiate_at_the_edge() {
+        let mut m = tiny_manifest();
+        let link = "</brev>; rel=\"alternate\"; hreflang=\"en\", \
+                    </brev/sv>; rel=\"alternate\"; hreflang=\"sv\", \
+                    </brev/pt>; rel=\"alternate\"; hreflang=\"pt\", \
+                    </brev/pt-BR>; rel=\"alternate\"; hreflang=\"pt-BR\"";
+        m.files.insert(
+            "/brev".to_string(),
+            entry("sha256-11", 200, &[("content-type", "text/html; charset=utf-8"), ("link", link)]),
+        );
+        m.files.insert(
+            "/brev/sv".to_string(),
+            entry("sha256-22", 200, &[("content-type", "text/html; charset=utf-8"), ("link", link)]),
+        );
+        let text = render(&m, "http://localhost:8080", "/tmp/build").unwrap();
+        // The bare address redirects a first-listed `sv` (any region) to the
+        // Swedish version, with the notice fragment and Vary.
+        assert!(text.contains(
+            "header_regexp Accept-Language \"(?i)^[[:space:]]*sv(?:[-;,[:space:]]|$)\""
+        ), "{text}");
+        assert!(text.contains("redir \"/brev/sv#redirected-for-language\" 302"));
+        assert!(text.contains("header Vary \"Accept-Language\""));
+        // Two Portuguese versions: exact tags only.
+        assert!(text.contains("\"(?i)^[[:space:]]*pt(?:[;,[:space:]]|$)\""));
+        assert!(text.contains("\"(?i)^[[:space:]]*pt-BR(?:[;,[:space:]]|$)\""));
+        // The version's own address never redirects.
+        assert_eq!(text.matches("redirected-for-language").count(), 3);
+        let sv_handle = text.find("path \"/brev/sv\"\n\thandle").expect("the sv file handle");
+        assert!(!text[sv_handle..].contains("Accept-Language"), "no negotiation below the version");
+        // The redirect handles precede the file handle they guard.
+        assert!(text.find("@f").unwrap() < text.find("redir \"/brev/sv#").unwrap());
+        let file_handle = text.find("path \"/brev\"\n\thandle").unwrap();
+        assert!(text.find("redir \"/brev/sv#").unwrap() < file_handle);
+        // The recorded Link header still ships as a header on both files.
+        assert!(text.contains("link \"</brev>; rel="));
     }
 
     #[test]

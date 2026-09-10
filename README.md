@@ -66,7 +66,7 @@ too, since dotfiles sync.
 # Sajt.toml, every key optional
 name = "Anna's notes"   # page titles and the header mark; default: the directory name
 domain = "example.org"  # the public host, for the Caddyfile adapter and the fetch UA only
-language = "sv"         # BCP 47 tag on every page; default "en"
+language = "sv"         # a registered BCP 47 tag, the language of every page; default "en"
 ```
 
 Serving is domain-agnostic. Every URL the engine emits is a path, so a site

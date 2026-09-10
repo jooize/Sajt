@@ -1,5 +1,5 @@
 use crate::embed::EmbedData;
-use crate::entry::{is_image_ext, Entry, ListItem, Listing, PostError, Revision, COPY_KEYWORD};
+use crate::entry::{is_image_ext, Entry, ListItem, Listing, PostError, Revision, Version, COPY_KEYWORD};
 use crate::postdate::PostDate;
 use crate::slug::{is_reserved_slug, slug};
 use crate::tags::{read_finder_comment, read_tags_colored, Tag};
@@ -240,13 +240,18 @@ fn build_post_as(item: &TopItem, claim: Option<&str>) -> Entry {
 /// date, its stem is the label. Editing it moves the mtime (republishes) — by
 /// design; fold it into a folder to gain a stable date, assets, or aliases.
 fn build_bare_post(item: &TopItem, claim: Option<&str>) -> Entry {
-    let (stem, ext) = split_name(&item.name);
+    let child = file_child(item.name.clone(), item.path.clone(), mtime_local(&item.path).unwrap_or_else(epoch));
+    let ext = split_name(&item.name).1;
     // Identity (label / slug / date-name) comes from the claimed base when this
     // file is a promoted orphan copy; otherwise from its own stem. The bytes,
-    // mtime, tags, excerpt and title are always read from the file itself.
-    let ident = claim.unwrap_or(stem);
+    // mtime, tags, excerpt and title are always read from the file itself. The
+    // language subtag (`brev.sv.md`) is the file's own in both cases: a copy
+    // keeps its base's name grammar, so `brev.sv copy.md` promotes to a Swedish
+    // `brev` exactly as `brev.sv.md` would.
+    let ident = claim.unwrap_or(&child.stem);
+    let lang = own_language(&child, &item.name);
     let tags = read_tags_colored(&item.path);
-    let mtime = mtime_local(&item.path).unwrap_or_else(epoch);
+    let mtime = child.mtime;
     // Bare file: the file itself is both the commented object and the text source.
     let excerpt = row_description(&item.path, &item.path, ext);
     // Display title = the primary's first H1 if present, else the filename text
@@ -291,6 +296,9 @@ fn build_bare_post(item: &TopItem, claim: Option<&str>) -> Entry {
         attachments: Vec::new(),
         link_url,
         link_title: None,
+        lang,
+        versions: Vec::new(),
+        version: None,
     }
 }
 
@@ -389,6 +397,9 @@ fn build_folder_post(item: &TopItem, claim: Option<&str>) -> Entry {
         attachments: scan.attachments,
         link_url: scan.link_url,
         link_title: None,
+        lang: scan.lang,
+        versions: scan.versions,
+        version: None,
     }
 }
 
@@ -443,6 +454,9 @@ fn build_listing_post(
         attachments: Vec::new(),
         link_url: None,
         link_title: None,
+        lang: None,
+        versions: Vec::new(),
+        version: None,
     }
 }
 
@@ -469,6 +483,9 @@ fn errored_folder(item: &TopItem, label: &str, tags: Vec<Tag>, error: PostError)
         attachments: Vec::new(),
         link_url: None,
         link_title: None,
+        lang: None,
+        versions: Vec::new(),
+        version: None,
     }
 }
 
@@ -710,12 +727,180 @@ struct PrimaryFile {
     mtime: NaiveDateTime,
 }
 
-/// A regular file child of a folder post, with its stem split out.
+/// A regular file child of a folder post (or a bare top-level file), with its
+/// name grammar read once: `<stem>[.<lang>][ copy [n]].<ext>`. `stem` is the
+/// name with the copy suffix and the language subtag removed, so candidates
+/// compare on the post's name alone; `lang` is the canonical language tag when
+/// the subtag names one (`lang::filename_subtag`); `copy_rank` is set on a
+/// ` copy [n]` snapshot.
 struct FileChild {
     name: String,
     stem: String,
+    lang: Option<String>,
+    copy_rank: Option<u32>,
     path: PathBuf,
     mtime: NaiveDateTime,
+}
+
+/// Read a file's name grammar into a `FileChild`. The copy suffix is parsed
+/// first, the language subtag off what remains: `brev.sv copy 2.md` is rank 2
+/// of the Swedish `brev`; `notes.txt.md` keeps the stem `notes.txt` because
+/// `txt` is a file format, not a language here (see `lang`).
+fn file_child(name: String, path: PathBuf, mtime: NaiveDateTime) -> FileChild {
+    let (raw, _) = split_name(&name);
+    let (base, copy_rank) = match parse_revision_suffix(raw) {
+        Some((base, rank)) => (base, Some(rank)),
+        None => (raw.to_string(), None),
+    };
+    let (stem, lang) = split_lang(&base);
+    FileChild { name: name.clone(), stem: stem.to_string(), lang, copy_rank, path, mtime }
+}
+
+/// Split a language subtag off a stem: `brev.sv` -> (`brev`, Some("sv")),
+/// `notes.txt` -> (`notes.txt`, None), `brev` -> (`brev`, None).
+fn split_lang(stem: &str) -> (&str, Option<String>) {
+    if let Some((base, token)) = stem.rsplit_once('.') {
+        if !base.is_empty() {
+            if let Some(tag) = crate::lang::filename_subtag(token) {
+                return (base, Some(tag));
+            }
+        }
+    }
+    (stem, None)
+}
+
+/// The language a file's content is in, when it differs from the site's:
+/// `None` for an unsuffixed file and for one whose subtag names the site
+/// language (`brev.en.md` on an English site is the site-language file).
+/// Logs every recognition with the language's name, so a subtag read as a
+/// language by mistake (`notes.old.md`) is never silent.
+fn own_language(child: &FileChild, shown_name: &str) -> Option<String> {
+    let tag = child.lang.as_deref()?;
+    tracing::info!(
+        "{}: read '{}' as a language ({}); the file is named '{}'.",
+        shown_name,
+        tag,
+        crate::lang::english_name(tag),
+        child.stem
+    );
+    if crate::lang::same(tag, &crate::config::site().language) {
+        return None;
+    }
+    Some(tag.to_string())
+}
+
+/// Which file a folder's primary is (post-model.md §1 + DESIGN.md "Languages").
+enum PrimaryPick<'a> {
+    /// One file is the primary.
+    One(&'a FileChild),
+    /// No file can be: the folder lists instead (or is empty).
+    NoneOf,
+    /// Several files claim the slot: never guess. Their names, for the notice.
+    Collision(Vec<String>),
+}
+
+/// Whether a file's stem names the folder post: `index`, or the folder's name
+/// compared on the slug (so `My Resumé/my-resume.md` matches, post-model.md §1).
+fn is_primary_candidate(f: &FileChild, label: &str) -> bool {
+    f.stem.eq_ignore_ascii_case("index")
+        || slug(&f.stem) == slug(label) && slug(label).is_some()
+        || f.stem == label
+}
+
+/// Choose a folder post's primary among its plain (non-copy) files. Among the
+/// candidates the site-language file wins: the unsuffixed one, or one whose
+/// subtag names the site language; two of those collide. With no site-language
+/// candidate, a single candidate in another language IS the post (a
+/// Swedish-only post); several foreign candidates and no site-language one
+/// collide, since nothing says which language the bare address should show.
+/// With no candidate at all, a lone file is the primary; several files list.
+fn pick_primary<'a>(plain: &'a [FileChild], label: &str) -> PrimaryPick<'a> {
+    let candidates: Vec<&FileChild> = plain.iter().filter(|f| is_primary_candidate(f, label)).collect();
+    let site_language = &crate::config::site().language;
+    let home: Vec<&FileChild> = candidates
+        .iter()
+        .copied()
+        .filter(|f| f.lang.as_deref().map_or(true, |l| crate::lang::same(l, site_language)))
+        .collect();
+    let names = |set: &[&FileChild]| {
+        let mut names: Vec<String> = set.iter().map(|f| f.name.clone()).collect();
+        names.sort();
+        names
+    };
+    match home.len() {
+        1 => PrimaryPick::One(home[0]),
+        0 => match candidates.len() {
+            1 => PrimaryPick::One(candidates[0]),
+            0 if plain.len() == 1 => PrimaryPick::One(&plain[0]),
+            0 => PrimaryPick::NoneOf,
+            _ => PrimaryPick::Collision(names(&candidates)),
+        },
+        _ => PrimaryPick::Collision(names(&home)),
+    }
+}
+
+/// The other-language versions of a folder post: every candidate file besides
+/// the primary whose subtag names a language other than the site's, one per
+/// language, each served only with its own `public` tag. Two files in the same
+/// language collide and are both left out (never guess); a version without its
+/// tag is withheld. Both are logged.
+fn collect_versions(plain: &[FileChild], primary: &FileChild, label: &str, dir: &Path) -> Vec<Version> {
+    let site_language = &crate::config::site().language;
+    let mut by_lang: Vec<(&FileChild, &str)> = plain
+        .iter()
+        .filter(|f| f.path != primary.path && is_primary_candidate(f, label))
+        .filter_map(|f| f.lang.as_deref().map(|l| (f, l)))
+        .filter(|(_, l)| !crate::lang::same(l, site_language))
+        .collect();
+    by_lang.sort_by(|a, b| a.1.cmp(b.1).then_with(|| a.0.name.cmp(&b.0.name)));
+    let mut versions: Vec<Version> = Vec::new();
+    let mut i = 0;
+    while i < by_lang.len() {
+        let (file, tag) = by_lang[i];
+        let mut j = i + 1;
+        while j < by_lang.len() && crate::lang::same(by_lang[j].1, tag) {
+            j += 1;
+        }
+        if j - i > 1 {
+            let names: Vec<&str> = by_lang[i..j].iter().map(|(f, _)| f.name.as_str()).collect();
+            tracing::warn!(
+                "Folder post {} has {} files in the language '{}' ({}); declining to pick a \
+                 version and serving none of them. Keep one.",
+                dir.display(),
+                j - i,
+                tag,
+                names.join(", ")
+            );
+        } else if !file_is_public(&file.path) {
+            tracing::warn!(
+                "Folder post {} withholds its '{}' version '{}': the file is not tagged \
+                 `public` (file content is only served with its own tag).",
+                dir.display(),
+                tag,
+                file.name
+            );
+        } else {
+            tracing::info!(
+                "Folder post {}: '{}' is the {} ({}) version, at /{}/{}.",
+                dir.display(),
+                file.name,
+                crate::lang::english_name(tag),
+                tag,
+                label,
+                tag
+            );
+            let ext = split_name(&file.name).1;
+            versions.push(Version {
+                lang: tag.to_string(),
+                path: file.path.clone(),
+                extension: ext.to_string(),
+                mtime: file.mtime,
+                display_label: extract_h1(&file.path, ext),
+            });
+        }
+        i = j;
+    }
+    versions
 }
 
 /// The result of scanning a folder post's contents. Exactly one of `primary`,
@@ -734,6 +919,10 @@ struct FolderScan {
     date_marker: Option<PostDate>,
     aliases: Vec<String>,
     revisions: Vec<Revision>,
+    /// The primary's language when it is not the site's (a Swedish-only post).
+    lang: Option<String>,
+    /// The post's other-language versions (primary branch only).
+    versions: Vec<Version>,
     error: Option<PostError>,
 }
 
@@ -858,9 +1047,8 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
                 tracing::debug!("Ignoring non-public subfolder in {}: {}", dir.display(), cname);
             }
         } else {
-            let stem = split_name(&cname).0.to_string();
             let mtime = mtime_local(&cpath).unwrap_or_else(epoch);
-            files.push(FileChild { name: cname, stem, path: cpath, mtime });
+            files.push(file_child(cname, cpath, mtime));
         }
     }
 
@@ -877,29 +1065,22 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
             date_marker: None,
             aliases,
             revisions: Vec::new(),
+            lang: None,
+            versions: Vec::new(),
             error: Some(PostError::MultipleDateMarkers(names)),
         });
     }
     let date_marker = date_markers.into_iter().next().map(|(_, dt)| dt);
 
     // ` copy [n]` files are revision snapshots; the rest are primary/asset files.
-    let mut copies: Vec<(FileChild, String, u32)> = Vec::new();
-    let mut plain: Vec<FileChild> = Vec::new();
-    for f in files {
-        match parse_revision_suffix(&f.stem) {
-            Some((base, rank)) => copies.push((f, base, rank)),
-            None => plain.push(f),
-        }
-    }
+    let (copies, plain): (Vec<FileChild>, Vec<FileChild>) =
+        files.into_iter().partition(|f| f.copy_rank.is_some());
 
     // Primary candidates = files whose stem is `index` or the folder name,
-    // compared on the slug so `My Resumé/my-resume.md` matches (post-model.md §1).
-    let is_candidate = |f: &FileChild| {
-        f.stem.eq_ignore_ascii_case("index")
-            || slug(&f.stem) == slug(label) && slug(label).is_some()
-            || f.stem == label
-    };
-    let candidates: Vec<&FileChild> = plain.iter().filter(|f| is_candidate(f)).collect();
+    // compared on the slug so `My Resumé/my-resume.md` matches (post-model.md §1);
+    // among them the site-language file (`pick_primary`).
+    let is_candidate = |f: &FileChild| is_primary_candidate(f, label);
+    let pick = pick_primary(&plain, label);
 
     // An `index/` marker forces a listing even when a primary could resolve; an
     // `index`/folder-name document then becomes the listing's intro prose — but
@@ -916,23 +1097,18 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
             date_marker,
             aliases,
             revisions: Vec::new(),
+            lang: None,
+            versions: Vec::new(),
             error: None,
         });
     }
 
-    // One candidate → primary; none but a single lone file → that file. Both
-    // remaining cases demote to a listing instead of erroring (post-model.md §6):
-    // several candidates → decline to guess + collision notice; no candidate with
-    // several files → an automatic listing. A truly empty folder is NoPrimary.
-    let primary_child: Option<&FileChild> = match candidates.len() {
-        1 => Some(candidates[0]),
-        0 if plain.len() == 1 => Some(&plain[0]),
-        _ => None,
-    };
-
-    let primary_child = match primary_child {
-        Some(p) => p,
-        None => {
+    // One primary, or a demotion to a listing instead of an error (post-model.md
+    // §6): several claimants → decline to guess + collision notice; no candidate
+    // with several files → an automatic listing. A truly empty folder is NoPrimary.
+    let primary_child = match pick {
+        PrimaryPick::One(p) => p,
+        other => {
             // Truly empty (no files and no public subfolders) is the only NoPrimary
             // case; a folder of only public subfolders is a listing of them.
             if plain.is_empty() && subdirs.is_empty() {
@@ -944,25 +1120,26 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
                     date_marker,
                     aliases,
                     revisions: Vec::new(),
+                    lang: None,
+                    versions: Vec::new(),
                     error: Some(PostError::NoPrimary),
                 });
             }
             // Several primary candidates: never guess which gets the headline —
             // decline and list, with a prominent collision notice (silenced only
             // by an intentional `index/` marker) logged loudly.
-            let collision: Vec<String> = if candidates.len() > 1 {
-                let mut names: Vec<String> = candidates.iter().map(|f| f.name.clone()).collect();
-                names.sort();
-                tracing::warn!(
-                    "Folder post {} has several primary candidates ({}); declining to pick and \
-                     listing instead. Remove one, or add an empty `index/` marker to make the \
-                     listing intentional.",
-                    dir.display(),
-                    names.join(", ")
-                );
-                names
-            } else {
-                Vec::new()
+            let collision: Vec<String> = match other {
+                PrimaryPick::Collision(names) => {
+                    tracing::warn!(
+                        "Folder post {} has several primary candidates ({}); declining to pick and \
+                         listing instead. Remove one (or give one the site's language), or add an \
+                         empty `index/` marker to make the listing intentional.",
+                        dir.display(),
+                        names.join(", ")
+                    );
+                    names
+                }
+                _ => Vec::new(),
             };
             let listing = build_listing(&plain, &subdirs, None, collision);
             return Ok(FolderScan {
@@ -973,6 +1150,8 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
                 date_marker,
                 aliases,
                 revisions: Vec::new(),
+                lang: None,
+                versions: Vec::new(),
                 error: None,
             });
         }
@@ -1000,18 +1179,34 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
             date_marker,
             aliases,
             revisions: Vec::new(),
+            lang: None,
+            versions: Vec::new(),
             error: None,
         });
     }
 
-    // Revisions = ` copy [n]` files that snapshot the primary (share its stem).
-    // Same per-file rule: an untagged snapshot's content is never served, so it
-    // never becomes an addressable revision.
-    let primary_stem = primary_child.stem.clone();
+    // Revisions = ` copy [n]` files that snapshot the primary (share its stem
+    // and its language). Same per-file rule: an untagged snapshot's content is
+    // never served, so it never becomes an addressable revision. A snapshot of
+    // another language's version is not addressable either (versions carry no
+    // revision nav); it is left out and logged, never silently.
     let mut revisions: Vec<Revision> = copies
         .iter()
-        .filter(|(f, base, _)| *base == primary_stem && file_is_public(&f.path))
-        .map(|(f, _, rank)| Revision { date: f.mtime, path: f.path.clone(), rank: *rank })
+        .filter(|f| f.stem == primary_child.stem)
+        .filter(|f| {
+            if f.lang != primary_child.lang {
+                tracing::info!(
+                    "Folder post {}: the snapshot '{}' is of another language's version and is not \
+                     served as a revision.",
+                    dir.display(),
+                    f.name
+                );
+                return false;
+            }
+            true
+        })
+        .filter(|f| file_is_public(&f.path))
+        .map(|f| Revision { date: f.mtime, path: f.path.clone(), rank: f.copy_rank.unwrap_or(1) })
         .collect();
     sort_revisions(&mut revisions);
 
@@ -1020,6 +1215,9 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         path: primary_child.path.clone(),
         mtime: primary_child.mtime,
     };
+    let lang = own_language(primary_child, &format!("{}/{}", dir.display(), primary_child.name));
+    let versions = collect_versions(&plain, primary_child, label, dir);
+    let version_paths: Vec<&Path> = versions.iter().map(|v| v.path.as_path()).collect();
 
     // Outbound destination (post-model.md §4): a bookmark or a `link.*` text
     // sidecar drops out of the file set and becomes the post's cite. Candidacy
@@ -1072,12 +1270,14 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
 
     // Attachments = the post's public sibling files + public subfolders (folder
     // rows), in filename order — rendered below the body (post-model.md §6). The
-    // promoted destination file drops out (it is the cite, not a listed sibling).
+    // promoted destination file drops out (it is the cite, not a listed sibling),
+    // and so do the language versions (they are the post, in other languages).
     let mut att_files: Vec<ListItem> = plain
         .iter()
         .filter(|f| {
             f.path != primary_child.path
                 && Some(&f.path) != link_path.as_ref()
+                && !version_paths.contains(&f.path.as_path())
                 && file_is_public(&f.path)
         })
         .map(to_list_item)
@@ -1095,6 +1295,8 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         date_marker,
         aliases,
         revisions,
+        lang,
+        versions,
         error: None,
     })
 }
@@ -1133,12 +1335,12 @@ pub fn build_dir_listing(dir: &Path) -> Listing {
                 }
             }
             Ok(_) => {
-                let stem = split_name(&cname).0.to_string();
-                if parse_revision_suffix(&stem).is_some() {
+                let mtime = mtime_local(&cpath).unwrap_or_else(epoch);
+                let child = file_child(cname, cpath, mtime);
+                if child.copy_rank.is_some() {
                     continue; // `copy [n]` snapshots are not listed
                 }
-                let mtime = mtime_local(&cpath).unwrap_or_else(epoch);
-                plain.push(FileChild { name: cname, stem, path: cpath, mtime });
+                plain.push(child);
             }
             Err(_) => continue,
         }
@@ -1157,11 +1359,14 @@ fn file_is_public(path: &Path) -> bool {
 
 /// Turn a folder child into a listing row (size + image classification read here).
 fn to_list_item(f: &FileChild) -> ListItem {
-    let ext = split_name(&f.name).1.to_ascii_lowercase();
+    // The row shows the file's own name: `brev.sv` for `brev.sv.md`, since a
+    // listing has no versions, only files.
+    let (stem, ext) = split_name(&f.name);
+    let ext = ext.to_ascii_lowercase();
     let size = std::fs::metadata(&f.path).map(|m| m.len()).unwrap_or(0);
     ListItem {
         name: f.name.clone(),
-        stem: f.stem.clone(),
+        stem: stem.to_string(),
         is_image: is_image_ext(&ext),
         ext,
         path: f.path.clone(),
@@ -1233,17 +1438,17 @@ fn build_listing(
 /// the copy stays reachable through the revision dropdown and its date-path URL.
 /// Recovery from an unwanted collapse is one rename.
 fn attach_revisions(entries: &mut Vec<Entry>, revisions: &[TopItem]) {
-    // Copies whose base has no current post, grouped by base for promotion.
-    let mut orphans: HashMap<String, Vec<(&TopItem, u32)>> = HashMap::new();
+    // Copies whose base has no current post, grouped by base (and, for file
+    // copies, language: `brev.sv copy.md` is a family of its own) for promotion.
+    let mut orphans: HashMap<(String, Option<String>), Vec<(&TopItem, u32)>> = HashMap::new();
 
     for rev in revisions {
-        let stem = if rev.is_dir { rev.name.clone() } else { split_name(&rev.name).0.to_string() };
-        let (base, rank) = match parse_revision_suffix(&stem) {
+        let (base, lang, rank) = match revision_family(rev) {
             Some(v) => v,
             None => continue, // only copies reach here
         };
 
-        match choose_current(entries, &base, rev.is_dir) {
+        match choose_current(entries, &base, rev.is_dir, lang.as_deref()) {
             Some(i) => {
                 let (rev_path, rev_mtime) = match revision_primary(rev) {
                     Some(v) => v,
@@ -1272,12 +1477,12 @@ fn attach_revisions(entries: &mut Vec<Entry>, revisions: &[TopItem]) {
                     rev.name
                 );
             }
-            None => orphans.entry(base).or_default().push((rev, rank)),
+            None => orphans.entry((base, lang)).or_default().push((rev, rank)),
         }
     }
 
     // Promote each base-absent family: newest copy becomes the post, rest revisions.
-    for (base, group) in orphans {
+    for ((base, _lang), group) in orphans {
         // Resolve each orphan's primary (path + mtime); drop the unreadable ones.
         let mut resolved: Vec<(&TopItem, u32, PathBuf, NaiveDateTime)> = group
             .into_iter()
@@ -1322,14 +1527,37 @@ fn attach_revisions(entries: &mut Vec<Entry>, revisions: &[TopItem]) {
     }
 }
 
+/// The family a top-level ` copy [n]` sibling belongs to: `(base, language,
+/// rank)`. A folder copy's name is the base itself (`brev copy/`); a file copy
+/// also carries the base's language subtag (`brev.sv copy.md` revises the
+/// Swedish `brev`, never the English one).
+fn revision_family(rev: &TopItem) -> Option<(String, Option<String>, u32)> {
+    if rev.is_dir {
+        let (base, rank) = parse_revision_suffix(&rev.name)?;
+        return Some((base, None, rank));
+    }
+    let child = file_child(rev.name.clone(), rev.path.clone(), epoch());
+    let rank = child.copy_rank?;
+    // A subtag naming the site language is the site-language file, like an
+    // unsuffixed one (`own_language`), so it revises the unsuffixed post.
+    let lang = child
+        .lang
+        .filter(|l| !crate::lang::same(l, &crate::config::site().language));
+    Some((child.stem, lang, rank))
+}
+
 /// Index of the current post a `<base> copy` should revise: one whose label is
-/// exactly `base`, preferring a kind match (folder copy → folder post, file copy →
-/// bare file) when the name is claimed by both. `None` when no current post
-/// carries the name — the copy is then an orphan for `attach_revisions` to promote.
-fn choose_current(entries: &[Entry], base: &str, is_dir: bool) -> Option<usize> {
+/// exactly `base` (and, for a file copy, whose language is the copy's),
+/// preferring a kind match (folder copy → folder post, file copy → bare file)
+/// when the name is claimed by both. `None` when no current post carries the
+/// name — the copy is then an orphan for `attach_revisions` to promote.
+fn choose_current(entries: &[Entry], base: &str, is_dir: bool, lang: Option<&str>) -> Option<usize> {
     let mut chosen: Option<usize> = None;
     for (i, e) in entries.iter().enumerate() {
         if e.error.is_some() || e.label.as_deref() != Some(base) {
+            continue;
+        }
+        if !is_dir && e.lang.as_deref() != lang {
             continue;
         }
         match chosen {
@@ -1359,7 +1587,7 @@ fn revision_chain_public(rev: &TopItem, primary: &Path) -> bool {
 /// resolved against the family base, not the copy's own (renamed) folder.
 fn revision_primary(rev: &TopItem) -> Option<(PathBuf, NaiveDateTime)> {
     if rev.is_dir {
-        let (base, _) = parse_revision_suffix(&rev.name)?;
+        let (base, _, _) = revision_family(rev)?;
         resolve_primary_file(&rev.path, &base)
     } else {
         Some((rev.path.clone(), mtime_local(&rev.path)?))
@@ -1389,24 +1617,18 @@ fn resolve_primary_file(dir: &Path, match_name: &str) -> Option<(PathBuf, NaiveD
             Ok(_) => {}
             Err(_) => continue,
         }
-        let stem = split_name(&cname).0.to_string();
-        if parse_revision_suffix(&stem).is_some() {
+        let mtime = mtime_local(&cpath).unwrap_or_else(epoch);
+        let child = file_child(cname, cpath, mtime);
+        if child.copy_rank.is_some() {
             continue; // a copy folder's own inner snapshots don't count as primary
         }
-        let mtime = mtime_local(&cpath).unwrap_or_else(epoch);
-        plain.push(FileChild { name: cname, stem, path: cpath, mtime });
+        plain.push(child);
     }
 
-    let candidates: Vec<&FileChild> = plain
-        .iter()
-        .filter(|f| f.stem == match_name || f.stem.eq_ignore_ascii_case("index"))
-        .collect();
-    let chosen = match candidates.len() {
-        1 => candidates[0],
-        0 if plain.len() == 1 => &plain[0],
-        _ => return None,
-    };
-    Some((chosen.path.clone(), chosen.mtime))
+    match pick_primary(&plain, match_name) {
+        PrimaryPick::One(chosen) => Some((chosen.path.clone(), chosen.mtime)),
+        _ => None,
+    }
 }
 
 // ─── Parsing helpers ─────────────────────────────────────────────
@@ -2532,5 +2754,191 @@ mod tests {
         let entries = scan_entries(t.path()).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].label.as_deref(), Some("real"));
+    }
+
+    // ---- languages (DESIGN.md "Languages") --------------------------------
+
+    /// The entry with this label in this language (several posts may share a
+    /// label across languages: `brev.md` and `brev.sv.md` at the top level).
+    fn find_lang<'a>(entries: &'a [Entry], label: &str, lang: Option<&str>) -> &'a Entry {
+        entries
+            .iter()
+            .find(|e| e.label.as_deref() == Some(label) && e.lang.as_deref() == lang)
+            .unwrap_or_else(|| panic!("no entry {label:?} in language {lang:?}"))
+    }
+
+    #[test]
+    fn language_versions_pair_inside_a_folder_post() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev/brev.md", "# Letter\n\nEnglish.");
+        touch(t.path(), "brev/brev.sv.md", "# Brev\n\nSvenska.");
+        touch(t.path(), "brev/brev.de.adoc", "= Brief\n\nDeutsch.");
+        touch(t.path(), "brev/photo.jpg", "img");
+        for f in ["brev/brev.md", "brev/brev.sv.md", "brev/brev.de.adoc", "brev/photo.jpg"] {
+            if !set_tags(&t.path().join(f), &["public"]) {
+                return; // xattr unsupported — skip
+            }
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "brev");
+        assert!(e.path.ends_with("brev.md"), "the unsuffixed file is the site-language primary");
+        assert_eq!(e.lang, None);
+        assert_eq!(e.version, None);
+        let tags: Vec<&str> = e.versions.iter().map(|v| v.lang.as_str()).collect();
+        assert_eq!(tags, vec!["de", "sv"], "versions sort by tag");
+        assert_eq!(e.versions[0].extension, "adoc", "a version may be another format");
+        assert_eq!(e.versions[1].display_label.as_deref(), Some("Brev"), "a version has its own title");
+        assert!(e.version("SV").is_some(), "tags match case-insensitively");
+        let att: Vec<&str> = e.attachments.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(att, vec!["photo.jpg"], "versions are the post, never attachments");
+
+        let shown = e.show_version(e.version("sv").unwrap());
+        assert!(shown.path.ends_with("brev.sv.md"));
+        assert_eq!(shown.lang.as_deref(), Some("sv"));
+        assert_eq!(shown.version.as_deref(), Some("sv"));
+        assert_eq!(shown.display_label.as_deref(), Some("Brev"));
+        assert_eq!(shown.versions.len(), 2, "the shown value still knows every version");
+    }
+
+    #[test]
+    fn top_level_language_file_is_a_post_in_that_language() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev.sv.md", "# Brev\n\nSvenska.");
+        touch(t.path(), "brev.md", "# Letter\n\nEnglish.");
+        let entries = scan_entries(t.path()).unwrap();
+        let sv = find_lang(&entries, "brev", Some("sv"));
+        assert_eq!(sv.slug.as_deref(), Some("brev"), "named `brev`, claiming /brev like the English one");
+        assert!(sv.versions.is_empty(), "top-level files never pair as versions");
+        let en = find_lang(&entries, "brev", None);
+        assert!(en.versions.is_empty());
+    }
+
+    #[test]
+    fn file_format_tokens_stay_in_the_stem() {
+        let t = TmpDir::new();
+        touch(t.path(), "notes.txt.md", "about a text file");
+        touch(t.path(), "paper.tex.md", "about a TeX file");
+        touch(t.path(), "archive.tar.gz", "bytes");
+        let entries = scan_entries(t.path()).unwrap();
+        for label in ["notes.txt", "paper.tex", "archive.tar"] {
+            let e = find(&entries, label);
+            assert_eq!(e.lang, None, "{label}: a file format is not a language here");
+        }
+    }
+
+    #[test]
+    fn site_language_subtag_is_the_site_language_file() {
+        // `x.en.md` on an English site is the site-language file: alone it is the
+        // primary (in no other language); next to `x.md` it collides.
+        let t = TmpDir::new();
+        touch(t.path(), "alone/alone.en.md", "English, said so");
+        touch(t.path(), "both/both.md", "English");
+        touch(t.path(), "both/both.en.md", "English again");
+        if !set_tags(&t.path().join("alone/alone.en.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        let alone = find(&entries, "alone");
+        assert!(alone.path.ends_with("alone.en.md"));
+        assert_eq!(alone.lang, None, "the site language is not a foreign language");
+        assert!(alone.versions.is_empty());
+        let both = find(&entries, "both");
+        let listing = both.listing.as_ref().expect("two site-language files collide -> listing");
+        assert_eq!(listing.collision, vec!["both.en.md".to_string(), "both.md".to_string()]);
+    }
+
+    #[test]
+    fn foreign_candidates_without_a_site_language_one() {
+        // One foreign candidate alone IS the post, in that language. Two foreign
+        // candidates with no site-language file collide: nothing says which
+        // language the bare address should show.
+        let t = TmpDir::new();
+        touch(t.path(), "solo/solo.sv.md", "# Ensam\n\nSvenska.");
+        touch(t.path(), "pair/pair.sv.md", "Svenska");
+        touch(t.path(), "pair/pair.de.md", "Deutsch");
+        if !set_tags(&t.path().join("solo/solo.sv.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        let solo = find(&entries, "solo");
+        assert!(solo.listing.is_none());
+        assert_eq!(solo.lang.as_deref(), Some("sv"));
+        assert!(solo.versions.is_empty());
+        let pair = find(&entries, "pair");
+        let listing = pair.listing.as_ref().expect("two foreign files, no site-language one -> listing");
+        assert_eq!(listing.collision.len(), 2);
+    }
+
+    #[test]
+    fn untagged_version_is_withheld() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev/brev.md", "English");
+        touch(t.path(), "brev/brev.sv.md", "untagged -> never served");
+        if !set_tags(&t.path().join("brev/brev.md"), &["public"]) {
+            return; // xattr unsupported — skip
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "brev");
+        assert!(e.listing.is_none());
+        assert!(e.versions.is_empty(), "a version serves content, so it needs its own tag");
+        assert!(e.attachments.is_empty(), "and it never lists as an attachment either");
+    }
+
+    #[test]
+    fn two_files_in_one_language_serve_neither() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev/brev.md", "English");
+        touch(t.path(), "brev/brev.sv.md", "Svenska");
+        touch(t.path(), "brev/brev.sv.adoc", "Svenska igen");
+        for f in ["brev/brev.md", "brev/brev.sv.md", "brev/brev.sv.adoc"] {
+            if !set_tags(&t.path().join(f), &["public"]) {
+                return; // xattr unsupported — skip
+            }
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        assert!(find(&entries, "brev").versions.is_empty(), "never guess between two Swedish files");
+    }
+
+    #[test]
+    fn snapshots_follow_their_own_language() {
+        // In a folder, only snapshots of the primary (same stem AND language)
+        // are revisions. At the top level, `brev.sv copy.md` revises the Swedish
+        // `brev`, never the English one.
+        let t = TmpDir::new();
+        touch(t.path(), "post/post.md", "English");
+        touch(t.path(), "post/post.sv.md", "Svenska");
+        touch(t.path(), "post/post.sv copy.md", "an earlier Swedish state");
+        touch(t.path(), "post/post copy.md", "an earlier English state");
+        touch(t.path(), "brev.md", "English");
+        touch(t.path(), "brev.sv.md", "Svenska");
+        touch(t.path(), "brev.sv copy.md", "an earlier Swedish state");
+        for f in [
+            "post/post.md",
+            "post/post.sv.md",
+            "post/post.sv copy.md",
+            "post/post copy.md",
+            "brev.sv copy.md",
+        ] {
+            if !set_tags(&t.path().join(f), &["public"]) {
+                return; // xattr unsupported — skip
+            }
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        let post = find(&entries, "post");
+        assert_eq!(post.revisions.len(), 1, "only the English snapshot revises the primary");
+        assert!(post.revisions[0].path.ends_with("post copy.md"));
+        assert_eq!(post.versions.len(), 1);
+        assert_eq!(find_lang(&entries, "brev", Some("sv")).revisions.len(), 1);
+        assert!(find_lang(&entries, "brev", None).revisions.is_empty());
+    }
+
+    #[test]
+    fn an_orphan_copy_keeps_its_language_when_promoted() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev.sv copy.md", "# Brev\n\nonly a copy survives");
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find_lang(&entries, "brev", Some("sv"));
+        assert_eq!(e.slug.as_deref(), Some("brev"));
+        assert!(e.revisions.is_empty());
     }
 }

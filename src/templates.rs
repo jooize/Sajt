@@ -897,6 +897,32 @@ main > article + article { margin-top: 3.2rem; padding-top: 3.2rem; border-top: 
 #continue > label[hidden] { display: none; }
 #continue > label input { margin: 0; accent-color: var(--violet); }
 
+/* ---------- languages (DESIGN.md "Languages") ----------
+   The notice at the top of a multi-version post names the language shown
+   and links the others. Quiet by default; an edge redirect lands on its
+   fragment (#redirected-for-language) and :target makes it prominent, as
+   does [data-redirected], which the script sets before it drops the
+   fragment from the address (some browsers stop matching :target then). */
+#redirected-for-language { margin: 0 0 1.4rem; font: 500 .8rem var(--sans); color: var(--faint); }
+#redirected-for-language b { font-weight: 600; color: var(--soft); }
+#redirected-for-language a { color: var(--soft); }
+#redirected-for-language a:hover { color: var(--violet); }
+#redirected-for-language:target,
+#redirected-for-language[data-redirected] {
+  padding: .75rem 1rem;
+  border-left: 2px solid var(--violet);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--violet) 8%, var(--bg));
+  font-size: .9rem;
+  color: var(--ink);
+}
+#redirected-for-language:target b,
+#redirected-for-language[data-redirected] b { color: var(--violet); }
+/* the row's "also in svenska" line */
+main section article > div > nav { margin: .12rem 0 0; font: 500 .78rem var(--sans); color: var(--faint); }
+main section article > div > nav a { color: var(--soft); }
+main section article > div > nav a:hover { color: var(--violet); text-decoration: none; }
+
 /* ---- folder listings (post-model.md §6): gallery / file list ---- */
 /* Scoped under #listing so its resets beat the prose `section ul/ol` rules. */
 #listing > h1 { font-size: 1.35rem; font-weight: 680; letter-spacing: -.02em; margin: .3rem 0 1rem; }
@@ -1585,6 +1611,15 @@ pub const JS: &str = r##"
           (mainEl.getBoundingClientRect().height + (need - docEl.scrollHeight)) + "px";
       }
     }
+    /* the language notice: an edge redirect lands on #redirected-for-language;
+       keep the prominence as an attribute and drop the fragment, so a copied
+       address is clean. Without JS the fragment simply stays until the next
+       navigation. */
+    var redirected = document.getElementById("redirected-for-language");
+    if (redirected && location.hash === "#redirected-for-language") {
+      redirected.setAttribute("data-redirected", "");
+      try { history.replaceState(null, "", location.pathname + location.search); } catch (err) {}
+    }
     if (!location.hash && window.scrollY === 0) {
       recomputePad();
       window.scrollTo(0, landingTop());
@@ -2116,7 +2151,7 @@ fn site_title(subject: &str) -> String {
     }
 }
 
-fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> String {
+fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool, head: &str) -> String {
     let site = crate::config::site();
     let view_attr = if saved_view { r#" data-view="saved""# } else { "" };
     // The reading-typeface toggle is an entry-page affordance only (the serif
@@ -2149,7 +2184,7 @@ fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> Str
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <link rel="stylesheet" href="{css_href}">
-<script src="{boot_href}"></script>
+{head}<script src="{boot_href}"></script>
 </head>
 <body data-page="{page_kind}"{view_attr}>
 {body}
@@ -2166,6 +2201,7 @@ fn page_shell(title: &str, body: &str, page_kind: &str, saved_view: bool) -> Str
         site_name = html_escape(&site.name),
         title = html_escape(title),
         css_href = crate::assets::SITE_CSS.url(),
+        head = head,
         boot_href = crate::assets::BOOT_JS.url(),
         site_href = crate::assets::SITE_JS.url(),
         page_kind = page_kind,
@@ -2266,7 +2302,20 @@ fn name_shares<'a>(entry: &Entry, all_entries: &[&'a Entry]) -> Vec<&'a Entry> {
 ///
 /// The `path` is decoded (compare against decoded request paths); run it
 /// through [`encode_path`] before emitting into an href or Location header.
+///
+/// A value showing one of the post's language versions (`Entry::show_version`)
+/// is addressed one segment below the post: `/label/sv`, `/2026/03/12/label/sv`.
 pub fn canonical(entry: &Entry, all_entries: &[&Entry]) -> Canonical {
+    let mut canonical = canonical_post(entry, all_entries);
+    if let Some(tag) = &entry.version {
+        canonical.path.push('/');
+        canonical.path.push_str(tag);
+    }
+    canonical
+}
+
+/// The post's own address, whichever language version the value shows.
+fn canonical_post(entry: &Entry, all_entries: &[&Entry]) -> Canonical {
     let base = entry.timestamp.date_path();
     // An unlabeled/reserved post is addressed at its date path plus a time segment
     // when it has a real time (minute/second precision); coarse dates have none.
@@ -2304,6 +2353,135 @@ pub fn canonical(entry: &Entry, all_entries: &[&Entry]) -> Canonical {
             Some(hms) => Canonical { path: format!("{}/{}/{}", base, hms, slug) },
             None => Canonical { path: format!("{}/{}", base, slug) },
         }
+    }
+}
+
+/// One language a post exists in: its tag, its address, and its name in that
+/// language. The site-language page comes first (the bare address), then the
+/// versions in tag order. `current` marks the one `entry` shows.
+pub struct Alternate {
+    pub hreflang: String,
+    /// The encoded path (`/label`, `/label/sv`).
+    pub href: String,
+    pub name: String,
+    pub current: bool,
+}
+
+/// Every language a post exists in, for the `hreflang` links (head and
+/// `Link` header), the language notice, and the row's "also in" line. Empty
+/// unless the post has versions.
+pub fn alternates(entry: &Entry, all_entries: &[&Entry]) -> Vec<Alternate> {
+    if entry.versions.is_empty() {
+        return Vec::new();
+    }
+    let base = canonical_post(entry, all_entries).path;
+    let site_language = &crate::config::site().language;
+    let mut out = vec![Alternate {
+        hreflang: site_language.clone(),
+        href: encode_path(&base),
+        name: crate::lang::autonym(site_language),
+        current: entry.version.is_none(),
+    }];
+    for v in &entry.versions {
+        out.push(Alternate {
+            hreflang: v.lang.clone(),
+            href: encode_path(&format!("{}/{}", base, v.lang)),
+            name: crate::lang::autonym(&v.lang),
+            current: entry.version.as_deref() == Some(v.lang.as_str()),
+        });
+    }
+    out
+}
+
+/// The `<link rel="alternate" hreflang>` elements for the page head: every
+/// language plus `x-default` for the site-language address. Search engines
+/// want these fully qualified, so the site's domain (`Sajt.toml`) prefixes
+/// them when it is configured; a site without one emits paths, which is
+/// still true on any host, and the domain is one line of config away.
+fn hreflang_links(entry: &Entry, all_entries: &[&Entry]) -> String {
+    let alternates = alternates(entry, all_entries);
+    if alternates.is_empty() {
+        return String::new();
+    }
+    let origin = match &crate::config::site().domain {
+        Some(domain) => format!("https://{}", domain),
+        None => String::new(),
+    };
+    let mut out = String::new();
+    for a in &alternates {
+        out.push_str(&format!(
+            "<link rel=\"alternate\" hreflang=\"{}\" href=\"{}{}\">\n",
+            html_escape(&a.hreflang),
+            html_escape(&origin),
+            html_escape(&a.href)
+        ));
+    }
+    out.push_str(&format!(
+        "<link rel=\"alternate\" hreflang=\"x-default\" href=\"{}{}\">\n",
+        html_escape(&origin),
+        html_escape(&alternates[0].href)
+    ));
+    out
+}
+
+/// The language notice at the top of `<main>` on every page of a post that
+/// exists in several languages: "Svenska. Also in English", each name an
+/// autonym linking to that version. Its id is the fragment an edge redirect
+/// lands on (`#redirected-for-language`), which the stylesheet makes
+/// prominent via `:target`; without the fragment it is the quiet version
+/// line. The text is true for anyone on this address, redirected or not.
+fn language_notice(entry: &Entry, all_entries: &[&Entry]) -> String {
+    let alternates = alternates(entry, all_entries);
+    let current = match alternates.iter().find(|a| a.current) {
+        Some(c) => c,
+        None => return String::new(),
+    };
+    let others: Vec<String> = alternates
+        .iter()
+        .filter(|a| !a.current)
+        .map(|a| {
+            format!(
+                r#"<a href="{href}" hreflang="{tag}" lang="{tag}">{name}</a>"#,
+                href = html_escape(&a.href),
+                tag = html_escape(&a.hreflang),
+                name = html_escape(&a.name),
+            )
+        })
+        .collect();
+    format!(
+        "<aside id=\"redirected-for-language\"><b lang=\"{tag}\">{name}</b>. Also in {others}.</aside>\n",
+        tag = html_escape(&current.hreflang),
+        name = html_escape(&crate::lang::sentence_case(&current.name)),
+        others = others.join(", "),
+    )
+}
+
+/// The row's quiet "also in svenska" line naming a post's other versions.
+fn row_versions(entry: &Entry, all_entries: &[&Entry]) -> String {
+    let others: Vec<String> = alternates(entry, all_entries)
+        .iter()
+        .filter(|a| !a.current)
+        .map(|a| {
+            format!(
+                r#"<a href="{href}" hreflang="{tag}" lang="{tag}">{name}</a>"#,
+                href = html_escape(&a.href),
+                tag = html_escape(&a.hreflang),
+                name = html_escape(&a.name),
+            )
+        })
+        .collect();
+    if others.is_empty() {
+        return String::new();
+    }
+    format!(r#"<nav aria-label="Other languages">also in {}</nav>"#, others.join(", "))
+}
+
+/// The `lang` attribute for content in the post's own language, empty when
+/// that is the site's (the `<html lang>` already says so).
+fn lang_attr(entry: &Entry) -> String {
+    match &entry.lang {
+        Some(l) => format!(r#" lang="{}""#, html_escape(l)),
+        None => String::new(),
     }
 }
 
@@ -2532,11 +2710,18 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
         None => format!(r#"<i>(untitled)</i><small>{}</small>"#, html_escape(&ext_suffix(entry))),
     };
 
+    // Content in the post's own language is marked so (the chrome around it
+    // stays in the site's).
+    let lang = lang_attr(entry);
+
     // The one-line description under the title (text posts only).
     let excerpt = match entry.excerpt.as_deref() {
-        Some(e) => format!("<p>{}</p>", html_escape(e)),
+        Some(e) => format!("<p{}>{}</p>", lang, html_escape(e)),
         None => String::new(),
     };
+
+    // The post's other languages, each named in its own.
+    let versions = row_versions(entry, all_entries);
 
     // A subtle, expandable note on rows that carry archived revisions.
     let revisions = if entry.revisions.is_empty() {
@@ -2629,10 +2814,12 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
         };
         let body = if is_link_post { String::new() } else { excerpt };
         format!(
-            r#"<h3><a href="{href}">{title}</a></h3>{body}{cite}{revisions}{shares}"#,
+            r#"<h3{lang}><a href="{href}">{title}</a></h3>{body}{versions}{cite}{revisions}{shares}"#,
+            lang = lang,
             href = html_escape(&href),
             title = title,
             body = body,
+            versions = versions,
             cite = cite,
             revisions = revisions,
             shares = shares,
@@ -2717,7 +2904,7 @@ pub fn timeline_page(
     }
 
     let body = format!("{}\n<main>{}</main>", render_site_header(ctx), rows);
-    page_shell(&title, &body, "timeline", ctx.saved_view)
+    page_shell(&title, &body, "timeline", ctx.saved_view, "")
 }
 
 // ---------------------------------------------------------------------------
@@ -2765,8 +2952,9 @@ fn continue_nav(next: Option<&Entry>, all_entries: &[&Entry]) -> String {
         None => "(untitled)".to_string(),
     };
     format!(
-        r#"<nav id="continue"><p>Continue</p><a href="{href}"><b>{title}</b><time datetime="{datetime}">{date}</time></a><label hidden><input type="checkbox" id="autoload"> keep loading as I scroll</label></nav>"#,
+        r#"<nav id="continue"><p>Continue</p><a href="{href}"><b{lang}>{title}</b><time datetime="{datetime}">{date}</time></a><label hidden><input type="checkbox" id="autoload"> keep loading as I scroll</label></nav>"#,
         href = html_escape(&href),
+        lang = lang_attr(next),
         title = title,
         datetime = html_escape(&datetime),
         date = html_escape(&date),
@@ -2930,7 +3118,7 @@ pub fn error_page(entry: &Entry, all_entries: &[&Entry]) -> String {
         headline = html_escape(&headline),
         detail = detail,
     );
-    page_shell(&site_title(&format!("error: {}", label)), &body, "entry", false)
+    page_shell(&site_title(&format!("error: {}", label)), &body, "entry", false, "")
 }
 
 /// The headline and detail (already-escaped HTML) for each scan failure.
@@ -3002,7 +3190,7 @@ pub fn entry_page(
         r#"{header}
 {crumbs}
 <main>
-<article id="post" data-canonical="{canonical}" data-title="{data_title}"{body_attr}>
+{notice}<article id="post" data-canonical="{canonical}" data-title="{data_title}"{body_attr}{lang}>
 {post_header}
 <section>{content}</section>
 {cite}
@@ -3014,11 +3202,13 @@ pub fn entry_page(
 </main>"#,
         header = render_site_header(&ctx),
         crumbs = crumbs(),
+        notice = language_notice(entry, all_entries),
         canonical = html_escape(&canon_href),
         data_title = html_escape(label),
         post_header = post_header(entry),
         content = rendered_html,
         body_attr = body_attr,
+        lang = lang_attr(entry),
         cite = cite_section(entry),
         attachments = attachments_section(entry, all_entries),
         extras = post_extras(entry, all_entries),
@@ -3026,7 +3216,7 @@ pub fn entry_page(
         continue_nav = continue_nav(next, all_entries),
     );
 
-    page_shell(&site_title(label), &body, "entry", false)
+    page_shell(&site_title(label), &body, "entry", false, &hreflang_links(entry, all_entries))
 }
 
 /// The label to title a standalone `.html` post with.
@@ -3059,7 +3249,7 @@ pub fn standalone_embed_page(entry: &Entry, all_entries: &[&Entry], next: Option
         r#"{header}
 {crumbs}
 <main>
-<article id="post" data-canonical="{canonical}" data-title="{data_title}">
+{notice}<article id="post" data-canonical="{canonical}" data-title="{data_title}"{lang}>
 {post_header}
 <div id="stage"><iframe id="se-frame" src="{embed_src}" sandbox="allow-scripts allow-popups" title="{data_title}" loading="lazy"></iframe></div>
 <p id="se-controls"><a href="{full_href}">Expand</a> <a href="{raw_href}">view source</a></p>
@@ -3070,6 +3260,8 @@ pub fn standalone_embed_page(entry: &Entry, all_entries: &[&Entry], next: Option
 </main>"#,
         header = render_site_header(&ctx),
         crumbs = crumbs(),
+        notice = language_notice(entry, all_entries),
+        lang = lang_attr(entry),
         canonical = html_escape(&canon_href),
         data_title = html_escape(label),
         post_header = post_header(entry),
@@ -3080,7 +3272,7 @@ pub fn standalone_embed_page(entry: &Entry, all_entries: &[&Entry], next: Option
         continue_nav = continue_nav(next, all_entries),
     );
 
-    page_shell(&site_title(label), &body, "entry", false)
+    page_shell(&site_title(label), &body, "entry", false, &hreflang_links(entry, all_entries))
 }
 
 /// Model B (`?fullscreen`): a standalone `.html` post given the whole viewport
@@ -3169,7 +3361,7 @@ pub fn listing_page(
         intro,
         &render_site_header(&ctx),
     );
-    page_shell(&site_title(label), &body, "listing", false)
+    page_shell(&site_title(label), &body, "listing", false, "")
 }
 
 /// A nested subfolder listing (`post-model.md` §6): `/label/sub/…` browsed as its
@@ -3197,7 +3389,7 @@ pub fn nested_listing_page(
 
     let body =
         listing_body(title, base_path, &encode_path(base_path), &header, listing, None, &render_site_header(&ctx));
-    page_shell(&site_title(title), &body, "listing", false)
+    page_shell(&site_title(title), &body, "listing", false, "")
 }
 
 /// The shared `<article id="listing">` body for both a top-level listing (Entry)
@@ -3521,7 +3713,7 @@ pub fn image_page(
         r#"{header}
 {crumbs}
 <main>
-<article id="post" data-canonical="{canonical}" data-title="{data_title}">
+{languages}<article id="post" data-canonical="{canonical}" data-title="{data_title}"{lang}>
 {post_header}
 <figure><img src="{img_src}" alt="{alt}"></figure>
 {notice}
@@ -3532,6 +3724,8 @@ pub fn image_page(
 </main>"#,
         header = render_site_header(&ctx),
         crumbs = crumbs(),
+        languages = language_notice(entry, all_entries),
+        lang = lang_attr(entry),
         canonical = html_escape(&canon_href),
         data_title = html_escape(label),
         post_header = post_header(entry),
@@ -3544,7 +3738,7 @@ pub fn image_page(
         continue_nav = continue_nav(next, all_entries),
     );
 
-    page_shell(&site_title(label), &body, "entry", false)
+    page_shell(&site_title(label), &body, "entry", false, &hreflang_links(entry, all_entries))
 }
 
 /// Post-header tags (horizontal, Finder-color dots) for entry/image pages.
@@ -3616,7 +3810,10 @@ fn closest_slugs<'a>(query: &str, all_entries: &[&'a Entry], max: usize) -> Vec<
 /// post renamed without an `alias`). It never auto-redirects (a reused name would
 /// mis-resolve); it offers the timeline, search, and closest-slug suggestions.
 /// Served with HTTP 404 by the router, identically to any missing path.
-pub fn not_found_label_page(label: &str, all_entries: &[&Entry]) -> String {
+/// `requested` is the decoded path the reader asked for, shown in full (a
+/// miss below a post, `/brev/sv`, names the whole address, not its last
+/// segment); `label` is the segment the suggestions are keyed on.
+pub fn not_found_label_page(requested: &str, label: &str, all_entries: &[&Entry]) -> String {
     let cloud = compute_cloud(all_entries);
     let view = ViewFilter::default();
     let ctx = HeaderContext::plain(&cloud, &view);
@@ -3647,17 +3844,17 @@ pub fn not_found_label_page(label: &str, all_entries: &[&Entry]) -> String {
 <header><time>404</time></header>
 <section>
 <h1>Nothing at that name</h1>
-<p>No post is addressed <code>/{label}</code>. It may have been renamed. Try the timeline, the search above, or:</p>
+<p>No post is addressed <code>{requested}</code>. It may have been renamed. Try the timeline, the search above, or:</p>
 {suggestions}
 </section>
 </article>
 </main>"#,
         header = render_site_header(&ctx),
         crumbs = crumbs(),
-        label = html_escape(label),
+        requested = html_escape(requested),
         suggestions = sugg_html,
     );
-    page_shell(&site_title(&format!("not found: {}", label)), &body, "entry", false)
+    page_shell(&site_title(&format!("not found: {}", requested)), &body, "entry", false, "")
 }
 
 /// Render the 404 page (minimal — no cloud, just the way home).
@@ -3685,7 +3882,7 @@ instead, with that metadata stripped.</p>
 </article>
 </main>"#
     );
-    page_shell(&site_title("Clean rendition"), &body, "plain", false)
+    page_shell(&site_title("Clean rendition"), &body, "plain", false, "")
 }
 
 pub fn not_found_page() -> String {
@@ -3696,7 +3893,7 @@ pub fn not_found_page() -> String {
 <section><p>Nothing here.</p></section>
 </article>
 </main>"#;
-    page_shell(&site_title("Not Found"), body, "plain", false)
+    page_shell(&site_title("Not Found"), body, "plain", false, "")
 }
 
 fn html_escape(s: &str) -> String {
@@ -3764,7 +3961,60 @@ mod tests {
             attachments: Vec::new(),
             link_url: None,
             link_title: None,
+            lang: None,
+            versions: Vec::new(),
+            version: None,
         }
+    }
+
+    #[test]
+    fn a_version_is_addressed_below_its_post() {
+        let mut e = mkentry("brev", "2026-03-01T120000");
+        e.dir = Some("/c/brev".into());
+        e.path = "/c/brev/brev.md".into();
+        e.versions.push(crate::entry::Version {
+            lang: "sv".to_string(),
+            path: "/c/brev/brev.sv.md".into(),
+            extension: "md".to_string(),
+            mtime: e.timestamp.to_local_instant().unwrap(),
+            display_label: Some("Brev".to_string()),
+        });
+        let all = vec![&e];
+        assert_eq!(canonical(&e, &all).path, "/brev");
+        let shown = e.show_version(&e.versions[0]);
+        assert_eq!(canonical(&shown, &all).path, "/brev/sv");
+        assert_eq!(canonical_raw_href(&shown, &all), "/brev/sv.md");
+        assert_eq!(canonical_raw_href(&e, &all), "/brev.md");
+
+        // Every language, site language first; `current` follows the value.
+        let alts = alternates(&e, &all);
+        let seen: Vec<(&str, &str, &str, bool)> = alts
+            .iter()
+            .map(|a| (a.hreflang.as_str(), a.href.as_str(), a.name.as_str(), a.current))
+            .collect();
+        assert_eq!(seen, vec![("en", "/brev", "English", true), ("sv", "/brev/sv", "svenska", false)]);
+        assert!(alternates(&shown, &all)[1].current);
+
+        // The notice names the shown language and links the others.
+        assert_eq!(
+            language_notice(&shown, &all),
+            "<aside id=\"redirected-for-language\"><b lang=\"sv\">Svenska</b>. Also in \
+             <a href=\"/brev\" hreflang=\"en\" lang=\"en\">English</a>.</aside>\n"
+        );
+        assert!(language_notice(&e, &all).contains("<b lang=\"en\">English</b>. Also in "));
+        assert_eq!(
+            row_versions(&e, &all),
+            "<nav aria-label=\"Other languages\">also in <a href=\"/brev/sv\" hreflang=\"sv\" lang=\"sv\">svenska</a></nav>"
+        );
+        // hreflang links in the head: paths without a configured domain, plus x-default.
+        let head = hreflang_links(&shown, &all);
+        assert!(head.contains("<link rel=\"alternate\" hreflang=\"sv\" href=\"/brev/sv\">"));
+        assert!(head.contains("hreflang=\"x-default\" href=\"/brev\""));
+        // A post without versions has none of it.
+        let plain = mkentry("solo", "2026-03-01T120000");
+        assert!(alternates(&plain, &[&plain]).is_empty());
+        assert!(language_notice(&plain, &[&plain]).is_empty());
+        assert!(hreflang_links(&plain, &[&plain]).is_empty());
     }
 
     #[test]

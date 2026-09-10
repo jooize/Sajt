@@ -32,6 +32,27 @@ pub struct Revision {
     pub rank: u32,
 }
 
+/// One language version of a folder post (DESIGN.md "Languages"): a sibling
+/// of the primary named `<stem>.<tag>.<ext>`, in a language other than the
+/// site's. It is the same post in another language, addressed at
+/// `/<post>/<tag>`, and it serves its own bytes under the same per-file rule
+/// as any content: only with its own `public` tag.
+#[derive(Debug, Clone)]
+pub struct Version {
+    /// The canonical language tag (`sv`, `pt-BR`), never the site language.
+    pub lang: String,
+    /// The version's content file.
+    pub path: PathBuf,
+    /// Its lowercased extension: a version may be another format than the
+    /// primary (`brev.md` next to `brev.sv.adoc`).
+    pub extension: String,
+    /// The file's mtime, the "edited" date shown when it is meaningfully
+    /// later than the post's publish date.
+    pub mtime: NaiveDateTime,
+    /// The version's own display title (its first H1), if it has one.
+    pub display_label: Option<String>,
+}
+
 /// Why a post failed to scan. A malformed post still becomes an `Entry` (with
 /// this set) so it renders as a loud, fail-closed error row rather than silently
 /// vanishing or serving the wrong bytes. Each variant carries the conflicting
@@ -191,9 +212,48 @@ pub struct Entry {
     /// overrides the post's own `label`; a bare link with no label of its own
     /// promotes this into its heading. Not part of a post's identity.
     pub link_title: Option<String>,
+    /// The language of the post's content when it differs from the site's:
+    /// the canonical tag read from the primary file's name (`brev.sv.md`).
+    /// `None` means the site language. Rendered as `lang` on the article.
+    pub lang: Option<String>,
+    /// The post's other-language versions (folder posts only), sorted by tag.
+    /// Each lives at `/<post>/<tag>` and links to the others with `hreflang`.
+    pub versions: Vec<Version>,
+    /// Set on the value that renders one of `versions` (see [`Entry::show_version`]):
+    /// the version's tag. The address then gains a `/<tag>` segment, `path`,
+    /// `extension`, `lang` and `display_label` are the version's, and the rest
+    /// of the post (date, tags, aliases, the other versions) is shared. `None`
+    /// on a scanned post and on the site-language page.
+    pub version: Option<String>,
 }
 
 impl Entry {
+    /// The version in a language, matched case-insensitively (`/brev/SV` is
+    /// answered by the `sv` version, then redirected to its canonical case).
+    pub fn version(&self, lang: &str) -> Option<&Version> {
+        self.versions.iter().find(|v| crate::lang::same(&v.lang, lang))
+    }
+
+    /// The value that renders `version` of this post: the same post with the
+    /// version's file, extension, language and title, marked so its address
+    /// carries the tag. Revisions belong to the site-language file and are
+    /// not shown on a version page.
+    pub fn show_version(&self, version: &Version) -> Entry {
+        let mut shown = self.clone();
+        shown.path = version.path.clone();
+        shown.extension = version.extension.clone();
+        shown.lang = Some(version.lang.clone());
+        shown.display_label = version.display_label.clone().or_else(|| self.display_label.clone());
+        shown.version = Some(version.lang.clone());
+        shown.revisions = Vec::new();
+        shown.edited = self
+            .timestamp
+            .to_local_instant()
+            .filter(|inst| version.mtime > *inst + chrono::Duration::minutes(1))
+            .map(|_| version.mtime);
+        shown
+    }
+
     /// Whether the author marked this entry a favorite (the `favorite` tag → ★).
     pub fn is_favorite(&self) -> bool {
         self.tags.iter().any(|t| t.name.eq_ignore_ascii_case("favorite"))
