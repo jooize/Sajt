@@ -302,7 +302,8 @@ async fn resolve(store: &ContentStore, path: &str, flags: &RequestFlags) -> Repl
         let rest = &path["saved".len()..];
         let q = parse_url_path(rest);
         // Only view words may follow /saved — anything else is a miss.
-        if q.date_prefix.is_some()
+        if q.malformed
+            || q.date_prefix.is_some()
             || !q.and_tags.is_empty()
             || !q.or_tags.is_empty()
             || q.label.is_some()
@@ -359,6 +360,13 @@ async fn resolve(store: &ContentStore, path: &str, flags: &RequestFlags) -> Repl
     // parsed straight off the path — no `?time=` query string. View axes
     // (`/notable`, `/favorites`) are path segments too.
     let query = parse_url_path(&format!("/{}", path));
+    // A path that is not an address of this site names nothing: no redirect to
+    // the name it happens to end with, no suggestions page, just the 404 every
+    // missing path gets. The folder routes above already had their say, so a
+    // real file under a folder post is unaffected.
+    if query.malformed {
+        return not_found();
+    }
     let view = view_of(&query, flags);
     let requested = format!("/{}", path);
 
@@ -596,6 +604,9 @@ fn find_version_revision<'a>(
     tag: &str,
 ) -> Option<(&'a Entry, &'a crate::entry::Version, &'a Revision)> {
     let query = parse_url_path(&format!("/{}", head));
+    if query.malformed {
+        return None; // not an address at all
+    }
     let label = query.label.as_ref()?;
     let date_prefix = query.date_prefix.as_ref()?;
     let want = crate::slug::slug(label)?;
@@ -636,7 +647,8 @@ fn is_date_segment(segment: &str) -> bool {
 /// scope, a raw file, a listing, or anything ambiguous.
 fn resolve_one<'a>(all_entries: &[&'a Entry], head: &str) -> Option<&'a Entry> {
     let query = parse_url_path(&format!("/{}", head));
-    if query.raw_extension.is_some()
+    if query.malformed
+        || query.raw_extension.is_some()
         || query.is_listing
         || !query.and_tags.is_empty()
         || !query.or_tags.is_empty()
@@ -1935,6 +1947,35 @@ mod tests {
         let reply = get(&store, &format!("{date}/BREV.sv")).await;
         assert_eq!(reply.status, 301);
         assert_eq!(header(&reply, "location"), Some(format!("{date}/brev.sv").as_str()));
+    }
+
+    /// A post address is the name, or the name under its date — nothing else.
+    /// A stray segment used to be swallowed (`/x/brev` 301'd to `/brev`);
+    /// it is a plain 404 now, the same reply as any missing path.
+    #[tokio::test]
+    async fn a_post_address_is_the_name_or_its_date_form() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev/brev.md", "# Brev\n\nEnglish.");
+        mkdir(t.path(), "brev/2026-03-12T191430");
+        let store = match store_of(t.path(), &["brev", "brev/brev.md"]) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+
+        assert_eq!(get(&store, "/brev").await.status, 200);
+        assert_eq!(get(&store, "/2026/brev").await.status, 301, "a date form of the address");
+        assert_eq!(get(&store, "/2026/03/12/brev").await.status, 301);
+        assert_eq!(get(&store, "/2026/03/12/191430/brev").await.status, 301);
+        for at in ["/2026/brev", "/2026/03/12/191430/brev"] {
+            assert_eq!(header(&get(&store, at).await, "location"), Some("/brev"));
+        }
+
+        // Not addresses: a stray word, a second name, an invalid rung.
+        for miss in ["/x/brev", "/foo/bar/brev", "/2026/99/brev", "/2026/13", "/brev/brev"] {
+            let reply = get(&store, miss).await;
+            assert_eq!(reply.status, 404, "{miss} names nothing");
+            assert!(reply.location().is_none(), "{miss} redirects nowhere");
+        }
     }
 
     /// A version's archived snapshot is served at the version's date-path

@@ -32,6 +32,18 @@ pub struct ContentQuery {
     /// The small gallery-tile rendition (`/photo.jpg/thumb`,
     /// `/photo.tif/jpeg/thumb`).
     pub rendition_thumb: bool,
+    /// The path is not an address of this site at all: a segment that fits no
+    /// part of the grammar. A post address is `/name`, or the date form
+    /// `/[Y[/M[/D[/HHMMSS]]]]/name`, with tag segments and view words in any
+    /// order — nothing else. A second name (`/x/brev`), a numeric segment
+    /// that is no valid date rung (`/2026/99/brev`), or anything trailing a
+    /// raw file but its rendition rungs (`/photo.tif/thumb/jpeg`) sets this,
+    /// and the router answers a plain 404: the same reply as any missing
+    /// path, so a malformed URL is no existence oracle either.
+    ///
+    /// [`ContentQuery::matches`] refuses everything while it is set, so a
+    /// caller that forgets to check still cannot resolve a malformed path.
+    pub malformed: bool,
 }
 
 impl ContentQuery {
@@ -39,6 +51,11 @@ impl ContentQuery {
     /// address projection of its name); the query label is slugified before
     /// comparison, so `/Fog%20Over%20The%20Bay` matches `fog-over-the-bay`.
     pub fn matches(&self, timestamp: &PostDate, slug: &Option<String>, tags: &[String]) -> bool {
+        // A path that is not an address matches nothing, ever (fail closed).
+        if self.malformed {
+            return false;
+        }
+
         // Date prefix filter — compare against the padded, precision-aware date.
         if let Some(ref prefix) = self.date_prefix {
             if !timestamp.match_string().starts_with(prefix.as_str()) {
@@ -270,6 +287,13 @@ pub fn parse_url_path(path: &str) -> ContentQuery {
                 }
                 continue;
             }
+            // A numeric segment inside the date hierarchy that fits no rung is
+            // not a name — the router owns those segments (a numeric slug never
+            // claims a bare URL). `/2026/99` and `/25` name nothing.
+            if is_numeric(name) {
+                query.malformed = true;
+                continue;
+            }
         }
 
         // Rendition subresources of a raw file, in canonical order only:
@@ -284,9 +308,18 @@ pub fn parse_url_path(path: &str) -> ContentQuery {
                 query.rendition_thumb = true;
                 continue;
             }
+            // A raw file's address is complete: only its rendition rungs, in
+            // their canonical order, may follow it.
+            query.malformed = true;
+            continue;
         }
 
-        // The label; a trailing extension makes it a raw-file request.
+        // The label; a trailing extension makes it a raw-file request. A post
+        // address carries exactly one name, so a second one is no address.
+        if query.label.is_some() {
+            query.malformed = true;
+            continue;
+        }
         match ext {
             Some(e) if !name.is_empty() => {
                 query.label = Some(name.to_string());
@@ -328,6 +361,14 @@ fn split_ext(seg: &str) -> (&str, Option<&str>) {
         }
     }
     (seg, None)
+}
+
+/// Whether a segment is a bare number (a BCE year's leading `-` allowed) —
+/// the shape the date hierarchy owns. Such a segment is a date rung or it is
+/// nothing; it is never a post's name.
+fn is_numeric(s: &str) -> bool {
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// A 4-digit year, optionally BCE with a leading `-` (`2026`, `-3000`).
@@ -461,10 +502,30 @@ mod tests {
     }
 
     #[test]
-    fn invalid_month_becomes_label() {
+    fn an_invalid_date_rung_is_no_address() {
+        // A number in the date hierarchy is a rung or it is nothing: `13` is
+        // no month, and it is not a post's name either.
         let q = parse_url_path("/2026/13");
-        assert_eq!(q.date_prefix.as_deref(), Some("2026"));
-        assert_eq!(q.label.as_deref(), Some("13"));
+        assert!(q.malformed);
+        assert!(!q.matches(&ts("2026-01-13T120000"), &Some("13".to_string()), &[]));
+        assert!(parse_url_path("/2026/99/brev").malformed);
+        assert!(parse_url_path("/25").malformed, "a bare number names no post");
+        // The valid rungs are untouched, at every depth.
+        assert!(!parse_url_path("/2026/brev").malformed);
+        assert!(!parse_url_path("/2026/03/12/191430/brev").malformed);
+        assert!(!parse_url_path("/-3000/brev").malformed);
+    }
+
+    #[test]
+    fn a_post_address_carries_exactly_one_name() {
+        // The strict rule (2026-09-10): `/x/brev` used to resolve to `brev`
+        // and 301 there. A path with a stray segment names nothing now.
+        for path in ["/x/brev", "/foo/bar/brev", "/brev/brev", "/notable/x/brev"] {
+            assert!(parse_url_path(path).malformed, "{path} is not an address");
+        }
+        for path in ["/brev", "/brev/", "/notable/brev", "/+design/brev", "/2026/03/brev"] {
+            assert!(!parse_url_path(path).malformed, "{path} is an address");
+        }
     }
 
     #[test]
@@ -652,10 +713,12 @@ mod tests {
         assert_eq!(q.date_prefix.as_deref(), Some("2026-03-04"));
         assert!(q.rendition_jpeg);
 
-        // Only the canonical order exists: /thumb/jpeg is not a rendition.
+        // Only the canonical order exists: /thumb/jpeg is not a rendition, and
+        // nothing else may trail a raw file's address either.
         let q = parse_url_path("/photo.tif/thumb/jpeg");
         assert!(!q.rendition_jpeg);
-        assert_eq!(q.label.as_deref(), Some("jpeg"));
+        assert!(q.malformed);
+        assert!(parse_url_path("/photo.tif/other").malformed);
 
         // Without a raw file there is no rendition — "jpeg" is a plain label.
         let q = parse_url_path("/jpeg");

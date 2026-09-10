@@ -565,6 +565,20 @@ alias 301s to the one bare canonical address. `notable`, `favorites`, and
 `saved` are reserved words — a post so named stays reachable at its date
 address, never at the bare label.
 
+**A post address is exactly its grammar (SHIPPED 2026-09-10, v0.42.0).** The
+address is `/name`, or that name under its date (`/2026/03/12/191430/name`),
+with tag segments and view words in any order — and nothing else. The parser
+used to read every segment it did not recognise as the name and let a later
+one overwrite it, so `/anything/brev` and `/2026/99/brev` both resolved to
+`brev` and 301'd to it. A path that fits no part of the grammar — a second
+name, a number in the date hierarchy that is no valid rung, anything trailing
+a raw file but its rendition rungs — is now **malformed at the parser**
+(`ContentQuery::malformed`, which also makes every match refuse, so a
+forgotten check cannot resolve one) and answered with the plain 404 every
+missing path gets: no redirect onto the name it happens to end with, no
+suggestions page, no existence oracle. Folder assets and nested listings are
+resolved before this and keep their full paths.
+
 ## Authoring formats
 
 **Kinds are a medium, not a format (SHIPPED 2026-07-08, `post-model.md` §3).**
