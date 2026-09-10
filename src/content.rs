@@ -274,6 +274,7 @@ fn pair_top_level_versions(posts: &[TopItem]) -> TopLevelVersions {
     for item in posts.iter().filter(|item| !item.is_dir) {
         let mtime = mtime_local(&item.path).unwrap_or_else(epoch);
         let child = file_child(item.name.clone(), item.path.clone(), mtime);
+        log_undeclared(&child);
         by_stem.entry(child.stem.clone()).or_default().push(child);
     }
 
@@ -825,12 +826,16 @@ struct PrimaryFile {
 /// name grammar read once: `<stem>[.<lang>][ copy [n]].<ext>`. `stem` is the
 /// name with the copy suffix and the language subtag removed, so candidates
 /// compare on the post's name alone; `lang` is the canonical language tag when
-/// the subtag names one (`lang::filename_subtag`); `copy_rank` is set on a
-/// ` copy [n]` snapshot.
+/// the subtag names one the site declares (`lang::filename_token`);
+/// `copy_rank` is set on a ` copy [n]` snapshot.
 struct FileChild {
     name: String,
     stem: String,
     lang: Option<String>,
+    /// A registered language in the language position that the site does
+    /// not declare (`old` in `notes.old.md`): left in the stem, reported once
+    /// per scan by `log_undeclared` so a forgotten declaration is visible.
+    undeclared: Option<String>,
     copy_rank: Option<u32>,
     path: PathBuf,
     mtime: NaiveDateTime,
@@ -838,29 +843,53 @@ struct FileChild {
 
 /// Read a file's name grammar into a `FileChild`. The copy suffix is parsed
 /// first, the language subtag off what remains: `brev.sv copy 2.md` is rank 2
-/// of the Swedish `brev`; `notes.txt.md` keeps the stem `notes.txt` because
-/// `txt` is a file format, not a language here (see `lang`).
+/// of the Swedish `brev`; `notes.old.md` keeps the stem `notes.old` unless
+/// the site declares `old` as one of its languages (see `lang`).
 fn file_child(name: String, path: PathBuf, mtime: NaiveDateTime) -> FileChild {
     let (raw, _) = split_name(&name);
     let (base, copy_rank) = match parse_revision_suffix(raw) {
         Some((base, rank)) => (base, Some(rank)),
         None => (raw.to_string(), None),
     };
-    let (stem, lang) = split_lang(&base);
-    FileChild { name: name.clone(), stem: stem.to_string(), lang, copy_rank, path, mtime }
+    let (stem, lang, undeclared) = split_lang(&base);
+    FileChild { name: name.clone(), stem: stem.to_string(), lang, undeclared, copy_rank, path, mtime }
 }
 
-/// Split a language subtag off a stem: `brev.sv` -> (`brev`, Some("sv")),
-/// `notes.txt` -> (`notes.txt`, None), `brev` -> (`brev`, None).
-fn split_lang(stem: &str) -> (&str, Option<String>) {
+/// Split a declared language subtag off a stem: `brev.sv` -> (`brev`,
+/// Some("sv"), None), `brev` -> (`brev`, None, None). A token that is a
+/// registered language the site does not declare stays in the name and is
+/// returned third: `notes.old` -> (`notes.old`, None, Some("old")).
+fn split_lang(stem: &str) -> (&str, Option<String>, Option<String>) {
+    use crate::lang::FilenameToken;
     if let Some((base, token)) = stem.rsplit_once('.') {
         if !base.is_empty() {
-            if let Some(tag) = crate::lang::filename_subtag(token) {
-                return (base, Some(tag));
+            match crate::lang::filename_token(token) {
+                FilenameToken::Language(tag) => return (base, Some(tag), None),
+                FilenameToken::Undeclared(tag) => return (stem, None, Some(tag)),
+                FilenameToken::Plain => {}
             }
         }
     }
-    (stem, None)
+    (stem, None, None)
+}
+
+/// Report a registered language the site does not declare, left in a file's
+/// name (`FileChild::undeclared`), so a forgotten `languages` entry in
+/// `Sajt.toml` is never silent. Called once per file per scan: where a
+/// folder reads its files, and where the top level pairs its bare files.
+fn log_undeclared(child: &FileChild) {
+    if let Some(tag) = &child.undeclared {
+        let language = crate::lang::english_name(tag);
+        tracing::info!(
+            "{}: '{}' is a registered language ({}) the site does not declare, so it stays part \
+             of the name '{}'. List it under `languages` in Sajt.toml if the file is a {} version.",
+            child.name,
+            tag,
+            language,
+            child.stem,
+            language
+        );
+    }
 }
 
 /// The language a file's content is in, when it differs from the site's:
@@ -1143,7 +1172,9 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
             }
         } else {
             let mtime = mtime_local(&cpath).unwrap_or_else(epoch);
-            files.push(file_child(cname, cpath, mtime));
+            let child = file_child(cname, cpath, mtime);
+            log_undeclared(&child);
+            files.push(child);
         }
     }
 

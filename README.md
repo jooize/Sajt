@@ -67,7 +67,16 @@ too, since dotfiles sync.
 name = "Anna's notes"   # page titles and the header mark; default: the directory name
 domain = "example.org"  # the public host, for the Caddyfile adapter and the fetch UA only
 language = "sv"         # a registered BCP 47 tag, the language of every page; default "en"
+languages = ["en", "de"] # the languages posts may also exist in: `brev.de.md` beside
+                        # `brev.md` is then the German version at /brev.de; default none
 ```
+
+A post in another language is its file with the language before the
+extension: `brev.md` and `brev.de.md` (top level or inside `brev/`) are one
+post, the German version at `/brev.de` and its bytes at `/brev.de.md`. Only
+the languages in `languages` (and the site's own) are read that way, so
+`notes.old.md` is the post `notes.old`, not a post in Mochi. The scanner logs
+a registered language it left in a name.
 
 Serving is domain-agnostic. Every URL the engine emits is a path, so a site
 works on any host name the moment it is served; the domain is consulted only

@@ -1,7 +1,8 @@
 //! Language tags. One module decides what a language is for the whole
-//! engine: the site's language in `Sajt.toml`, the subtag in a filename
-//! (`brev.sv.md`), the segment of a version address (`/brev/sv`), and the
-//! name a language is shown under (its autonym: "svenska", "Deutsch").
+//! engine: the site's language and the declared ones in `Sajt.toml`, the
+//! subtag in a filename (`brev.sv.md`), the suffix of a version address
+//! (`/brev.sv`), and the name a language is shown under (its autonym:
+//! "svenska", "Deutsch").
 //!
 //! A tag is a BCP 47 (RFC 5646) tag whose subtags appear in the IANA
 //! Language Subtag Registry, in canonical form (`pt-BR`, `zh-Hant`). The
@@ -12,25 +13,21 @@
 //!
 //! # The filename position
 //!
-//! In `notes.txt.md` the token before the extension could be a language:
-//! `txt` is in the registry (so are `tex`, `org`, `doc`, `min`, `src`,
-//! `tar`, `log`, `old`, `new`, and hundreds of other three-letter English
-//! abbreviations, because ISO 639-3 names every language on earth). Yet
-//! `notes.txt` is the name of that file. [`filename_subtag`] settles the
-//! collision by the namespace the token sits in:
-//!
-//! - a two-letter primary subtag is a language (`es`, `pl`, `cs` are
-//!   Spanish, Polish, Czech, even though `.es`, `.pl`, `.cs` are also file
-//!   extensions: BCP 47's two-letter codes are unambiguous);
-//! - a three-letter primary subtag is a language only when no file format
-//!   claims it (the MIME extension table plus the engine's own formats),
-//!   so `txt`, `tex`, `doc`, `tar` stay part of the stem while `haw`,
-//!   `yue`, `fil`, `gsw` are languages.
-//!
-//! The residual is named, not hidden: `old`, `new`, `min`, `src`, `tmp`,
-//! `dev`, `app` are registered languages and not file formats, so
-//! `notes.old.md` is a post named `notes` in Mochi. The scanner logs every
-//! recognition with the language's name, and the fix is one rename.
+//! In `notes.old.md` the token before the extension could be a language:
+//! `old` is in the registry (Mochi), and so are `new`, `min`, `txt`, `tex`,
+//! `doc`, `the`, `and`, `jan`, `usa` and most short English words, because
+//! ISO 639-3 names every language on earth (54% of two-letter and 68% of
+//! three-letter dictionary words are registered tags). Yet `notes.old` is
+//! the name of that file. The registry therefore does not decide the
+//! filename position; the site does. [`filename_token`] reads a token as a
+//! language only when the site declares it (`Sajt.toml` `languages`, or
+//! its own `language`), the convention of Hugo, Zola and Apache's
+//! `AddLanguage`. A site that declares nothing never misreads a name; a
+//! site with Swedish posts says so once. Every registered language remains
+//! available, three-letter ones (`yue`, `fil`, `haw`, `gsw`) included:
+//! declaring it is the only step. An undeclared token that happens to be a
+//! registered language is reported to the caller, so the scanner can log a
+//! forgotten declaration, and stays part of the name.
 
 use language_tags::LanguageTag;
 
@@ -96,28 +93,32 @@ pub fn same(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b)
 }
 
-/// Whether a token is a file extension some format claims: the MIME
-/// extension table the raw-file routes use, or one of the engine's own
-/// formats (which the table does not all know: `adoc`, `webloc`).
-fn is_file_extension(token: &str) -> bool {
-    mime_guess::from_ext(token).first().is_some()
-        || crate::entry::is_text_ext(token)
-        || crate::entry::is_image_ext(token)
-        || crate::entry::is_html_document(token)
-        || matches!(token.to_ascii_lowercase().as_str(), "webloc" | "url")
+/// What a token in the language position of a filename (`sv` in
+/// `brev.sv.md`) turns out to be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FilenameToken {
+    /// A language the site declares (or its own): the canonical tag.
+    Language(String),
+    /// A registered language the site does not declare: it stays part of
+    /// the name, and the caller may log it (the canonical tag, for the log).
+    Undeclared(String),
+    /// Not a language tag at all: part of the name.
+    Plain,
 }
 
-/// Read a token in the language position of a filename (`sv` in
-/// `brev.sv.md`) as a language, or `None` when it is not one and stays part
-/// of the stem. The registry decides, then the file-format tie-break for
-/// three-letter codes (see the module notes).
-pub fn filename_subtag(token: &str) -> Option<String> {
-    let tag = parse(token)?;
-    let primary = primary(&tag);
-    if primary.len() == 3 && is_file_extension(primary) {
-        return None;
+/// Read a token in the language position of a filename against the site's
+/// declared languages (see the module notes).
+pub fn filename_token(token: &str) -> FilenameToken {
+    filename_token_in(token, crate::config::site())
+}
+
+/// [`filename_token`] against an explicit site identity.
+pub fn filename_token_in(token: &str, site: &crate::config::Site) -> FilenameToken {
+    match parse(token) {
+        Some(tag) if site.speaks(&tag) => FilenameToken::Language(tag),
+        Some(tag) => FilenameToken::Undeclared(tag),
+        None => FilenameToken::Plain,
     }
-    Some(tag)
 }
 
 /// The language's name in its own language ("svenska", "Deutsch", "日本語"),
@@ -198,24 +199,33 @@ mod tests {
     }
 
     #[test]
-    fn filename_subtag_keeps_file_formats_in_the_stem() {
-        // Registered languages that are also file formats stay in the stem.
-        for ext in ["txt", "tex", "org", "doc", "tar", "log", "xml", "csv", "bin", "mov", "wav", "ogg"] {
-            assert!(parse(ext).is_some(), "{ext} is in the registry (the premise of the tie-break)");
-            assert!(filename_subtag(ext).is_none(), "{ext} is a file format");
+    fn filename_tokens_follow_the_declared_languages() {
+        use crate::config::Site;
+        let site = |languages: &[&str]| Site {
+            languages: languages.iter().map(|s| s.to_string()).collect(),
+            ..Site::default()
+        };
+        let none = site(&[]);
+        let some = site(&["sv", "pt-BR", "haw"]);
+
+        // Only declared languages (and the site's own) are read as languages.
+        assert_eq!(filename_token_in("sv", &some), FilenameToken::Language("sv".into()));
+        assert_eq!(filename_token_in("SV", &some), FilenameToken::Language("sv".into()));
+        assert_eq!(filename_token_in("PT-br", &some), FilenameToken::Language("pt-BR".into()));
+        assert_eq!(filename_token_in("haw", &some), FilenameToken::Language("haw".into()));
+        assert_eq!(filename_token_in("en", &none), FilenameToken::Language("en".into()), "the site language is implied");
+        assert_eq!(filename_token_in("pt", &some), FilenameToken::Undeclared("pt".into()), "pt-BR does not declare pt");
+
+        // Registered but undeclared: reported, never a language.
+        for word in ["sv", "old", "new", "min", "txt", "the", "in", "is", "no"] {
+            assert!(parse(word).is_some(), "{word} is in the registry (the premise)");
+            assert_eq!(filename_token_in(word, &none), FilenameToken::Undeclared(parse(word).unwrap()), "{word}");
         }
-        // Two-letter codes are languages even where a format shares them.
-        for lang in ["es", "pl", "cs", "so", "ps", "it"] {
-            assert_eq!(filename_subtag(lang).as_deref(), Some(lang));
+
+        // Not tags at all.
+        for plain in ["md", "rst", "copy", "swe", "v2", "final", ""] {
+            assert_eq!(filename_token_in(plain, &some), FilenameToken::Plain, "{plain:?}");
         }
-        // Three-letter languages no format claims.
-        for lang in ["haw", "yue", "fil", "gsw"] {
-            assert_eq!(filename_subtag(lang).as_deref(), Some(lang));
-        }
-        assert_eq!(filename_subtag("PT-br").as_deref(), Some("pt-BR"));
-        assert!(filename_subtag("rst").is_none());
-        assert!(filename_subtag("md").is_none());
-        assert!(filename_subtag("copy").is_none());
     }
 
     #[test]

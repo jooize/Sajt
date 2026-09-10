@@ -637,37 +637,79 @@ opaque `file`.
   extension is **retired** — a link is now the `link_url` axis below, not a
   special format.)
 
-### Languages (DECIDED 2026-09-09, not yet built; lands before or with the comrak port)
+### Languages (DECIDED 2026-09-09, SHIPPED 2026-09-10, v0.41.0)
 
 The site has one language, from `Sajt.toml` (`language`, default `en`),
-emitted as `<html lang>` on every page (shipped 2026-09-08). Posts may differ
-from it, and a post may exist in several languages. Everything below is
-filename grammar and static markup; nothing needs a server decision.
+emitted as `<html lang>` on every page. Posts may differ from it, and a post
+may exist in several languages. Everything below is filename grammar and
+static markup; nothing needs a server decision. `src/lang.rs` is the one
+place that decides what a language is (BCP 47 tags validated against the IANA
+registry via the `language-tags` crate, canonical form `pt-BR`; autonyms via
+`isolang`).
 
-- **A post in another language**: a language subtag before the extension,
-  `brev.sv.md`. The post's `lang` is `sv`; the page still belongs to the site.
-  The subtag is a BCP 47 tag as `Sajt.toml` accepts it (`sv`, `pt-BR`).
-- **One post, several versions**: `hello-world.md` and `hello-world.sv.md`
-  side by side in the post folder. The unsuffixed file is the site-language
-  version and keeps the bare URL `/hello-world`; each other version lives at
-  `/hello-world/<tag>` (`/hello-world/sv`). Those URLs are canonical, stable,
-  and shareable: they never redirect. Every version carries
-  `<link rel="alternate" hreflang>` for all versions plus `x-default` for the
-  bare URL. The timeline shows one row per post (the site-language version)
-  with a quiet "also in svenska" line naming the other versions in their own
-  language. A version is served under the same per-file rule as any other
-  file content: its own `public` tag.
-- **Inline language**: the sanitizer allows `lang` and `dir` on elements, so
-  a quoted paragraph in another language is marked correctly (this is part
-  of the comrak port).
+- **Declared languages decide the filename position.** `Sajt.toml`
+  `languages = ["sv", "de"]` names the languages posts may exist in besides
+  the site's own (implied). A dotted token before the extension is read as a
+  language only when it is one of those: `brev.sv.md` is Swedish, while
+  `notes.old.md` is the post `notes.old` even though `old` (Mochi) is a
+  registered tag, as are `new`, `min`, `txt`, `the`, `in`, `is`, `no` and
+  most short English words (measured 2026-09-10: 54% of two-letter and 68%
+  of three-letter dictionary words are registered; the survey and numbers
+  are in `.agents-work/20260909-languages/research.md`). This is the
+  convention of Hugo, Zola, Nextra and Apache `AddLanguage`; no surveyed tool
+  guesses from the full registry. A site that declares nothing never reads a
+  name as a language. Every registered language stays available, three-letter
+  ones (`yue`, `fil`, `haw`, `gsw`) included: declaring it is the only step.
+  Each declared tag is validated, stored canonical, refused when unregistered
+  or listed twice. The scanner logs, per file, a registered language it left
+  in a name ("list it under `languages` if the file is a Mochi version"), so
+  a forgotten declaration is never silent.
+- **A post in another language**: `ensam.sv.md` alone is the post `ensam`
+  with `lang = sv` (`<article lang="sv">`; the chrome stays the site's
+  language). Inside a folder, the one site-language candidate (unsuffixed, or
+  tagged with the site language) is the primary; a single foreign candidate
+  alone is the post in that language; several foreign candidates with no
+  site-language one collide (listing notice, never a guess).
+- **One post, several versions**: `brev.md` and `brev.sv.md` side by side,
+  inside the post folder or at the top level (top-level pairing decided
+  2026-09-10). The site-language file keeps the bare address `/brev`; each
+  other version is addressed as its file is named, the tag as a trailing
+  "extension": `/brev.sv` (dated `/2026/03/12/brev.sv`), its bytes at
+  `/brev.sv.md`, rendition rungs off a raw image version as off any file
+  (`/photo.sv.tif/jpeg`). Nothing under `/brev/` is touched, so a folder's
+  assets and nested listings keep their namespace; a version file's own asset
+  path (`/brev/brev.sv.md`) 301s to its canonical raw address, as the
+  primary's does. A version is one per language, served only with its own
+  `public` tag; two files in one language serve neither (logged). Versions
+  leave the attachment list; a version's own ` copy [n]` snapshots are
+  neither revisions (version pages carry no revision nav) nor posts (logged).
+  At the top level every foreign file of a paired group is absorbed, served
+  or withheld; a group with no site-language file, or with several
+  (`notes.md` + `notes.txt`), does not pair and every file stays a post of
+  its own (logged; a same-named pair then collides by the oldest-claim rule).
+  A post's identity is `Entry.id`, the top-level item it was scanned from;
+  the version and revision views are clones that keep it, so name-claim and
+  ownership checks recognise them (`Entry::same_post`, never pointer
+  equality).
+- **Markup**: every version carries `<link rel="alternate" hreflang>` for all
+  versions plus `x-default` for the bare address, absolute with the
+  configured `domain`, else paths; and the HTTP `Link` header with the same
+  relations as paths (recorded in the manifest, read by adapters). The
+  timeline shows one row per post (the site-language version) with a quiet
+  "also in svenska" line naming the other versions in their own language;
+  `lang` is set on the article, the row heading and description, and the
+  Continue title. The sanitizer allows `lang` and `dir` on elements, so a
+  quoted paragraph in another language is marked correctly.
 - **Automatic choice is an edge feature, never a page feature.** A static host
-  serves `/hello-world` as is. The CDN adapter may add a redirect: a request
-  for the bare URL whose `Accept-Language` prefers a language the post exists
-  in gets a `302` to that version with `Vary: Accept-Language`. It only ever
-  fires on the bare URL and only when that version exists, so it is
-  dead-front-safe (edge logic over the same bytes, no content decision).
+  serves `/brev` as is. The Caddyfile adapter reads the recorded `Link`
+  header and, on the site-language address only, adds one matcher per
+  version: a request whose `Accept-Language` lists that language first gets
+  a `302` to the version with `Vary: Accept-Language` (the primary subtag
+  matches, exact tag when two versions share one, `pt` beside `pt-BR`). It
+  fires only when that version exists, so it is dead-front-safe (edge logic
+  over the same bytes, no content decision).
 - **The "you were redirected" notice, without JavaScript.** The redirect's
-  `Location` carries a fragment: `/hello-world/sv#redirected-for-language`.
+  `Location` carries a fragment: `/brev.sv#redirected-for-language`.
   Browsers keep the fragment, and every multi-version page has
   `<aside id="redirected-for-language">` at the top of `<main>` (so the
   fragment scroll is a no-op). CSS `:target` makes it prominent; otherwise it
@@ -681,8 +723,16 @@ filename grammar and static markup; nothing needs a server decision.
   a copied URL is clean. The CSS keys on `:target` *or* `[data-redirected]`,
   because some browsers stop matching `:target` once the URL changes.
   Without JavaScript the fragment stays until the next click; accepted.
-- No id needs reserving: the heading-anchor script already suffixes an id
-  that is taken.
+- **Residuals**: a site declaring a language that is also a word it uses in
+  names (`in` for Indonesian, `no` for Norwegian) reads `photo.in.jpg` as a
+  version candidate; that is the declared list doing what it says, and the
+  recognition is logged. `Accept-Language` negotiation only ever redirects
+  the site-language address; a reader landing on a version gets no offer to
+  switch beyond the notice. Rejected: a language prefix `/sv/brev` (collides
+  with the flat top-level namespace: posts named `is`, `it`, `no`, `to`), a
+  `/brev/sv` segment (shares the folder's sub-namespace with assets and
+  nested folders), query or subdomain variants, distinct markers (`+sv`,
+  `@sv`: no precedent among content tools).
 
 **The `link_url` axis + outbound cites (SHIPPED 2026-07-09, `post-model.md` §4).**
 A post's outbound destination is orthogonal to its `kind`. The scanner resolves

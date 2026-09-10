@@ -44,6 +44,15 @@ pub struct SiteConfig {
     /// screen readers, and hyphenation treat the text correctly. Defaults to
     /// "en".
     pub language: Option<String>,
+
+    /// The other languages posts of this site exist in, as BCP 47 tags
+    /// (`["sv", "de"]`). A dotted token before a file's extension is read as
+    /// a language only when it names one of these (or the site language):
+    /// `brev.sv.md` is then the Swedish version of `brev.md`, while
+    /// `notes.old.md` stays the post `notes.old`, whatever the language
+    /// registry says about `old`. A site that declares none never reads a
+    /// name as a language. Defaults to none.
+    pub languages: Option<Vec<String>>,
 }
 
 /// The resolved identity every page renders with: the config with its
@@ -53,16 +62,40 @@ pub struct Site {
     pub name: String,
     pub domain: Option<String>,
     pub language: String,
+    /// The declared version languages, canonical, in declared order, without
+    /// the site language (which is implied). See [`SiteConfig::languages`].
+    pub languages: Vec<String>,
 }
 
 impl Default for Site {
-    /// The identity of a site nobody configured or named: what tests and any
-    /// caller that never called [`init`] render with.
+    /// The identity of a site nobody configured or named: what any caller
+    /// that never called [`init`] renders with.
     fn default() -> Self {
         Site {
             name: "Sajt".to_string(),
             domain: None,
             language: "en".to_string(),
+            languages: Vec::new(),
+        }
+    }
+}
+
+impl Site {
+    /// Whether `tag` is a language this site's posts may exist in: the site
+    /// language or a declared one, compared whole and case-insensitively.
+    pub fn speaks(&self, tag: &str) -> bool {
+        crate::lang::same(tag, &self.language) || self.languages.iter().any(|l| crate::lang::same(l, tag))
+    }
+
+    /// The identity the test suite renders with: the unnamed default plus a
+    /// few declared languages, so version fixtures (`brev.sv.md`,
+    /// `brev.de.adoc`, `pt` next to `pt-BR`) pair the way a configured site
+    /// pairs them. Production never sees this value.
+    #[cfg(test)]
+    fn for_tests() -> Self {
+        Site {
+            languages: ["sv", "de", "pt", "pt-BR"].iter().map(|s| s.to_string()).collect(),
+            ..Site::default()
         }
     }
 }
@@ -140,6 +173,27 @@ pub fn load(path: &Path) -> Result<SiteConfig, String> {
             }
         }
     }
+    if let Some(languages) = &config.languages {
+        let mut canonical: Vec<String> = Vec::with_capacity(languages.len());
+        for language in languages {
+            let tag = canonical_language(language).ok_or_else(|| {
+                format!(
+                    "config {}: languages entry {:?} is not a registered language tag like \"sv\" or \"pt-BR\"",
+                    path.display(),
+                    language
+                )
+            })?;
+            if canonical.iter().any(|seen| crate::lang::same(seen, &tag)) {
+                return Err(format!(
+                    "config {}: languages lists {:?} twice",
+                    path.display(),
+                    tag
+                ));
+            }
+            canonical.push(tag);
+        }
+        config.languages = Some(canonical);
+    }
     Ok(config)
 }
 
@@ -152,6 +206,14 @@ pub fn resolve(config: SiteConfig, site_dir: &Path) -> Site {
         .and_then(|n| n.to_str())
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty());
+    let language = config.language.unwrap_or(defaults.language);
+    // The site language is implied; listing it too is harmless, not an error.
+    let languages = config
+        .languages
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|l| !crate::lang::same(l, &language))
+        .collect();
     Site {
         name: config
             .name
@@ -159,7 +221,8 @@ pub fn resolve(config: SiteConfig, site_dir: &Path) -> Site {
             .or(dir_name)
             .unwrap_or(defaults.name),
         domain: config.domain,
-        language: config.language.unwrap_or(defaults.language),
+        language,
+        languages,
     }
 }
 
@@ -175,9 +238,17 @@ pub fn init(site: Site) {
 }
 
 /// The identity pages render with. Before [`init`], the unnamed default:
-/// tests and library callers that render without opening a site get "Sajt".
+/// library callers that render without opening a site get "Sajt" (the test
+/// suite gets the same with a few languages declared, [`Site::for_tests`]).
 pub fn site() -> &'static Site {
-    SITE.get_or_init(Site::default)
+    #[cfg(test)]
+    {
+        SITE.get_or_init(Site::for_tests)
+    }
+    #[cfg(not(test))]
+    {
+        SITE.get_or_init(Site::default)
+    }
 }
 
 #[cfg(test)]
@@ -222,6 +293,47 @@ mod tests {
         assert!(toml::from_str::<SiteConfig>("domian = \"example.org\"").is_err());
     }
 
+    /// Load a config from text through the same validation a file gets.
+    fn load_text(text: &str) -> Result<SiteConfig, String> {
+        let dir = std::env::temp_dir().join(format!("sajt-config-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{:x}.toml", md5ish(text)));
+        std::fs::write(&path, text).unwrap();
+        let result = load(&path);
+        let _ = std::fs::remove_file(&path);
+        result
+    }
+
+    fn md5ish(s: &str) -> u64 {
+        s.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+    }
+
+    #[test]
+    fn declared_languages_are_validated_canonical_and_unique() {
+        let config = load_text("languages = [\"sv\", \"PT-br\"]").unwrap();
+        assert_eq!(config.languages.unwrap(), vec!["sv", "pt-BR"]);
+        assert!(load_text("languages = [\"sv\", \"old\"]").is_ok(), "old is a registered language");
+        let err = load_text("languages = [\"swe\"]").err().expect("swe is not a tag");
+        assert!(err.contains("\"swe\""), "{err}");
+        let err = load_text("languages = [\"sv\", \"SV\"]").err().expect("a duplicate");
+        assert!(err.contains("twice"), "{err}");
+    }
+
+    #[test]
+    fn the_site_language_is_implied_in_the_declared_list() {
+        let config = SiteConfig {
+            language: Some("sv".to_string()),
+            languages: Some(vec!["sv".to_string(), "de".to_string()]),
+            ..SiteConfig::default()
+        };
+        let site = resolve(config, Path::new("/Users/anna/Sites/notes"));
+        assert_eq!(site.languages, vec!["de"]);
+        assert!(site.speaks("SV"));
+        assert!(site.speaks("de"));
+        assert!(!site.speaks("en"));
+        assert!(Site::default().languages.is_empty(), "production declares nothing by default");
+    }
+
     #[test]
     fn unnamed_site_is_named_after_its_directory() {
         let site = resolve(SiteConfig::default(), Path::new("/Users/anna/Sites/example.org"));
@@ -236,6 +348,7 @@ mod tests {
             name: Some("  Anna's notes ".to_string()),
             domain: Some("example.org".to_string()),
             language: Some("sv".to_string()),
+            languages: None,
         };
         let site = resolve(config, Path::new("/Users/anna/Sites/notes"));
         assert_eq!(site.name, "Anna's notes");
