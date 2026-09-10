@@ -328,17 +328,13 @@ async fn resolve(store: &ContentStore, path: &str, flags: &RequestFlags) -> Repl
 
     let all_entries: Vec<&Entry> = store.entries.iter().collect();
 
-    // A language version (`/{post}.{tag}`, raw at `/{post}.{tag}.{ext}`): a post
-    // address plus a registered language tag, answered only when that version
-    // exists (DESIGN.md "Languages"). Resolved first, before the query parser
-    // reads the tag as a raw-file extension.
-    if let Some(resp) = try_version(store, &all_entries, &path, flags).await {
-        return resp;
-    }
-
     // Folder-post asset (`/{folder}/{asset…}`): resolved before the query parser,
     // which would otherwise misread the multi-segment path as a label. Rendition
     // rungs (`…/photo.tif/jpeg`, `…/jpeg/thumb`) are parsed off the tail there.
+    // First of all routes: everything under a folder is the folder's, so a
+    // literal file always wins its own name, even one named like another
+    // post's language version (`/brev/photo.sv.jpg` is brev's asset, never a
+    // redirect to post photo's Swedish version).
     if let Some(resp) = try_asset(&all_entries, &path, &store.content_dir, &store.cache_dir, embed).await {
         return resp;
     }
@@ -347,6 +343,15 @@ async fn resolve(store: &ContentStore, path: &str, flags: &RequestFlags) -> Repl
     // as its own page. Same precedence reason as assets — the parser can't read a
     // multi-segment nested path. `try_asset` already handled nested files.
     if let Some(resp) = try_folder_listing(&all_entries, &path, &store.content_dir) {
+        return resp;
+    }
+
+    // A language version (`/{post}.{tag}`, raw at `/{post}.{tag}.{ext}`): a post
+    // address plus a registered language tag, answered only when that version
+    // exists (DESIGN.md "Languages"). Resolved before the query parser, which
+    // would read the tag as a raw-file extension; after the folder routes, which
+    // own every path under a folder.
+    if let Some(resp) = try_version(store, &all_entries, &path, flags).await {
         return resp;
     }
 
@@ -482,7 +487,10 @@ async fn resolve(store: &ContentStore, path: &str, flags: &RequestFlags) -> Repl
 /// caller falls through and no existing address changes meaning: `/notes.old`
 /// for a post with no version in `old` is the raw request it always was. A
 /// non-canonical spelling (case, an alias, a trailing slash) 301s to the
-/// canonical one.
+/// canonical one. The head is a post address only: the bare name, or date and
+/// time segments before it. Any other prefix (`/x/brev.sv`, a folder's own
+/// path) names nothing here, so the folder routes keep what is theirs and no
+/// stray prefix reaches a version by the label alone.
 async fn try_version(
     store: &ContentStore,
     all_entries: &[&Entry],
@@ -519,6 +527,9 @@ async fn try_version(
     if (thumb || as_jpeg) && ext.is_none() {
         return None; // rungs hang off files, not pages
     }
+    if !segments.iter().all(|s| is_date_segment(s)) {
+        return None; // only the date hierarchy may precede a post's name
+    }
     segments.push(stem);
     let entry = resolve_one(all_entries, &segments.join("/"))?;
     let version = entry.version(&tag)?;
@@ -552,6 +563,14 @@ async fn try_version(
         return Some(Reply::redirect(&templates::encode_path(&canon)));
     }
     Some(serve_raw_bytes(&shown, flags.embed, as_jpeg, thumb, &base_href, &store.cache_dir).await)
+}
+
+/// Whether a path segment is a rung of the date hierarchy (`2026`, `03`,
+/// `12`) or the time-of-day segment (`191430`): all digits. The shape check
+/// that keeps a post address to `/[date/[time/]]name`; the parser judges the
+/// values.
+fn is_date_segment(segment: &str) -> bool {
+    !segment.is_empty() && segment.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Resolve a decoded post address (no leading slash) to exactly one current
@@ -1707,4 +1726,140 @@ fn html_escape_content(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::content::ContentStore;
+    use crate::testutil::{mkdir, set_tags, touch, TmpDir};
+
+    /// Scan a fixture tree into a store, or `None` when the filesystem takes
+    /// no xattrs (the tests skip: every served file needs its own tag).
+    fn store_of(root: &std::path::Path, public: &[&str]) -> Option<ContentStore> {
+        for rel in public {
+            if !set_tags(&root.join(rel), &["public"]) {
+                return None;
+            }
+        }
+        Some(ContentStore::scan(root, &std::env::temp_dir()).unwrap())
+    }
+
+    async fn get(store: &ContentStore, path: &str) -> Reply {
+        respond(store, path, &RequestFlags::default()).await
+    }
+
+    fn header<'a>(reply: &'a Reply, name: &str) -> Option<&'a str> {
+        reply.headers.iter().find(|(k, _)| *k == name).map(|(_, v)| v.as_str())
+    }
+
+    /// A folder's file named like another post's language version is the
+    /// folder's own file: served in place, never redirected to that version
+    /// (DESIGN.md "Languages": a literal file always wins its own name).
+    #[tokio::test]
+    async fn folder_asset_named_like_a_version_is_the_folders() {
+        let t = TmpDir::new();
+        touch(t.path(), "photo/photo.md", "# Photo\n\nEnglish.");
+        touch(t.path(), "photo/photo.sv.md", "# Foto\n\nSvenska.");
+        touch(t.path(), "brev/brev.md", "# Brev\n\nEnglish.");
+        touch(t.path(), "brev/photo.sv.md", "an asset of brev, not photo's version");
+        let store = match store_of(
+            t.path(),
+            &["photo", "photo/photo.md", "photo/photo.sv.md", "brev", "brev/brev.md", "brev/photo.sv.md"],
+        ) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+
+        let asset = get(&store, "/brev/photo.sv.md").await;
+        assert_eq!(asset.status, 200, "the folder's own file is served in place");
+        assert_eq!(asset.body, b"an asset of brev, not photo's version");
+
+        let version = get(&store, "/photo.sv.md").await;
+        assert_eq!(version.status, 200);
+        assert_eq!(version.body, b"# Foto\n\nSvenska.");
+    }
+
+    /// The version address is `/[date/]name.tag`: any other prefix names
+    /// nothing, so a folder path or a stray segment never reaches a version.
+    #[tokio::test]
+    async fn version_head_must_be_a_post_address() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev/brev.md", "# Brev\n\nEnglish.");
+        touch(t.path(), "brev/brev.sv.md", "# Brev\n\nSvenska.");
+        let store = match store_of(t.path(), &["brev", "brev/brev.md", "brev/brev.sv.md"]) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+
+        assert_eq!(get(&store, "/brev.sv").await.status, 200);
+        assert_eq!(get(&store, "/x/brev.sv").await.status, 404);
+        assert_eq!(get(&store, "/brev/brev.sv").await.status, 404);
+        assert_eq!(get(&store, "/x/brev.sv.md").await.status, 404);
+    }
+
+    /// A version's file addressed under its folder redirects to the version's
+    /// own raw address, like the primary's file does.
+    #[tokio::test]
+    async fn version_file_under_its_folder_redirects_to_its_address() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev/brev.md", "# Brev\n\nEnglish.");
+        touch(t.path(), "brev/brev.sv.md", "# Brev\n\nSvenska.");
+        let store = match store_of(t.path(), &["brev", "brev/brev.md", "brev/brev.sv.md"]) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+
+        let reply = get(&store, "/brev/brev.sv.md").await;
+        assert_eq!(reply.status, 301);
+        assert_eq!(header(&reply, "location"), Some("/brev.sv.md"));
+        let reply = get(&store, "/brev/brev.md").await;
+        assert_eq!(reply.status, 301);
+        assert_eq!(header(&reply, "location"), Some("/brev.md"));
+    }
+
+    /// A versioned post that is the newer claimant of its name lives at its
+    /// date address, and so does its version: `/2026/03/10/brev.sv`, raw at
+    /// `/2026/03/10/brev.sv.md`. The bare `/brev.sv` belongs to the owner of
+    /// `/brev`, which has no Swedish version, so it is a miss.
+    #[tokio::test]
+    async fn dated_version_address_of_a_newer_claimant() {
+        let t = TmpDir::new();
+        // The oldest claim on `brev`: a folder post dated by its marker.
+        touch(t.path(), "brev/brev.md", "# Brev\n\nThe old one, English only.");
+        mkdir(t.path(), "brev/2026-03-10T1200");
+        // The newer claim: a top-level pair, dated by mtime (now).
+        touch(t.path(), "brev.md", "# Brev\n\nThe new one.");
+        touch(t.path(), "brev.sv.md", "# Brev\n\nDen nya.");
+        let store = match store_of(t.path(), &["brev", "brev/brev.md", "brev.md", "brev.sv.md"]) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+        let newer = store
+            .entries
+            .iter()
+            .find(|e| e.dir.is_none() && e.label.as_deref() == Some("brev"))
+            .expect("the top-level pair is a post");
+        assert_eq!(newer.versions.len(), 1);
+        let date = newer.timestamp.date_path();
+
+        let owner = get(&store, "/brev").await;
+        assert_eq!(owner.status, 200, "the oldest claim owns the bare name");
+        assert_eq!(get(&store, "/brev.sv").await.status, 404, "the owner has no Swedish version");
+
+        let page = get(&store, &format!("{date}/brev.sv")).await;
+        assert_eq!(page.status, 200, "the newer claimant's version at its date address");
+        assert_eq!(
+            header(&page, "link"),
+            Some(format!("<{date}/brev>; rel=\"alternate\"; hreflang=\"en\", <{date}/brev.sv>; rel=\"alternate\"; hreflang=\"sv\"").as_str())
+        );
+        let raw = get(&store, &format!("{date}/brev.sv.md")).await;
+        assert_eq!(raw.status, 200);
+        assert_eq!(raw.body, b"# Brev\n\nDen nya.");
+
+        // The non-canonical spellings converge on the dated address.
+        let reply = get(&store, &format!("{date}/BREV.sv")).await;
+        assert_eq!(reply.status, 301);
+        assert_eq!(header(&reply, "location"), Some(format!("{date}/brev.sv").as_str()));
+    }
 }

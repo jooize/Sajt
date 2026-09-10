@@ -1891,7 +1891,7 @@ fn epoch() -> NaiveDateTime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use crate::testutil::{mkdir, set_finder_comment, set_tags, touch, TmpDir};
 
     #[test]
     fn excerpt_skips_heading_takes_first_paragraph() {
@@ -1946,39 +1946,6 @@ mod tests {
         assert_eq!(extract_excerpt(&d.path().join("pic.jpg"), "jpg"), None);
         // HTML is deliberately excluded so <style>/<script> text can never leak.
         assert_eq!(extract_excerpt(&d.path().join("page.html"), "html"), None);
-    }
-
-    /// Set an xattr under the first platform-accepted name from `names` (macOS
-    /// takes the native Apple name; Linux rejects that namespace and takes the
-    /// `user.`-mapped one — the same list the readers try). Returns false when
-    /// every name is rejected, so a test can skip on an xattr-less filesystem.
-    #[must_use]
-    fn set_mapped_xattr(path: &Path, names: &[&str], buf: &[u8]) -> bool {
-        names.iter().any(|name| xattr::set(path, name, buf).is_ok())
-    }
-
-    /// Write Finder tags the way Finder stores them — a binary-plist array of
-    /// `"name\nN"` strings in the `_kMDItemUserTags` xattr — so `read_tags_colored`
-    /// (and the visibility gate) see them. Returns false when the filesystem
-    /// rejects xattrs, so a test can skip rather than fail on an unsupported FS.
-    #[must_use]
-    fn set_tags(path: &Path, tags: &[&str]) -> bool {
-        let arr: Vec<plist::Value> =
-            tags.iter().map(|t| plist::Value::String((*t).to_string())).collect();
-        let mut buf = Vec::new();
-        plist::to_writer_binary(&mut buf, &plist::Value::Array(arr)).unwrap();
-        set_mapped_xattr(path, crate::tags::USER_TAGS_XATTR_NAMES, &buf)
-    }
-
-    /// Write a Finder comment the way Finder stores it — a binary-plist string in
-    /// the `kMDItemFinderComment` xattr — so `read_finder_comment` sees it. Returns
-    /// false when the filesystem rejects xattrs, so the test skips rather than
-    /// failing on an unsupported FS.
-    #[must_use]
-    fn set_finder_comment(path: &Path, comment: &str) -> bool {
-        let mut buf = Vec::new();
-        plist::to_writer_binary(&mut buf, &plist::Value::String(comment.to_string())).unwrap();
-        set_mapped_xattr(path, crate::tags::FINDER_COMMENT_XATTR_NAMES, &buf)
     }
 
     #[test]
@@ -2053,38 +2020,6 @@ mod tests {
         );
     }
 
-    /// A throwaway directory under the OS temp dir, removed on drop. Avoids a
-    /// dev-dependency; uniqueness is pid + a process-wide counter.
-    struct TmpDir(PathBuf);
-    impl TmpDir {
-        fn new() -> Self {
-            static COUNTER: AtomicU32 = AtomicU32::new(0);
-            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let mut p = std::env::temp_dir();
-            p.push(format!("sajt-scan-{}-{}", std::process::id(), n));
-            std::fs::create_dir_all(&p).unwrap();
-            TmpDir(p)
-        }
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-    impl Drop for TmpDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    fn touch(dir: &Path, rel: &str, body: &str) {
-        let p = dir.join(rel);
-        if let Some(parent) = p.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        std::fs::write(p, body).unwrap();
-    }
-    fn mkdir(dir: &Path, rel: &str) {
-        std::fs::create_dir_all(dir.join(rel)).unwrap();
-    }
     fn find<'a>(entries: &'a [Entry], label: &str) -> &'a Entry {
         entries
             .iter()

@@ -28,4 +28,6 @@ pub mod slug;
 pub mod stats;
 pub mod tags;
 pub mod templates;
+#[cfg(test)]
+mod testutil;
 pub mod url;
