@@ -328,10 +328,10 @@ async fn resolve(store: &ContentStore, path: &str, flags: &RequestFlags) -> Repl
 
     let all_entries: Vec<&Entry> = store.entries.iter().collect();
 
-    // A language version (`/{post}/{tag}`, raw at `/{post}/{tag}.{ext}`): a post
+    // A language version (`/{post}.{tag}`, raw at `/{post}.{tag}.{ext}`): a post
     // address plus a registered language tag, answered only when that version
-    // exists (DESIGN.md "Languages"). Resolved first: the version address is
-    // canonical and stable, so a same-named asset or subfolder never shadows it.
+    // exists (DESIGN.md "Languages"). Resolved first, before the query parser
+    // reads the tag as a raw-file extension.
     if let Some(resp) = try_version(store, &all_entries, &path, flags).await {
         return resp;
     }
@@ -472,12 +472,17 @@ async fn resolve(store: &ContentStore, path: &str, flags: &RequestFlags) -> Repl
     render_listing(&matching, &all_entries, &query, &view, &base)
 }
 
-/// Resolve a language-version address. The last segment (rendition rungs
-/// peeled) must be a registered language tag, optionally with an extension;
-/// the head must resolve to exactly one post, and that post must carry a
-/// version in that language. Anything else is `None`, so the caller falls
-/// through and no existing address changes meaning. A non-canonical spelling
-/// (case, an alias, a trailing slash) 301s to the canonical one.
+/// Resolve a language-version address (DESIGN.md "Languages"): the post's
+/// address with the tag as a trailing "extension", mirroring the file's name.
+/// `/brev.sv` is the page of `brev.sv.md` (dated `/2026/03/12/brev.sv`), its
+/// bytes are at `/brev.sv.md`, and the rendition rungs hang off a raw image
+/// version as off any file (`/photo.sv.tif/jpeg/thumb`). The tag must be a
+/// registered language, the head must resolve to exactly one post, and that
+/// post must carry a version in that language. Anything else is `None`, so the
+/// caller falls through and no existing address changes meaning: `/notes.old`
+/// for a post with no version in `old` is the raw request it always was. A
+/// non-canonical spelling (case, an alias, a trailing slash) 301s to the
+/// canonical one.
 async fn try_version(
     store: &ContentStore,
     all_entries: &[&Entry],
@@ -486,10 +491,6 @@ async fn try_version(
 ) -> Option<Reply> {
     let requested = format!("/{}", path);
     let mut segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    if segments.len() < 2 {
-        return None;
-    }
-    // Rendition rungs hang off a raw image version (`/x/sv.tif/jpeg/thumb`).
     let mut thumb = false;
     let mut as_jpeg = false;
     if segments.last() == Some(&"thumb") {
@@ -500,28 +501,35 @@ async fn try_version(
         as_jpeg = true;
         segments.pop();
     }
-    if segments.len() < 2 {
-        return None;
-    }
     let last = segments.pop()?;
-    let (tag_token, ext) = match last.rsplit_once('.') {
-        Some((t, e)) if !t.is_empty() && !e.is_empty() => (t, Some(e)),
-        _ => (last, None),
+
+    // `<stem>.<tag>` names the page, `<stem>.<tag>.<ext>` the bytes.
+    fn dotted(s: &str) -> Option<(&str, &str)> {
+        s.rsplit_once('.').filter(|(head, tail)| !head.is_empty() && !tail.is_empty())
+    }
+    let (stem, tail) = dotted(last)?;
+    let (stem, tag_token, ext) = match crate::lang::parse(tail) {
+        Some(_) => (stem, tail, None),
+        None => {
+            let (stem, token) = dotted(stem)?;
+            (stem, token, Some(tail))
+        }
     };
     let tag = crate::lang::parse(tag_token)?;
     if (thumb || as_jpeg) && ext.is_none() {
         return None; // rungs hang off files, not pages
     }
+    segments.push(stem);
     let entry = resolve_one(all_entries, &segments.join("/"))?;
     let version = entry.version(&tag)?;
     if let Some(e) = ext {
         if !e.eq_ignore_ascii_case(&version.extension) {
-            return None; // `/x/sv.txt` for a `.md` version names nothing
+            return None; // `/x.sv.txt` for a `.md` version names nothing
         }
     }
     let shown = entry.show_version(version);
 
-    // The page: canonical at `/<post>/<tag>`.
+    // The page: canonical at `/<post>.<tag>`.
     if ext.is_none() {
         let canon = templates::canonical(&shown, all_entries);
         if requested != canon.path {
@@ -531,7 +539,7 @@ async fn try_version(
         return Some(with_alternates(reply, &shown, all_entries));
     }
 
-    // The bytes: canonical at `/<post>/<tag>.<ext>`, plus any rendition rungs.
+    // The bytes: canonical at `/<post>.<tag>.<ext>`, plus any rendition rungs.
     let base_href = templates::canonical_raw_href(&shown, all_entries);
     let mut canon = crate::url::percent_decode(&base_href);
     if as_jpeg {
@@ -765,7 +773,7 @@ async fn try_asset(
         };
         return Some(Reply::redirect(&templates::encode_path(&decoded)));
     }
-    // A language version's file is canonical at `/label/<tag>.<ext>` likewise.
+    // A language version's file is canonical at `/label.<tag>.<ext>` likewise.
     if let Some(version) = owner
         .versions
         .iter()

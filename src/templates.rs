@@ -2304,14 +2304,22 @@ fn name_shares<'a>(entry: &Entry, all_entries: &[&'a Entry]) -> Vec<&'a Entry> {
 /// through [`encode_path`] before emitting into an href or Location header.
 ///
 /// A value showing one of the post's language versions (`Entry::show_version`)
-/// is addressed one segment below the post: `/label/sv`, `/2026/03/12/label/sv`.
+/// is addressed as its file is named: the post's address with the tag as a
+/// trailing "extension", `/label.sv`, `/2026/03/12/label.sv` (its bytes then
+/// at `/label.sv.md`, see [`canonical_raw_href`]). Nothing below `/label/`
+/// (assets, nested folders) is touched.
 pub fn canonical(entry: &Entry, all_entries: &[&Entry]) -> Canonical {
     let mut canonical = canonical_post(entry, all_entries);
     if let Some(tag) = &entry.version {
-        canonical.path.push('/');
-        canonical.path.push_str(tag);
+        canonical.path = version_path(&canonical.path, tag);
     }
     canonical
+}
+
+/// The decoded address of a post's version in `tag`, off the post's own
+/// decoded address: `/brev` + `sv` = `/brev.sv`. The one place the shape lives.
+fn version_path(post_path: &str, tag: &str) -> String {
+    format!("{}.{}", post_path, tag)
 }
 
 /// The post's own address, whichever language version the value shows.
@@ -2361,7 +2369,7 @@ fn canonical_post(entry: &Entry, all_entries: &[&Entry]) -> Canonical {
 /// versions in tag order. `current` marks the one `entry` shows.
 pub struct Alternate {
     pub hreflang: String,
-    /// The encoded path (`/label`, `/label/sv`).
+    /// The encoded path (`/label`, `/label.sv`).
     pub href: String,
     pub name: String,
     pub current: bool,
@@ -2385,7 +2393,7 @@ pub fn alternates(entry: &Entry, all_entries: &[&Entry]) -> Vec<Alternate> {
     for v in &entry.versions {
         out.push(Alternate {
             hreflang: v.lang.clone(),
-            href: encode_path(&format!("{}/{}", base, v.lang)),
+            href: encode_path(&version_path(&base, &v.lang)),
             name: crate::lang::autonym(&v.lang),
             current: entry.version.as_deref() == Some(v.lang.as_str()),
         });
@@ -3811,7 +3819,7 @@ fn closest_slugs<'a>(query: &str, all_entries: &[&'a Entry], max: usize) -> Vec<
 /// mis-resolve); it offers the timeline, search, and closest-slug suggestions.
 /// Served with HTTP 404 by the router, identically to any missing path.
 /// `requested` is the decoded path the reader asked for, shown in full (a
-/// miss below a post, `/brev/sv`, names the whole address, not its last
+/// miss below a post, `/brev/old`, names the whole address, not its last
 /// segment); `label` is the segment the suggestions are keyed on.
 pub fn not_found_label_page(requested: &str, label: &str, all_entries: &[&Entry]) -> String {
     let cloud = compute_cloud(all_entries);
@@ -3983,8 +3991,8 @@ mod tests {
         let all = vec![&e];
         assert_eq!(canonical(&e, &all).path, "/brev");
         let shown = e.show_version(&e.versions[0]);
-        assert_eq!(canonical(&shown, &all).path, "/brev/sv");
-        assert_eq!(canonical_raw_href(&shown, &all), "/brev/sv.md");
+        assert_eq!(canonical(&shown, &all).path, "/brev.sv");
+        assert_eq!(canonical_raw_href(&shown, &all), "/brev.sv.md");
         assert_eq!(canonical_raw_href(&e, &all), "/brev.md");
 
         // Every language, site language first; `current` follows the value.
@@ -3993,7 +4001,7 @@ mod tests {
             .iter()
             .map(|a| (a.hreflang.as_str(), a.href.as_str(), a.name.as_str(), a.current))
             .collect();
-        assert_eq!(seen, vec![("en", "/brev", "English", true), ("sv", "/brev/sv", "svenska", false)]);
+        assert_eq!(seen, vec![("en", "/brev", "English", true), ("sv", "/brev.sv", "svenska", false)]);
         assert!(alternates(&shown, &all)[1].current);
 
         // The notice names the shown language and links the others.
@@ -4005,11 +4013,11 @@ mod tests {
         assert!(language_notice(&e, &all).contains("<b lang=\"en\">English</b>. Also in "));
         assert_eq!(
             row_versions(&e, &all),
-            "<nav aria-label=\"Other languages\">also in <a href=\"/brev/sv\" hreflang=\"sv\" lang=\"sv\">svenska</a></nav>"
+            "<nav aria-label=\"Other languages\">also in <a href=\"/brev.sv\" hreflang=\"sv\" lang=\"sv\">svenska</a></nav>"
         );
         // hreflang links in the head: paths without a configured domain, plus x-default.
         let head = hreflang_links(&shown, &all);
-        assert!(head.contains("<link rel=\"alternate\" hreflang=\"sv\" href=\"/brev/sv\">"));
+        assert!(head.contains("<link rel=\"alternate\" hreflang=\"sv\" href=\"/brev.sv\">"));
         assert!(head.contains("hreflang=\"x-default\" href=\"/brev\""));
         // A post without versions has none of it.
         let plain = mkentry("solo", "2026-03-01T120000");
@@ -4057,7 +4065,7 @@ mod tests {
         let shown = old.show_version(&old.versions[0]);
         assert!(shown.same_post(&old));
         assert!(!shown.same_post(&newer));
-        assert_eq!(canonical(&shown, &all).path, "/brev/sv");
+        assert_eq!(canonical(&shown, &all).path, "/brev.sv");
         assert_eq!(canonical(&newer, &all).path, "/2026/03/10/brev");
         let shares: Vec<&Entry> = name_shares(&shown, &all);
         assert_eq!(shares.len(), 1);

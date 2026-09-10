@@ -451,15 +451,15 @@ mod tests {
     fn language_versions_negotiate_at_the_edge() {
         let mut m = tiny_manifest();
         let link = "</brev>; rel=\"alternate\"; hreflang=\"en\", \
-                    </brev/sv>; rel=\"alternate\"; hreflang=\"sv\", \
-                    </brev/pt>; rel=\"alternate\"; hreflang=\"pt\", \
-                    </brev/pt-BR>; rel=\"alternate\"; hreflang=\"pt-BR\"";
+                    </brev.sv>; rel=\"alternate\"; hreflang=\"sv\", \
+                    </brev.pt>; rel=\"alternate\"; hreflang=\"pt\", \
+                    </brev.pt-BR>; rel=\"alternate\"; hreflang=\"pt-BR\"";
         m.files.insert(
             "/brev".to_string(),
             entry("sha256-11", 200, &[("content-type", "text/html; charset=utf-8"), ("link", link)]),
         );
         m.files.insert(
-            "/brev/sv".to_string(),
+            "/brev.sv".to_string(),
             entry("sha256-22", 200, &[("content-type", "text/html; charset=utf-8"), ("link", link)]),
         );
         let text = render(&m, "http://localhost:8080", "/tmp/build").unwrap();
@@ -468,19 +468,19 @@ mod tests {
         assert!(text.contains(
             "header_regexp Accept-Language \"(?i)^[[:space:]]*sv(?:[-;,[:space:]]|$)\""
         ), "{text}");
-        assert!(text.contains("redir \"/brev/sv#redirected-for-language\" 302"));
+        assert!(text.contains("redir \"/brev.sv#redirected-for-language\" 302"));
         assert!(text.contains("header Vary \"Accept-Language\""));
         // Two Portuguese versions: exact tags only.
         assert!(text.contains("\"(?i)^[[:space:]]*pt(?:[;,[:space:]]|$)\""));
         assert!(text.contains("\"(?i)^[[:space:]]*pt-BR(?:[;,[:space:]]|$)\""));
         // The version's own address never redirects.
         assert_eq!(text.matches("redirected-for-language").count(), 3);
-        let sv_handle = text.find("path \"/brev/sv\"\n\thandle").expect("the sv file handle");
+        let sv_handle = text.find("path \"/brev.sv\"\n\thandle").expect("the sv file handle");
         assert!(!text[sv_handle..].contains("Accept-Language"), "no negotiation below the version");
         // The redirect handles precede the file handle they guard.
-        assert!(text.find("@f").unwrap() < text.find("redir \"/brev/sv#").unwrap());
+        assert!(text.find("@f").unwrap() < text.find("redir \"/brev.sv#").unwrap());
         let file_handle = text.find("path \"/brev\"\n\thandle").unwrap();
-        assert!(text.find("redir \"/brev/sv#").unwrap() < file_handle);
+        assert!(text.find("redir \"/brev.sv#").unwrap() < file_handle);
         // The recorded Link header still ships as a header on both files.
         assert!(text.contains("link \"</brev>; rel="));
     }

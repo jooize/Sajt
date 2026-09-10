@@ -32,11 +32,13 @@ pub struct Revision {
     pub rank: u32,
 }
 
-/// One language version of a folder post (DESIGN.md "Languages"): a sibling
-/// of the primary named `<stem>.<tag>.<ext>`, in a language other than the
-/// site's. It is the same post in another language, addressed at
-/// `/<post>/<tag>`, and it serves its own bytes under the same per-file rule
-/// as any content: only with its own `public` tag.
+/// One language version of a post (DESIGN.md "Languages"): a sibling of the
+/// primary named `<stem>.<tag>.<ext>`, in a language other than the site's,
+/// inside the post's folder or next to a bare file at the top level. It is
+/// the same post in another language, addressed as its file is named
+/// (`/<post>.<tag>`, bytes at `/<post>.<tag>.<ext>`), and it serves its own
+/// bytes under the same per-file rule as any content: only with its own
+/// `public` tag.
 #[derive(Debug, Clone)]
 pub struct Version {
     /// The canonical language tag (`sv`, `pt-BR`), never the site language.
@@ -225,11 +227,12 @@ pub struct Entry {
     /// the canonical tag read from the primary file's name (`brev.sv.md`).
     /// `None` means the site language. Rendered as `lang` on the article.
     pub lang: Option<String>,
-    /// The post's other-language versions (folder posts only), sorted by tag.
-    /// Each lives at `/<post>/<tag>` and links to the others with `hreflang`.
+    /// The post's other-language versions, sorted by tag: the primary's
+    /// language-suffixed siblings, in the folder or at the top level. Each
+    /// lives at `/<post>.<tag>` and links to the others with `hreflang`.
     pub versions: Vec<Version>,
     /// Set on the value that renders one of `versions` (see [`Entry::show_version`]):
-    /// the version's tag. The address then gains a `/<tag>` segment, `path`,
+    /// the version's tag. The address then gains a `.<tag>` suffix, `path`,
     /// `extension`, `lang` and `display_label` are the version's, and the rest
     /// of the post (date, tags, aliases, the other versions) is shared. `None`
     /// on a scanned post and on the site-language page.
@@ -242,7 +245,7 @@ impl Entry {
         self.id == other.id
     }
 
-    /// The version in a language, matched case-insensitively (`/brev/SV` is
+    /// The version in a language, matched case-insensitively (`/brev.SV` is
     /// answered by the `sv` version, then redirected to its canonical case).
     pub fn version(&self, lang: &str) -> Option<&Version> {
         self.versions.iter().find(|v| crate::lang::same(&v.lang, lang))
