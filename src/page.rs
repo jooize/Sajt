@@ -531,8 +531,28 @@ async fn try_version(
         return None; // only the date hierarchy may precede a post's name
     }
     segments.push(stem);
-    let entry = resolve_one(all_entries, &segments.join("/"))?;
-    let version = entry.version(&tag)?;
+    let head = segments.join("/");
+    let current = resolve_one(all_entries, &head).and_then(|e| e.version(&tag).map(|v| (e, v)));
+    let (entry, version) = match current {
+        Some(pair) => pair,
+        // No current post with that version at this address. A date path may
+        // still name one of a version's archived snapshots
+        // (`/2026/03/12/091500/brev.sv`) — the version's own history, served
+        // exactly as the site-language file's is.
+        None => {
+            if ext.is_some() {
+                return None; // a snapshot serves its page, not raw bytes
+            }
+            let (entry, version, rev) = find_version_revision(all_entries, &head, &tag)?;
+            let shown = entry.show_version(version);
+            let canon = templates::revision_href(shown.slug.as_deref()?, Some(&tag), rev);
+            if requested != crate::url::percent_decode(&canon) {
+                return Some(Reply::redirect(&canon));
+            }
+            let view = revision_view(&shown, rev);
+            return Some(serve_entry(&view, store, false).await);
+        }
+    };
     if let Some(e) = ext {
         if !e.eq_ignore_ascii_case(&version.extension) {
             return None; // `/x.sv.txt` for a `.md` version names nothing
@@ -563,6 +583,43 @@ async fn try_version(
         return Some(Reply::redirect(&templates::encode_path(&canon)));
     }
     Some(serve_raw_bytes(&shown, flags.embed, as_jpeg, thumb, &base_href, &store.cache_dir).await)
+}
+
+/// Find the one archived revision of a language version that a version
+/// address's date path names (`/2026/03/12/091500/brev.sv`, head
+/// `2026/03/12/091500/brev`, tag `sv`). The post is matched on its slug, as
+/// [`find_revision`] matches the site-language file's; zero or several matches
+/// fail closed to `None`, so an ambiguous address never guesses a snapshot.
+fn find_version_revision<'a>(
+    all_entries: &[&'a Entry],
+    head: &str,
+    tag: &str,
+) -> Option<(&'a Entry, &'a crate::entry::Version, &'a Revision)> {
+    let query = parse_url_path(&format!("/{}", head));
+    let label = query.label.as_ref()?;
+    let date_prefix = query.date_prefix.as_ref()?;
+    let want = crate::slug::slug(label)?;
+
+    let mut found: Option<(&Entry, &crate::entry::Version, &Revision)> = None;
+    let mut count = 0usize;
+    for e in all_entries {
+        if e.error.is_some() || e.slug.as_deref() != Some(want.as_str()) {
+            continue;
+        }
+        let version = match e.version(tag) {
+            Some(v) => v,
+            None => continue,
+        };
+        for r in &version.revisions {
+            if !revision_is_at(r, date_prefix, query.time.as_deref()) {
+                continue;
+            }
+            found = Some((*e, version, r));
+            count += 1;
+        }
+    }
+
+    (count == 1).then_some(()).and(found)
 }
 
 /// Whether a path segment is a rung of the date hierarchy (`2026`, `03`,
@@ -977,14 +1034,8 @@ fn find_revision<'a>(
             continue;
         }
         for r in &e.revisions {
-            let full = r.date.format("%Y-%m-%dT%H%M%S").to_string();
-            if !full.starts_with(date_prefix.as_str()) {
+            if !revision_is_at(r, date_prefix, query.time.as_deref()) {
                 continue;
-            }
-            if let Some(ref t) = query.time {
-                if !r.date.format("%H%M%S").to_string().starts_with(t.as_str()) {
-                    continue;
-                }
             }
             found = Some((*e, r));
             count += 1;
@@ -994,23 +1045,46 @@ fn find_revision<'a>(
     (count == 1).then_some(()).and(found)
 }
 
-/// Serve an archived revision: render its own bytes, dated by its own mtime,
-/// under the current post's chrome. Revisions are reachable only at date paths.
-async fn serve_revision(parent: &Entry, rev: &Revision, store: &ContentStore) -> Reply {
-    let mut e = parent.clone();
+/// Whether a revision's own date is the one a date path addresses: the date
+/// prefix matches its `Y-m-dTHMS` stamp, and the time segment (when the URL
+/// carries one) its `HMS`.
+fn revision_is_at(rev: &Revision, date_prefix: &str, time: Option<&str>) -> bool {
+    if !rev.date.format("%Y-%m-%dT%H%M%S").to_string().starts_with(date_prefix) {
+        return false;
+    }
+    match time {
+        Some(t) => rev.date.format("%H%M%S").to_string().starts_with(t),
+        None => true,
+    }
+}
+
+/// The value that renders one archived revision of `entry`: its own bytes,
+/// dated by its own mtime, under the post's chrome. A snapshot is one frozen
+/// file, so it carries no history of its own (`revisions`), no extra addresses
+/// (`aliases`), no listing, and no counterpart in another language — it is
+/// what that one file was at that moment, and nothing says another language's
+/// file was in the same state then. Reachable only at its date path.
+fn revision_view(entry: &Entry, rev: &Revision) -> Entry {
+    let mut e = entry.clone();
     e.path = rev.path.clone();
     e.timestamp = crate::postdate::PostDate::from_mtime(rev.date);
     e.edited = None;
     e.revisions = Vec::new();
     e.aliases = Vec::new();
     e.listing = None; // a revision serves specific bytes, never a listing
+    e.versions = Vec::new(); // no hreflang alternates on a snapshot
     e.extension = rev
         .path
         .extension()
         .and_then(|x| x.to_str())
         .unwrap_or("")
         .to_string();
-    serve_entry(&e, store, false).await
+    e
+}
+
+/// Serve an archived revision of the site-language file at its date path.
+async fn serve_revision(parent: &Entry, rev: &Revision, store: &ContentStore) -> Reply {
+    serve_entry(&revision_view(parent, rev), store, false).await
 }
 
 /// Render a filtered timeline listing: apply the view filter, build the shared
@@ -1861,5 +1935,54 @@ mod tests {
         let reply = get(&store, &format!("{date}/BREV.sv")).await;
         assert_eq!(reply.status, 301);
         assert_eq!(header(&reply, "location"), Some(format!("{date}/brev.sv").as_str()));
+    }
+
+    /// A version's archived snapshot is served at the version's date-path
+    /// address (`/Y/M/D/HHMMSS/brev.sv`), exactly as the site-language file's
+    /// snapshot is at its own — and, being one frozen file, it carries no
+    /// language alternates.
+    #[tokio::test]
+    async fn version_revision_serves_at_its_dated_address() {
+        let t = TmpDir::new();
+        // A date marker fixes the post's own date, so the snapshot's mtime
+        // (now) can never be mistaken for the current post's address.
+        touch(t.path(), "brev/brev.md", "# Brev\n\nEnglish.");
+        mkdir(t.path(), "brev/2026-03-03T1430");
+        touch(t.path(), "brev/brev.sv.md", "# Brev\n\nSvenska nu.");
+        touch(t.path(), "brev/brev.sv copy.md", "# Brev\n\nSvenska tidigare.");
+        let store = match store_of(
+            t.path(),
+            &["brev", "brev/brev.md", "brev/brev.sv.md", "brev/brev.sv copy.md"],
+        ) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+        let version = store.entries[0].version("sv").expect("the Swedish version");
+        assert_eq!(version.revisions.len(), 1);
+        let at = version.revisions[0].date.format("/%Y/%m/%d/%H%M%S").to_string();
+
+        let page = get(&store, &format!("{at}/brev.sv")).await;
+        assert_eq!(page.status, 200, "the snapshot's own address");
+        assert!(String::from_utf8_lossy(&page.body).contains("Svenska tidigare"));
+        assert_eq!(header(&page, "link"), None, "a snapshot has no counterpart in another language");
+        // Raw bytes are not an address for a snapshot — as for the
+        // site-language file's snapshots, which have no raw address either.
+        assert_eq!(get(&store, &format!("{at}/brev.sv.md")).await.status, 404);
+
+        // A date that names no snapshot, and a head that is not a post
+        // address, both name nothing.
+        assert_eq!(get(&store, "/2026/01/01/000000/brev.sv").await.status, 404);
+        assert_eq!(get(&store, &format!("/x{at}/brev.sv")).await.status, 404);
+
+        // Non-canonical spelling converges on the one address.
+        let reply = get(&store, &format!("{at}/BREV.sv")).await;
+        assert_eq!(reply.status, 301);
+        assert_eq!(header(&reply, "location"), Some(format!("{at}/brev.sv").as_str()));
+
+        // The version page carries the nav that leads there; the
+        // site-language page has no revisions of its own to show.
+        let version_page = get(&store, "/brev.sv").await;
+        assert!(String::from_utf8_lossy(&version_page.body).contains(&format!("{at}/brev.sv")));
+        assert!(!String::from_utf8_lossy(&get(&store, "/brev").await.body).contains("earlier revision"));
     }
 }
