@@ -2969,26 +2969,36 @@ fn continue_nav(next: Option<&Entry>, all_entries: &[&Entry]) -> String {
     )
 }
 
-/// The date-path address of one archived revision: the current post's slug at
-/// the revision's own date, always with the time segment (revisions collide with
-/// the current post and each other on the day, so the time always disambiguates).
-/// A revision's date is a plain mtime, so its full `/Y/M/D/HHMMSS` segments all
-/// come straight off it.
-fn revision_href(slug: &str, rev: &Revision) -> String {
-    let decoded = format!("{}/{}", rev.date.format("/%Y/%m/%d/%H%M%S"), slug);
+/// The date-path address of one archived revision: the post's slug at the
+/// revision's own date, always with the time segment (revisions collide with
+/// the current post and each other on the day, so the time always
+/// disambiguates). A revision's date is a plain mtime, so its full
+/// `/Y/M/D/HHMMSS` segments all come straight off it. `tag` is set when the
+/// snapshot is of a language version rather than the site-language file: the
+/// address then carries the tag as a trailing "extension", as the version's
+/// own address does (`/2026/03/12/091500/brev.sv`).
+pub fn revision_href(slug: &str, tag: Option<&str>, rev: &Revision) -> String {
+    let name = match tag {
+        Some(tag) => version_path(slug, tag),
+        None => slug.to_string(),
+    };
+    let decoded = format!("{}/{}", rev.date.format("/%Y/%m/%d/%H%M%S"), name);
     compose_href(&decoded, None)
 }
 
-/// The dated `<li>` links for a post's archived revisions, newest first.
+/// The dated `<li>` links for a post's archived revisions, newest first. On a
+/// version page these are that version file's own snapshots, so their
+/// addresses carry its language tag.
 fn revision_items(entry: &Entry) -> String {
     let label = entry.slug.as_deref().unwrap_or("");
+    let tag = entry.version.as_deref();
     entry
         .revisions
         .iter()
         .map(|r| {
             format!(
                 r#"<li><a href="{href}"><time datetime="{dt}">{date}</time></a></li>"#,
-                href = html_escape(&revision_href(label, r)),
+                href = html_escape(&revision_href(label, tag, r)),
                 dt = html_escape(&format_datetime_attr(&r.date)),
                 date = html_escape(&r.date.format("%Y-%m-%d %H:%M").to_string()),
             )
@@ -3987,6 +3997,7 @@ mod tests {
             extension: "md".to_string(),
             mtime: e.timestamp.to_local_instant().unwrap(),
             display_label: Some("Brev".to_string()),
+            revisions: Vec::new(),
         });
         let all = vec![&e];
         assert_eq!(canonical(&e, &all).path, "/brev");
@@ -4057,6 +4068,7 @@ mod tests {
             extension: "md".to_string(),
             mtime: old.timestamp.to_local_instant().unwrap(),
             display_label: None,
+            revisions: Vec::new(),
         });
         let mut newer = mkentry("brev", "2026-03-10T120000");
         newer.id = "/c/brev (newer).md".into();
@@ -4162,6 +4174,21 @@ mod tests {
         }];
         // The time is a path segment now, before the slug.
         assert!(revision_items(&e).contains("/2026/02/15/091500/post"));
+        assert_eq!(revision_href("post", None, &e.revisions[0]), "/2026/02/15/091500/post");
+    }
+
+    #[test]
+    fn a_version_revision_href_carries_the_language_tag() {
+        let mut e = mkentry("brev", "2026-03-01T120000");
+        e.version = Some("sv".to_string());
+        e.revisions = vec![Revision {
+            date: NaiveDateTime::parse_from_str("2026-02-15T091500", "%Y-%m-%dT%H%M%S").unwrap(),
+            path: "/c/brev/brev.sv copy.md".into(),
+            rank: 1,
+        }];
+        assert_eq!(revision_href("brev", Some("sv"), &e.revisions[0]), "/2026/02/15/091500/brev.sv");
+        // A version page's nav addresses its own file's history.
+        assert!(revision_items(&e).contains("/2026/02/15/091500/brev.sv"));
     }
 
     // ── outbound cite / link axis (post-model.md §4) ──

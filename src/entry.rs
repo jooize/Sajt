@@ -53,6 +53,12 @@ pub struct Version {
     pub mtime: NaiveDateTime,
     /// The version's own display title (its first H1), if it has one.
     pub display_label: Option<String>,
+    /// The version file's archived snapshots (` copy [n]` next to it), newest
+    /// first — this file's history, exactly as [`Entry::revisions`] is the
+    /// site-language file's. Each is served at the version's date-path address
+    /// (`/Y/M/D/HHMMSS/<slug>.<tag>`) and, like any content, only with its own
+    /// `public` tag.
+    pub revisions: Vec<Revision>,
 }
 
 /// Why a post failed to scan. A malformed post still becomes an `Entry` (with
@@ -253,8 +259,8 @@ impl Entry {
 
     /// The value that renders `version` of this post: the same post with the
     /// version's file, extension, language and title, marked so its address
-    /// carries the tag. Revisions belong to the site-language file and are
-    /// not shown on a version page.
+    /// carries the tag. Revisions are per file, so the page shows the
+    /// version's own snapshots, never the site-language file's.
     pub fn show_version(&self, version: &Version) -> Entry {
         let mut shown = self.clone();
         shown.path = version.path.clone();
@@ -262,7 +268,7 @@ impl Entry {
         shown.lang = Some(version.lang.clone());
         shown.display_label = version.display_label.clone().or_else(|| self.display_label.clone());
         shown.version = Some(version.lang.clone());
-        shown.revisions = Vec::new();
+        shown.revisions = version.revisions.clone();
         shown.edited = self
             .timestamp
             .to_local_instant()

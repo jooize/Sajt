@@ -295,8 +295,16 @@ fn pair_top_level_versions(posts: &[TopItem]) -> TopLevelVersions {
         match home.len() {
             1 => {
                 let primary = home[0];
-                let versions =
-                    collect_versions(&group, primary, &stem, &format!("Top-level post '{}'", stem));
+                // No copies here: a top-level ` copy [n]` is an item of its own,
+                // attached to the post — or to one of its versions — by
+                // `attach_revisions` once every post is built.
+                let versions = collect_versions(
+                    &group,
+                    &[],
+                    primary,
+                    &stem,
+                    &format!("Top-level post '{}'", stem),
+                );
                 for f in &foreign {
                     out.absorbed.insert(f.path.clone());
                 }
@@ -968,7 +976,19 @@ fn pick_primary<'a>(plain: &'a [FileChild], label: &str) -> PrimaryPick<'a> {
 /// language collide and are both left out (never guess); a version without its
 /// tag is withheld. Both are logged, prefixed by `post` (the folder, or the
 /// top-level name).
-fn collect_versions(plain: &[FileChild], primary: &FileChild, label: &str, post: &str) -> Vec<Version> {
+///
+/// `copies` are the folder's ` copy [n]` snapshots: each attaches to the
+/// version file it snapshots (same stem, same language), so a version carries
+/// its own history exactly as the site-language file does. The top level has
+/// no copies here — its snapshots are top-level items of their own, collapsed
+/// by `attach_revisions` — so it passes an empty slice.
+fn collect_versions(
+    plain: &[FileChild],
+    copies: &[FileChild],
+    primary: &FileChild,
+    label: &str,
+    post: &str,
+) -> Vec<Version> {
     let site_language = &crate::config::site().language;
     let mut by_lang: Vec<(&FileChild, &str)> = plain
         .iter()
@@ -1020,11 +1040,61 @@ fn collect_versions(plain: &[FileChild], primary: &FileChild, label: &str, post:
                 extension: ext.to_string(),
                 mtime: file.mtime,
                 display_label: extract_h1(&file.path, ext),
+                revisions: version_revisions(copies, file, tag, post),
             });
         }
         i = j;
     }
     versions
+}
+
+/// The archived snapshots of one version file: the ` copy [n]` siblings that
+/// share its stem *and* its language (`brev.sv copy.md` snapshots
+/// `brev.sv.md`, never `brev.md`), newest first. The per-file rule applies as
+/// everywhere else — an untagged snapshot's content is never served, so it
+/// never becomes an addressable revision. Every outcome is logged.
+fn version_revisions(
+    copies: &[FileChild],
+    version: &FileChild,
+    tag: &str,
+    post: &str,
+) -> Vec<Revision> {
+    let language = crate::lang::english_name(tag);
+    let mut revisions: Vec<Revision> = Vec::new();
+    for f in copies.iter().filter(|f| f.stem == version.stem && same_lang(f.lang.as_deref(), Some(tag))) {
+        if !file_is_public(&f.path) {
+            tracing::info!(
+                "{}: withholding the snapshot '{}' of the {} ({}) version — the file is not \
+                 tagged `public` (file content is only served with its own tag).",
+                post,
+                f.name,
+                language,
+                tag
+            );
+            continue;
+        }
+        tracing::info!(
+            "{}: archived the snapshot '{}' as a revision of the {} ({}) version.",
+            post,
+            f.name,
+            language,
+            tag
+        );
+        revisions.push(Revision { date: f.mtime, path: f.path.clone(), rank: f.copy_rank.unwrap_or(1) });
+    }
+    sort_revisions(&mut revisions);
+    revisions
+}
+
+/// Whether two file languages are the same one, `None` (the site language)
+/// included. Tags are already canonical here; the comparison stays
+/// language-aware so no case spelling can split a family.
+fn same_lang(a: Option<&str>, b: Option<&str>) -> bool {
+    match (a, b) {
+        (Some(x), Some(y)) => crate::lang::same(x, y),
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 /// The result of scanning a folder post's contents. Exactly one of `primary`,
@@ -1311,39 +1381,63 @@ fn scan_folder(dir: &Path, label: &str) -> std::io::Result<FolderScan> {
         });
     }
 
-    // Revisions = ` copy [n]` files that snapshot the primary (share its stem
-    // and its language). Same per-file rule: an untagged snapshot's content is
-    // never served, so it never becomes an addressable revision. A snapshot of
-    // another language's version is not addressable either (versions carry no
-    // revision nav); it is left out and logged, never silently.
-    let mut revisions: Vec<Revision> = copies
-        .iter()
-        .filter(|f| f.stem == primary_child.stem)
-        .filter(|f| {
-            if f.lang != primary_child.lang {
-                tracing::info!(
-                    "Folder post {}: the snapshot '{}' is of another language's version and is not \
-                     served as a revision.",
-                    dir.display(),
-                    f.name
-                );
-                return false;
-            }
-            true
-        })
-        .filter(|f| file_is_public(&f.path))
-        .map(|f| Revision { date: f.mtime, path: f.path.clone(), rank: f.copy_rank.unwrap_or(1) })
-        .collect();
-    sort_revisions(&mut revisions);
-
     let primary = PrimaryFile {
         name: primary_child.name.clone(),
         path: primary_child.path.clone(),
         mtime: primary_child.mtime,
     };
     let lang = own_language(primary_child, &format!("{}/{}", dir.display(), primary_child.name));
-    let versions = collect_versions(&plain, primary_child, label, &format!("Folder post {}", dir.display()));
+    let post_name = format!("Folder post {}", dir.display());
+    // The other-language versions, each with its own ` copy [n]` snapshots
+    // attached (`version_revisions`): a version is a file like any other, so
+    // its history is its own.
+    let versions = collect_versions(&plain, &copies, primary_child, label, &post_name);
     let version_paths: Vec<&Path> = versions.iter().map(|v| v.path.as_path()).collect();
+
+    // Revisions = ` copy [n]` files that snapshot the primary (share its stem
+    // and its language). Same per-file rule: an untagged snapshot's content is
+    // never served, so it never becomes an addressable revision. A snapshot in
+    // another language belongs to that language's version, which has just
+    // taken it; one in a language this post serves no version in is left out
+    // and logged — inside a folder a snapshot never stands in for a missing
+    // file, exactly as a copy never becomes the folder's primary.
+    let mut revisions: Vec<Revision> = copies
+        .iter()
+        .filter(|f| f.stem == primary_child.stem)
+        .filter(|f| {
+            if same_lang(f.lang.as_deref(), primary_child.lang.as_deref()) {
+                return true;
+            }
+            match f.lang.as_deref() {
+                Some(tag) if versions.iter().any(|v| crate::lang::same(&v.lang, tag)) => false,
+                Some(tag) => {
+                    tracing::info!(
+                        "{}: the snapshot '{}' is in {} ({}), a language this post serves no \
+                         version in, so it is left out (a snapshot never stands in for the \
+                         version file itself).",
+                        post_name,
+                        f.name,
+                        crate::lang::english_name(tag),
+                        tag
+                    );
+                    false
+                }
+                None => {
+                    tracing::info!(
+                        "{}: the snapshot '{}' carries no language subtag while the post's own \
+                         file does ('{}'), so it snapshots no file here and is left out.",
+                        post_name,
+                        f.name,
+                        primary_child.name
+                    );
+                    false
+                }
+            }
+        })
+        .filter(|f| file_is_public(&f.path))
+        .map(|f| Revision { date: f.mtime, path: f.path.clone(), rank: f.copy_rank.unwrap_or(1) })
+        .collect();
+    sort_revisions(&mut revisions);
 
     // Outbound destination (post-model.md §4): a bookmark or a `link.*` text
     // sidecar drops out of the file set and becomes the post's cite. Candidacy
@@ -1575,23 +1669,15 @@ fn attach_revisions(entries: &mut Vec<Entry>, revisions: &[TopItem]) {
         };
 
         // A snapshot of a language version (`brev.sv copy.md` next to a paired
-        // `brev.md` + `brev.sv.md`) is not addressable (versions carry no
-        // revision nav) and must not promote to a second `brev`: left out and
-        // logged, as inside a folder.
+        // `brev.md` + `brev.sv.md`) is that version's history, exactly as the
+        // same two files inside `brev/` would be: it attaches to the version,
+        // never to the site-language file and never as a post of its own.
         if let Some(tag) = lang.as_deref() {
-            let of_a_version = entries.iter().any(|e| {
-                e.error.is_none() && e.dir.is_none() && e.label.as_deref() == Some(&base) && e.version(tag).is_some()
-            });
-            if of_a_version {
-                tracing::info!(
-                    "Revision family '{}': the snapshot '{}' is of the {} ({}) version and is not \
-                     served as a revision.",
-                    base,
-                    rev.name,
-                    crate::lang::english_name(tag),
-                    tag
-                );
-                continue;
+            if let Some(i) = paired_home(entries, &base) {
+                if entries[i].version(tag).is_some() {
+                    attach_version_revision(&mut entries[i], rev, tag, rank, &base);
+                    continue;
+                }
             }
         }
 
@@ -1628,8 +1714,18 @@ fn attach_revisions(entries: &mut Vec<Entry>, revisions: &[TopItem]) {
         }
     }
 
-    // Promote each base-absent family: newest copy becomes the post, rest revisions.
-    for ((base, _lang), group) in orphans {
+    // Promote each base-absent family: newest copy becomes the post (or, for a
+    // family in another language whose post is paired at the top level, that
+    // post's version), the rest become its revisions. Site-language families go
+    // first, so a family whose whole pair is gone (`brev copy.md` +
+    // `brev.sv copy.md`) recovers as one post with a version, never as two
+    // posts racing for the name — HashMap order must not decide that.
+    let mut orphans: Vec<((String, Option<String>), Vec<(&TopItem, u32)>)> =
+        orphans.into_iter().collect();
+    orphans.sort_by(|a, b| {
+        (a.0 .1.is_some(), &a.0 .0, &a.0 .1).cmp(&(b.0 .1.is_some(), &b.0 .0, &b.0 .1))
+    });
+    for ((base, lang), group) in orphans {
         // Resolve each orphan's primary (path + mtime); drop the unreadable ones.
         let mut resolved: Vec<(&TopItem, u32, PathBuf, NaiveDateTime)> = group
             .into_iter()
@@ -1647,6 +1743,19 @@ fn attach_revisions(entries: &mut Vec<Entry>, revisions: &[TopItem]) {
         // Newest first; a higher copy number breaks an exact mtime tie (matching
         // `sort_revisions`). The head is promoted; the tail become its revisions.
         resolved.sort_by(|a, b| b.3.cmp(&a.3).then(b.1.cmp(&a.1)));
+
+        // A foreign-language family whose site-language post exists at the top
+        // level recovers as that post's version, not as a second post claiming
+        // the same name: the newest copy becomes the version file (so
+        // `/brev.sv` keeps resolving after `brev.sv.md` is deleted), the rest
+        // its revisions.
+        if let Some(tag) = lang.as_deref() {
+            if let Some(i) = paired_home(&entries, &base) {
+                promote_version(&mut entries[i], &resolved, tag, &base);
+                continue;
+            }
+        }
+
         let winner = resolved[0].0;
         let mut promoted = build_post_as(winner, Some(base.as_str()), Vec::new());
         for (rev, rank, path, mtime) in resolved.into_iter().skip(1) {
@@ -1672,6 +1781,127 @@ fn attach_revisions(entries: &mut Vec<Entry>, revisions: &[TopItem]) {
         );
         entries.push(promoted);
     }
+}
+
+/// The top-level bare-file post a foreign-language ` copy [n]` pairs with:
+/// the site-language post of the same name (`brev.md` for `brev.sv copy.md`),
+/// the one a version of that name would hang off. `None` when there is none,
+/// or when several claim the name — pairing never guesses (folder posts find
+/// their versions inside themselves, so only bare files pair here).
+fn paired_home(entries: &[Entry], base: &str) -> Option<usize> {
+    let mut found: Option<usize> = None;
+    for (i, e) in entries.iter().enumerate() {
+        if e.error.is_some() || e.dir.is_some() || e.lang.is_some() || e.label.as_deref() != Some(base) {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some(i);
+    }
+    found
+}
+
+/// Archive one top-level ` copy [n]` as a revision of `home`'s version in
+/// `tag`, under the same per-file rule as any other snapshot: no `public`
+/// chain, no served content. The caller has confirmed the version exists.
+fn attach_version_revision(home: &mut Entry, rev: &TopItem, tag: &str, rank: u32, base: &str) {
+    let language = crate::lang::english_name(tag);
+    let (rev_path, rev_mtime) = match revision_primary(rev) {
+        Some(v) => v,
+        None => {
+            tracing::warn!("Skipping unreadable archived revision: {}", rev.path.display());
+            return;
+        }
+    };
+    if !revision_chain_public(rev, &rev_path) {
+        tracing::info!(
+            "Revision family '{}': withholding the copy '{}' of the {} ({}) version — not tagged \
+             `public` (file content is only served with its own tag).",
+            base,
+            rev.name,
+            language,
+            tag
+        );
+        return;
+    }
+    let version = match home.versions.iter_mut().find(|v| crate::lang::same(&v.lang, tag)) {
+        Some(v) => v,
+        None => return, // unreachable: the caller checked
+    };
+    version.revisions.push(Revision { date: rev_mtime, path: rev_path, rank });
+    sort_revisions(&mut version.revisions);
+    tracing::info!(
+        "Revision family '{}': archived the copy '{}' as a revision of the {} ({}) version.",
+        base,
+        rev.name,
+        language,
+        tag
+    );
+}
+
+/// Recover a version from its snapshots alone: with no `<base>.<tag>.<ext>`
+/// file left, the newest copy of that family becomes `home`'s version in `tag`
+/// (so `/base.tag` keeps resolving — the same recovery property a site-language
+/// post has) and the rest become its revisions. `resolved` is the family,
+/// newest first. An untagged newest copy withholds the whole version, exactly
+/// as an untagged version file does.
+fn promote_version(
+    home: &mut Entry,
+    resolved: &[(&TopItem, u32, PathBuf, NaiveDateTime)],
+    tag: &str,
+    base: &str,
+) {
+    let language = crate::lang::english_name(tag);
+    let (winner, _, win_path, win_mtime) = &resolved[0];
+    if !file_is_public(win_path) {
+        tracing::warn!(
+            "Revision family '{}': the {} ({}) version has only snapshots left and the newest \
+             ('{}') is not tagged `public`, so no {} version is served (file content is only \
+             served with its own tag).",
+            base,
+            language,
+            tag,
+            winner.name,
+            language
+        );
+        return;
+    }
+    let ext = split_name(&winner.name).1;
+    let mut revisions: Vec<Revision> = Vec::new();
+    for (rev, rank, path, mtime) in resolved.iter().skip(1) {
+        if !revision_chain_public(rev, path) {
+            tracing::info!(
+                "Revision family '{}': withholding the copy '{}' — not tagged `public` \
+                 (file content is only served with its own tag).",
+                base,
+                rev.name
+            );
+            continue;
+        }
+        revisions.push(Revision { date: *mtime, path: path.clone(), rank: *rank });
+    }
+    sort_revisions(&mut revisions);
+    let count = revisions.len();
+    home.versions.push(Version {
+        lang: tag.to_string(),
+        path: win_path.clone(),
+        extension: ext.to_string(),
+        mtime: *win_mtime,
+        display_label: extract_h1(win_path, ext),
+        revisions,
+    });
+    home.versions.sort_by(|a, b| a.lang.cmp(&b.lang)); // versions sort by tag
+    tracing::info!(
+        "Revision family '{}': no {} ({}) version file remains; promoted the newest snapshot \
+         '{}' to be the {} version, with {} older revision(s).",
+        base,
+        language,
+        tag,
+        winner.name,
+        language,
+        count
+    );
 }
 
 /// The family a top-level ` copy [n]` sibling belongs to: `(base, language,
@@ -3045,9 +3275,9 @@ mod tests {
 
     #[test]
     fn snapshots_follow_their_own_language() {
-        // In a folder, only snapshots of the primary (same stem AND language)
-        // are revisions. At the top level the same holds through the pairing:
-        // `brev.sv copy.md` never revises the English `brev`.
+        // A snapshot revises the file it snapshots: same stem AND language.
+        // `brev.sv copy.md` is the Swedish version's history, never the
+        // English `brev`'s — in a folder and at the top level alike.
         let t = TmpDir::new();
         touch(t.path(), "post/post.md", "English");
         touch(t.path(), "post/post.sv.md", "Svenska");
@@ -3079,12 +3309,14 @@ mod tests {
         assert_eq!(post.revisions.len(), 1, "only the English snapshot revises the primary");
         assert!(post.revisions[0].path.ends_with("post copy.md"));
         assert_eq!(post.versions.len(), 1);
+        assert!(post.version("sv").unwrap().revisions[0].path.ends_with("post.sv copy.md"));
         // Paired at the top level: the English snapshot revises the post, the
-        // Swedish one is of a version and is neither a revision nor a post.
+        // Swedish one its Swedish version; neither is a post of its own.
         let brev = find_lang(&entries, "brev", None);
         assert_eq!(brev.versions.len(), 1);
         assert_eq!(brev.revisions.len(), 1);
         assert!(brev.revisions[0].path.ends_with("brev copy.md"));
+        assert!(brev.version("sv").unwrap().revisions[0].path.ends_with("brev.sv copy.md"));
         assert_eq!(entries.iter().filter(|e| e.label.as_deref() == Some("brev")).count(), 1);
         // A Swedish-only post is revised by its own Swedish snapshot.
         assert_eq!(find_lang(&entries, "ensam", Some("sv")).revisions.len(), 1);
@@ -3098,5 +3330,128 @@ mod tests {
         let e = find_lang(&entries, "brev", Some("sv"));
         assert_eq!(e.slug.as_deref(), Some("brev"));
         assert!(e.revisions.is_empty());
+    }
+
+    /// A version's ` copy [n]` snapshots are that version's revisions, inside a
+    /// folder post: same stem, same language, same per-file `public` rule.
+    #[test]
+    fn folder_version_snapshots_are_the_versions_revisions() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev/brev.md", "English");
+        touch(t.path(), "brev/brev copy.md", "an earlier English state");
+        touch(t.path(), "brev/brev.sv.md", "Svenska");
+        touch(t.path(), "brev/brev.sv copy.md", "an earlier Swedish state");
+        touch(t.path(), "brev/brev.sv copy 2.md", "a later Swedish snapshot");
+        touch(t.path(), "brev/brev.de copy.md", "a snapshot with no German version");
+        for f in [
+            "brev/brev.md",
+            "brev/brev copy.md",
+            "brev/brev.sv.md",
+            "brev/brev.sv copy.md",
+            "brev/brev.sv copy 2.md",
+            "brev/brev.de copy.md",
+        ] {
+            if !set_tags(&t.path().join(f), &["public"]) {
+                return; // xattr unsupported — skip
+            }
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "brev");
+        assert_eq!(e.revisions.len(), 1, "the English snapshot revises the primary");
+        assert!(e.revisions[0].path.ends_with("brev copy.md"));
+        assert_eq!(e.versions.len(), 1, "a snapshot never becomes a version file itself");
+        let sv = e.version("sv").unwrap();
+        assert_eq!(sv.revisions.len(), 2, "both Swedish snapshots are the version's history");
+        let ranks: Vec<u32> = sv.revisions.iter().map(|r| r.rank).collect();
+        assert_eq!(ranks, vec![2, 1], "newest first; rank breaks the mtime tie");
+        // The version page shows its own history, never the primary's.
+        let shown = e.show_version(sv);
+        assert_eq!(shown.revisions.len(), 2);
+        assert!(shown.revisions[0].path.ends_with("brev.sv copy 2.md"));
+    }
+
+    #[test]
+    fn an_untagged_version_snapshot_is_withheld() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev/brev.md", "English");
+        touch(t.path(), "brev/brev.sv.md", "Svenska");
+        touch(t.path(), "brev/brev.sv copy.md", "untagged -> never served");
+        for f in ["brev/brev.md", "brev/brev.sv.md"] {
+            if !set_tags(&t.path().join(f), &["public"]) {
+                return; // xattr unsupported — skip
+            }
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        let e = find(&entries, "brev");
+        assert!(
+            e.version("sv").unwrap().revisions.is_empty(),
+            "a snapshot serves content, so it needs its own tag"
+        );
+    }
+
+    /// At the top level a version's snapshot attaches to the version of the
+    /// paired post, never to the site-language file and never as a post.
+    #[test]
+    fn top_level_version_snapshot_revises_the_version() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev.md", "English");
+        touch(t.path(), "brev copy.md", "an earlier English state");
+        touch(t.path(), "brev.sv.md", "Svenska");
+        touch(t.path(), "brev.sv copy.md", "an earlier Swedish state");
+        for f in ["brev.md", "brev copy.md", "brev.sv.md", "brev.sv copy.md"] {
+            if !set_tags(&t.path().join(f), &["public"]) {
+                return; // xattr unsupported — skip
+            }
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        assert_eq!(entries.len(), 1, "the snapshots are not posts of their own");
+        let e = &entries[0];
+        assert_eq!(e.revisions.len(), 1);
+        assert!(e.revisions[0].path.ends_with("brev copy.md"));
+        let sv = e.version("sv").unwrap();
+        assert_eq!(sv.revisions.len(), 1);
+        assert!(sv.revisions[0].path.ends_with("brev.sv copy.md"));
+    }
+
+    /// Delete `brev.sv.md` and its newest snapshot stands in for it, so
+    /// `/brev.sv` keeps resolving — the recovery property the site-language
+    /// file already has, applied to a version.
+    #[test]
+    fn an_orphan_version_copy_becomes_the_version_of_its_pair() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev.md", "English");
+        touch(t.path(), "brev.sv copy.md", "# Brev\n\nthe surviving Swedish state");
+        touch(t.path(), "brev.sv copy 2.md", "an older Swedish state");
+        for f in ["brev.md", "brev.sv copy.md", "brev.sv copy 2.md"] {
+            if !set_tags(&t.path().join(f), &["public"]) {
+                return; // xattr unsupported — skip
+            }
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        assert_eq!(entries.len(), 1, "no second post claims the name");
+        let sv = entries[0].version("sv").expect("the newest snapshot is the version");
+        assert!(sv.path.ends_with("brev.sv copy 2.md"), "newest by mtime, rank breaks the tie");
+        assert_eq!(sv.display_label, None, "its own title, read from the file it is");
+        assert_eq!(sv.revisions.len(), 1);
+        assert!(sv.revisions[0].path.ends_with("brev.sv copy.md"));
+    }
+
+    /// With the whole pair gone, each family recovers on its own and they pair
+    /// again: one post with one version, never two posts racing for the name.
+    #[test]
+    fn a_vanished_pair_recovers_as_a_post_with_a_version() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev copy.md", "the surviving English state");
+        touch(t.path(), "brev.sv copy.md", "the surviving Swedish state");
+        for f in ["brev copy.md", "brev.sv copy.md"] {
+            if !set_tags(&t.path().join(f), &["public"]) {
+                return; // xattr unsupported — skip
+            }
+        }
+        let entries = scan_entries(t.path()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].lang, None);
+        assert!(entries[0].path.ends_with("brev copy.md"));
+        assert!(entries[0].version("sv").is_some());
     }
 }
