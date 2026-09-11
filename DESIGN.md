@@ -1338,6 +1338,14 @@ compile time; `src/assets.rs` generates its CSS and JS from consts.
   `/usr/lib` and `/System/Library`. A binary that only runs inside a Nix
   store is not a release, so the build refuses to produce one rather than
   let it reach a download page.
+- **Crates come from the CDN, not the API.** `importCargoLock` fetches every
+  crate from the crates.io API redirector, whose edge refuses scripted
+  clients by User-Agent (nixpkgs' `fetchurl` announces itself as curl) with
+  a 403 on every runner. The flake hands `importCargoLock` a fetcher that
+  rewrites that host to `static.crates.io`, the download host the registry
+  index itself names and the one cargo uses. The lockfile checksums still
+  decide what is accepted, and the fixed-output store paths are unchanged,
+  so the binary cache keeps serving what it has.
 - **The commit is stamped in.** `build.rs` reads the `SAJT_COMMIT`
   environment variable, which the flake fills with its own revision, and
   `sajt --version` prints `sajt <version> (<commit>)`. The workflow asserts

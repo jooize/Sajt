@@ -50,11 +50,30 @@
         rustStatic = rust.override {
           targets = [ pkgsStatic.stdenv.hostPlatform.rust.rustcTarget ];
         };
-        rustPlatform =
+        # Crates are fetched from static.crates.io, the download host the
+        # registry index itself names (index.crates.io/config.json, "dl") and
+        # the one cargo uses. importCargoLock hardcodes the crates.io API
+        # redirector instead, and that edge refuses scripted clients by
+        # User-Agent (nixpkgs' fetchurl announces itself as curl) with a 403
+        # on every runner. The fetcher handed to importCargoLock rewrites the
+        # host; the Cargo.lock checksums still decide what is accepted, and
+        # the fixed-output store paths do not change, so the binary cache
+        # still serves whatever it has.
+        cdnFetchurl = args: pkgs.fetchurl (args // {
+          url = lib.replaceStrings
+            [ "https://crates.io/api/v1/crates/" ]
+            [ "https://static.crates.io/crates/" ]
+            args.url;
+        });
+        fromCdn = platform: platform.overrideScope (final: prev: {
+          importCargoLock = prev.importCargoLock.override { fetchurl = cdnFetchurl; };
+        });
+        rustPlatform = fromCdn (
           if pkgs.stdenv.isLinux then
             pkgsStatic.makeRustPlatform { cargo = rustStatic; rustc = rustStatic; }
           else
-            pkgs.makeRustPlatform { cargo = rust; rustc = rust; };
+            pkgs.makeRustPlatform { cargo = rust; rustc = rust; }
+        );
 
         # Helper programs the engine looks for on PATH at run time:
         # asciidoctor renders .adoc in its secure safe mode (src/render.rs
