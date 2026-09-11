@@ -1,4 +1,8 @@
 /target
+# `nix build` drops a symlink into the Nix store here; it is a pointer to a
+# build, never a source file.
+/result
+/result-*
 /content
 /.agents-cargo
 .DS_Store

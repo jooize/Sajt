@@ -13,7 +13,9 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     name = "sajt",
-    version,
+    // Built by `build.rs`: the crate version, plus the commit when the
+    // builder passed one, so a released binary names what it was built from.
+    version = env!("SAJT_VERSION"),
     about = "Publishing engine where the filesystem is the CMS"
 )]
 enum Cli {
