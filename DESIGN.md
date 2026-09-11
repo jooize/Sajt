@@ -244,7 +244,11 @@ where symlinks and xattrs do not.
   public files = pure listing). **Public subfolders** are folder rows in the
   list and are themselves **nested listings** browsable at `/label/sub/…` to any
   depth — a nested item's **path IS its canonical URL**, mirroring the filesystem
-  verbatim (no flat-namespace claim, no identity). Visibility is gated at **every**
+  verbatim (no flat-namespace claim, no identity). That address is the directory
+  entry's name **byte for byte on every platform**: a case-folding or
+  normalization-folding filesystem never answers a differently-spelled request,
+  which is a plain 404 there exactly as it is on Linux — never a redirect, since
+  a static host adapter cannot fold. Visibility is gated at **every**
   level (fail-closed AND, deny-wins): once a request is scoped into a folder post
   it resolves to an asset, a nested listing, or a clean 404 — a hidden nested path
   404s identically to a missing one (no existence oracle), never falling through.

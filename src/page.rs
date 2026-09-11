@@ -262,7 +262,12 @@ pub fn static_asset(static_dir: &std::path::Path, path: &str) -> Reply {
         return not_found();
     }
 
-    let file_path = static_dir.join(path);
+    // The same byte-for-byte rule as a folder asset: the address is the
+    // directory entry's name on every platform, never a case-folded spelling
+    // that only APFS would answer (the build emits the on-disk name).
+    let Some(file_path) = exact_path(static_dir, &[path]) else {
+        return not_found();
+    };
     let content = match std::fs::read(&file_path) {
         Ok(c) => c,
         Err(_) => return not_found(),
@@ -881,6 +886,30 @@ fn error_response(entry: &Entry, all_entries: &[&Entry]) -> Reply {
     Reply::html_status(500, templates::error_page(entry, all_entries))
 }
 
+/// The path `segments` names under `dir`, built by walking real directory
+/// entries: each segment must equal an entry's name byte-for-byte. A
+/// filesystem that folds case or Unicode normalization would otherwise answer
+/// `/hej/photo.jpg` with `Photo.JPG` here and 404 it on Linux; the static
+/// build emits on-disk names, so the served address is the entry name and
+/// nothing else. `.`/`..` never match an entry, so the walk is bounded to
+/// `dir` by construction (the canonicalize guard stays as a second line).
+/// None = no such entry.
+fn exact_path(dir: &std::path::Path, segments: &[&str]) -> Option<std::path::PathBuf> {
+    if segments.is_empty() {
+        return None; // a folder head alone names no entry inside it
+    }
+    let mut current = dir.to_path_buf();
+    for segment in segments {
+        let want = std::ffi::OsStr::new(*segment);
+        let entry = std::fs::read_dir(&current)
+            .ok()?
+            .flatten()
+            .find(|e| e.file_name().as_os_str() == want)?;
+        current = entry.path();
+    }
+    Some(current)
+}
+
 /// Resolve a folder-post asset request (`/{folder}/{asset…}`) to bytes on disk,
 /// strictly inside that post's directory. Returns None when the path is not an
 /// asset (wrong shape, unknown folder, a missing or escaping file), so the
@@ -910,7 +939,8 @@ async fn try_asset(
     let mut thumb = false;
     let mut as_jpeg = false;
     let mut file_segments: &[&str] = &tail;
-    let mut canon_file = std::fs::canonicalize(dir.join(file_segments.join("/"))).ok();
+    let mut canon_file =
+        exact_path(dir, file_segments).and_then(|p| std::fs::canonicalize(p).ok());
     if canon_file.is_none() {
         let mut trimmed = file_segments;
         if trimmed.last() == Some(&"thumb") {
@@ -928,7 +958,7 @@ async fn try_asset(
             return None;
         }
         file_segments = trimmed;
-        canon_file = std::fs::canonicalize(dir.join(file_segments.join("/"))).ok();
+        canon_file = exact_path(dir, file_segments).and_then(|p| std::fs::canonicalize(p).ok());
     }
     let canon_file = canon_file?;
     if !canon_file.starts_with(&canon_dir) {
@@ -1081,7 +1111,7 @@ fn try_folder_listing(
     // files were already served by `try_asset`; a hidden or missing path 404s
     // identically (no existence oracle), and so does a hidden nested listing.
     let resolve = || -> Option<Reply> {
-        let candidate = dir.join(tail.join("/"));
+        let candidate = exact_path(dir, &tail)?;
         let canon_dir = std::fs::canonicalize(dir).ok()?;
         let canon_target = std::fs::canonicalize(&candidate).ok()?;
         if !canon_target.starts_with(&canon_dir) {
@@ -2149,6 +2179,102 @@ mod tests {
         let html = String::from_utf8_lossy(&nested.body).into_owned();
         assert!(html.contains("/2026/09/10/hej/sub/file.txt"), "item hrefs hang off the head");
         assert_eq!(get(&store, "/2026/09/10/hej/sub/file.txt").await.body, b"nested");
+    }
+
+    /// Inside a folder, the address IS the directory entry's name, byte for
+    /// byte. Only a case-folding filesystem (APFS, NTFS) can fail this: there
+    /// `dir.join(tail)` used to resolve `Photo.TXT` for a request spelled
+    /// `photo.txt` and serve it 200, while Linux 404'd the same URL and the
+    /// static build — which emits on-disk names — had no such address at all.
+    #[tokio::test]
+    async fn asset_address_is_the_entry_name_byte_for_byte() {
+        let t = TmpDir::new();
+        touch(t.path(), "hej/hej.md", "# Hej");
+        touch(t.path(), "hej/Photo.TXT", "the asset");
+        let store = match store_of(t.path(), &["hej", "hej/hej.md", "hej/Photo.TXT"]) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+
+        let asset = get(&store, "/hej/Photo.TXT").await;
+        assert_eq!(asset.status, 200, "the on-disk spelling is the address");
+        assert_eq!(asset.body, b"the asset");
+
+        for miss in ["/hej/photo.txt", "/hej/PHOTO.TXT", "/hej/Photo.txt"] {
+            let reply = get(&store, miss).await;
+            assert_eq!(reply.status, 404, "{miss} names no entry");
+            assert!(reply.location().is_none(), "{miss} is a miss, never a redirect");
+        }
+    }
+
+    /// The same rule under Unicode normalization: a name stored in NFD is
+    /// served at its NFD spelling only. APFS preserves the bytes but compares
+    /// folded, so the NFC spelling used to resolve the NFD file there and 404
+    /// everywhere else.
+    #[tokio::test]
+    async fn asset_address_is_not_normalization_folded() {
+        let nfd = "cafe\u{301}.txt"; // c a f e + COMBINING ACUTE
+        let nfc = "caf\u{e9}.txt"; // c a f + LATIN SMALL LETTER E WITH ACUTE
+        let t = TmpDir::new();
+        touch(t.path(), "hej/hej.md", "# Hej");
+        touch(t.path(), &format!("hej/{nfd}"), "the asset");
+        let store = match store_of(t.path(), &["hej", "hej/hej.md", &format!("hej/{nfd}")]) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+
+        let asset = get(&store, &format!("/hej/{nfd}")).await;
+        assert_eq!(asset.status, 200, "the on-disk bytes are the address");
+        assert_eq!(asset.body, b"the asset");
+
+        let reply = get(&store, &format!("/hej/{nfc}")).await;
+        assert_eq!(reply.status, 404, "the NFC spelling names no entry");
+        assert!(reply.location().is_none(), "a miss, never a redirect");
+    }
+
+    /// An operator-owned static file follows the same rule: its address is the
+    /// directory entry's name, and a case-folded spelling is a plain 404.
+    #[test]
+    fn static_asset_address_is_the_entry_name_byte_for_byte() {
+        let t = TmpDir::new();
+        touch(t.path(), "rain.jpg", "not really a jpeg");
+
+        let hit = static_asset(t.path(), "rain.jpg");
+        assert_eq!(hit.status, 200, "the on-disk spelling is the address");
+        assert_eq!(hit.body, b"not really a jpeg");
+
+        for miss in ["Rain.jpg", "RAIN.JPG", "rain.JPG"] {
+            let reply = static_asset(t.path(), miss);
+            assert_eq!(reply.status, 404, "{miss} names no entry");
+            assert!(reply.location().is_none(), "{miss} is a miss, never a redirect");
+        }
+    }
+
+    /// A nested listing is addressed by its directory entry's name too — a
+    /// differently-cased subfolder is a plain 404, on every filesystem.
+    #[tokio::test]
+    async fn nested_listing_address_is_the_entry_name_byte_for_byte() {
+        let t = TmpDir::new();
+        touch(t.path(), "hej/hej.md", "# Hej");
+        touch(t.path(), "hej/Pics/file.txt", "nested");
+        let store = match store_of(
+            t.path(),
+            &["hej", "hej/hej.md", "hej/Pics", "hej/Pics/file.txt"],
+        ) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+
+        let listing = get(&store, "/hej/Pics/").await;
+        assert_eq!(listing.status, 200, "the on-disk spelling is the address");
+        let html = String::from_utf8_lossy(&listing.body).into_owned();
+        assert!(html.contains("/hej/Pics/file.txt"), "item hrefs hang off the entry name");
+
+        for miss in ["/hej/pics/", "/hej/pics", "/hej/PICS/"] {
+            let reply = get(&store, miss).await;
+            assert_eq!(reply.status, 404, "{miss} names no entry");
+            assert!(reply.location().is_none(), "{miss} is a miss, never a redirect");
+        }
     }
 
     /// A folder's namespace hangs off the post's ONE canonical address: every
