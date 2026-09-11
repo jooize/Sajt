@@ -43,6 +43,47 @@ One caveat worth knowing: Finder does not show a folder's comment at tag
 time. The comment is published with the folder, so glance at Get Info
 (Cmd-I) before tagging a folder that might carry one.
 
+## Install
+
+**A binary from GitHub Releases.** Each release carries
+`sajt-<version>-<system>.tar.gz` for `aarch64-darwin`, `x86_64-linux` and
+`aarch64-linux`, plus a `SHA256SUMS`. Every binary is built twice from the
+tagged commit on separate runners and published only if the two builds are
+identical byte for byte, so a download can be checked rather than trusted:
+
+```sh
+gh attestation verify sajt-<version>-<system>.tar.gz --owner jooize
+shasum -a 256 -c SHA256SUMS
+```
+
+The first names the commit and workflow that produced those exact bytes; the
+second confirms the archive is the one that was published. The Linux
+binaries are statically linked and run on any distribution. The macOS binary
+is ad-hoc signed: downloaded in a browser it arrives quarantined, and
+Gatekeeper asks for permission under System Settings > Privacy & Security;
+fetched with `curl` it does not.
+
+**With Nix**, which brings the helper programs along:
+
+```sh
+nix run github:jooize/Sajt -- --help
+nix profile install github:jooize/Sajt
+```
+
+**From crates.io**, once the crate is published (it is not yet):
+
+```sh
+cargo install --locked sajt
+```
+
+A downloaded or `cargo install`ed binary expects three helper programs on
+`PATH`, each needed only for what it does: `asciidoctor` renders `.adoc`
+posts, `vips` transcodes the image formats that cannot be stripped in pure
+Rust (HEIC, TIFF, GIF and friends), and on Linux `bwrap` (bubblewrap) is the
+sandbox that transcode runs inside — without it those transcodes fail
+closed rather than run unconfined. Markdown needs nothing. The Nix package
+wires all three in already.
+
 ## Running
 
 Start both processes (see `CLAUDE.md` for development conventions):

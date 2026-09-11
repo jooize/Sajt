@@ -1269,7 +1269,9 @@ What portability rests on, per subsystem:
 - **CI** — `.github/workflows/ci.yml` runs `cargo test` in the flake
   devshell on ubuntu and macos, so the Linux path cannot silently rot. The
   gate tests write tags under whichever mapped name the platform accepts,
-  so fail-closed visibility is exercised on both.
+  so fail-closed visibility is exercised on both. The same workflow also
+  builds the release derivation on both platforms, so the lane described
+  under "Releases" below cannot rot between tags.
 
 **Deliberately rejected:** running the backend as a local Linux container
 behind the machine-wide shared proxy (the `local-serving` scheme). The
@@ -1285,6 +1287,117 @@ FSEvents and xattrs work in-sandbox), with one real design consequence:
 nested `sandbox-exec` is unavailable inside App Sandbox, so the vips jail
 would become an XPC service with minimal entitlements. App Store vs.
 Developer ID + notarization stays open until then.
+
+## Releases (DECIDED 2026-09-11)
+
+A release makes one claim: **these bytes are what this commit builds**.
+Building on GitHub does not establish that by itself — a binary uploaded
+from a laptop looks exactly the same in the release list. Three legs hold
+the claim up, and all three are mechanical:
+
+1. **Provenance attestation.** `actions/attest-build-provenance` has GitHub
+   sign "this digest was built by this workflow at this commit" and logs it
+   in Sigstore. It binds to the commit SHA, never to the tag, so moving a
+   tag proves nothing.
+2. **Two builds that must match.** Every target is built twice, on separate
+   runners, and a compare job refuses to publish unless the two archives are
+   identical byte for byte. A release is then evidence that the commit
+   builds *reproducibly*, not merely that it builds once. A difference is a
+   leak — a timestamp, a build path, a random name — and the answer is to
+   find it, not to publish anyway.
+3. **Pinned inputs.** Actions by commit SHA, the Rust toolchain by
+   `rust-toolchain.toml`, nixpkgs and rust-overlay by `flake.lock`. Nothing
+   in the build resolves to "latest".
+
+What a release does *not* claim: that the code is correct, or that anyone
+has reviewed it. It claims provenance and reproducibility, which is a large
+step up from "the maintainer's Mac" and is not a proof of anything else.
+
+### How the binary is built
+
+The flake package `sajt-unwrapped` is the release binary. Its source is a
+`lib.fileset` limited to what the compiler actually reads — `Cargo.toml`,
+`Cargo.lock`, `rust-toolchain.toml`, `build.rs` and `src/` — so editing a
+design document cannot change the store path, and the operator's own
+`content/` can never be copied into a derivation. Nothing is embedded at
+compile time; `src/assets.rs` generates its CSS and JS from consts.
+
+- **Linux** builds against musl through `pkgsStatic` and is statically
+  linked: one file, no glibc version to match, no loader to find. Nothing
+  in the dependency tree is a C library, so nothing had to be taught to
+  link that way.
+- **Apple silicon** gets the ordinary build and links only system libraries.
+  The Darwin stdenv ad-hoc signs it during fixup. The toolchain hands the
+  linker nixpkgs' libiconv and libintl for the Darwin standard library even
+  though the binary references no symbol from either, so the build passes
+  `-Wl,-dead_strip_dylibs` and ld64 drops the load commands. There is no
+  Intel Mac target.
+- **A fail-closed portability check** runs inside the derivation, after
+  fixup, on the bytes that actually ship: on Linux the binary must have no
+  `PT_INTERP` and no `DT_NEEDED`, on macOS `otool -L` must show only
+  `/usr/lib` and `/System/Library`. A binary that only runs inside a Nix
+  store is not a release, so the build refuses to produce one rather than
+  let it reach a download page.
+- **The commit is stamped in.** `build.rs` reads the `SAJT_COMMIT`
+  environment variable, which the flake fills with its own revision, and
+  `sajt --version` prints `sajt <version> (<commit>)`. The workflow asserts
+  that string names the commit being released before packaging anything. The
+  build script never runs `git`: a build that reads the working tree depends
+  on state outside its declared inputs, which is the thing being ruled out.
+
+`packages.sajt` (and `packages.default`) wraps that same binary with
+`asciidoctor`, `vips` and, on Linux, `bwrap` on its `PATH`, so
+`nix run github:jooize/Sajt` works with no further setup. The wrapper adds a
+script beside the binary; it never rebuilds it.
+
+The archives are `sajt-<version>-<system>.tar.gz`, each carrying `sajt`,
+`LICENSE-MIT` and `LICENSE-APACHE` at the root, built with GNU tar from the
+flake's own locked nixpkgs so the two runners cannot disagree about the tar
+implementation: sorted entries, uid and gid 0, fixed modes, every mtime set
+to the commit's own timestamp, and `gzip -n` so no filename or clock reaches
+the gzip header.
+
+### How a user checks a download
+
+```sh
+gh attestation verify sajt-<version>-<system>.tar.gz --owner jooize
+shasum -a 256 -c SHA256SUMS
+```
+
+The first says who built these exact bytes, from which commit, with which
+workflow. The second says the set of files is the set that was published. A
+Nix user has a third and stricter oracle locally: `nix build --rebuild
+.#sajt-unwrapped` rebuilds a derivation already in the store and fails if
+the output differs, which catches a nondeterministic build faster than two
+CI runs do.
+
+### Still trusted rather than proven
+
+GitHub itself, and the runner images it provides. The Nix installer the
+workflow fetches at run time. The toolchain binaries rust-overlay downloads
+from static.rust-lang.org, which are pinned by hash but are upstream's
+bytes, not ones anyone here built. Reproducibility narrows what a
+compromise of any of these could hide; it does not remove them.
+
+### Residuals
+
+- **No Developer ID, no notarization.** macOS binaries are ad-hoc signed.
+  They run on any Apple silicon Mac, but a browser download carries the
+  quarantine attribute and Gatekeeper refuses it until the user allows it
+  under System Settings > Privacy & Security. Fetching with `curl` sets no
+  quarantine. Developer ID plus notarization would slot in after the build
+  step without changing anything else.
+- **Attestations need a public repository.** A private repository on the
+  Free plan cannot store them. Until the repository is public the release
+  job fails at the attest step, which is the intended behaviour: nothing
+  ships without the thing that makes it checkable.
+- **crates.io publishing stays gated** by `publish = false` in `Cargo.toml`.
+  The publish job reports the gate and ends green rather than failing every
+  tag by design, since a run that is always red teaches people to ignore red.
+- **Tag and branch rulesets** are applied when the repository goes public
+  (`.github/rulesets/README.md`). A tag protected against being moved cannot
+  be re-pointed at a fixed workflow, which is why `workflow_dispatch` runs
+  the whole build-and-compare path as a dry run.
 
 ## Roadmap to publishable v0.1
 
