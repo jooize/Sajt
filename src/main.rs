@@ -174,8 +174,18 @@ pub fn open_site(args: &SiteArgs) -> OpenedSite {
 /// cached): the same two steps every lane starts from, so `get`, `serve`,
 /// and `build` see identical bytes.
 pub async fn load_store(site: &OpenedSite) -> sajt::content::ContentStore {
+    // A root that cannot be scanned (missing, unreadable, unresolvable) is a
+    // configuration error like a bad config file: say which directory and
+    // why, then exit. A panic here would bury the one line that matters.
     let mut store = sajt::content::ContentStore::scan(&site.content_dir, &site.cache_dir)
-        .expect("Failed to scan content directory");
+        .unwrap_or_else(|e| {
+            eprintln!(
+                "Cannot scan the content directory {}: {}",
+                site.content_dir.display(),
+                e
+            );
+            std::process::exit(1);
+        });
     store.resolve_embeds().await;
     store
 }
