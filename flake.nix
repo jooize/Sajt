@@ -46,10 +46,16 @@
         # windows and js), so nothing has to be taught to link statically.
         # macOS gets the ordinary build: the system frameworks are the ABI
         # there, and static linking against them is not a thing Apple offers.
+        # The static toolchain is the same rust-toolchain.toml resolved inside
+        # the static scope's buildPackages, which is rust-overlay's form for
+        # cross builds: the toolchain runs on the build machine, carries the
+        # standard library for the build platform (build scripts and proc
+        # macros run there, against glibc) as well as for the musl target, and
+        # propagates the musl C compiler as the target linker. Taking the
+        # native toolchain and adding a target instead left the build scripts
+        # to link against the wrong C library, and they crashed on start.
         pkgsStatic = pkgs.pkgsStatic;
-        rustStatic = rust.override {
-          targets = [ pkgsStatic.stdenv.hostPlatform.rust.rustcTarget ];
-        };
+        rustStatic = pkgsStatic.buildPackages.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
         # Crates are fetched from static.crates.io, the download host the
         # registry index itself names (index.crates.io/config.json, "dl") and
         # the one cargo uses. importCargoLock hardcodes the crates.io API
