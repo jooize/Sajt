@@ -1,68 +1,325 @@
-# Release: publish the crate to crates.io from CI with trusted publishing.
+# Release: binaries a user can check, built from a tag and nothing else.
 #
-# No long-lived secret anywhere. The job asks GitHub for a short-lived OIDC
-# identity token, exchanges it at crates.io for a temporary registry token
-# (rust-lang/crates-io-auth-action), publishes with it, and the action
-# revokes that token when the job ends. Provenance for the packaged crate
-# is then attested with actions/attest-build-provenance, so anyone can
-# verify that a given .crate was built by this workflow at this commit.
+# Pushing a tag v<version> builds `sajt` from that commit on three runners,
+# twice each, and publishes only if the two builds of a target are identical
+# byte for byte. A release is therefore proof that the commit builds
+# reproducibly, not merely that it builds. What holds the claim up:
 #
-# Bootstrap, once and by hand: crates.io can only be told to trust a
-# workflow for a crate that already exists, so the first version is
-# published from a workstation with a personal API token. After that, in
-# the crate's crates.io settings, add a Trusted Publisher with owner
-# jooize, repository Sajt, workflow release.yml, environment release.
-# Create the matching "release" environment under the repository's
-# Settings > Environments; adding a required reviewer there puts a human
-# gate in front of every publish.
+#   1. Build provenance. GitHub signs "this digest was built by this
+#      workflow at this commit" and logs it in Sigstore. It binds to the
+#      commit, not to the tag, so moving a tag proves nothing.
+#   2. Two builds, one answer. Anything that differs is a leak in the build
+#      (a timestamp, a build path, a random name) and the fix is to find it,
+#      not to publish anyway.
+#   3. Pinned inputs. Actions by commit SHA, the Rust toolchain by
+#      rust-toolchain.toml, nixpkgs and rust-overlay by flake.lock.
 #
-# Until [package].publish is flipped to true this workflow fails fast at
-# the publish step, and that is the point: nothing ships by accident.
+# Verifying a download:
+#
+#     gh attestation verify sajt-<version>-<system>.tar.gz --owner jooize
+#     shasum -a 256 -c SHA256SUMS
+#
+# Run by hand (workflow_dispatch) this builds and compares in exactly the
+# same way and stops there: no attestation, no release, no publish. That is
+# the way to test a change to this file before a tag exists, because a tag
+# protected against being moved cannot be re-pointed at a fix.
+#
+# Attestations require a public repository; on the Free plan a private one
+# cannot store them. Until this repository is public the release job fails
+# at the attest step, which is the intended behaviour: no release ships
+# without the thing that makes it checkable.
+#
+# macOS binaries are ad-hoc signed (the Darwin stdenv signs during fixup;
+# the flake's portability check confirms it). They run on any Apple silicon
+# Mac, but a browser download carries the quarantine attribute and
+# Gatekeeper refuses it until the user allows it under System Settings >
+# Privacy & Security. Fetching with curl sets no quarantine and sidesteps
+# that. Developer ID signing plus notarization would remove the prompt and
+# slot in after the build step without changing anything else.
+#
+# Publishing to crates.io stays gated by `publish = false` in Cargo.toml.
+# The publish job below says so and ends green rather than failing every
+# tag by design.
 name: Release
 
 on:
   push:
     tags: ["v[0-9]*"]
+  workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
-  publish:
-    runs-on: ubuntu-latest
-    environment: release
-    permissions:
-      contents: read
-      id-token: write # the OIDC token crates.io exchanges for a temporary registry token
-      attestations: write
+  # The same suite CI runs, once more against the exact commit being
+  # released. Nothing is built for release until this passes.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
       - name: Tag must name the crate version
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          version="$(nix develop --command cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
-          if [ "$tag" != "$version" ]; then
-            echo "tag v$tag does not match the crate version $version" >&2
-            exit 1
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          echo "crate version: $version"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not name the crate version $version" >&2
+              exit 1
+            fi
+            echo "tag $GITHUB_REF_NAME matches"
+          else
+            echo "not a tag (dry run); nothing to match"
           fi
 
       - name: Test
         run: nix develop --command cargo test --locked
 
+  # Three targets, two attempts each, six jobs. Linux is statically linked
+  # against musl and macOS links only system libraries; the flake refuses to
+  # produce anything else (see the portability check in flake.nix).
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both axes are real matrix keys, so this is a cross product: three
+        # systems times two attempts, six jobs. The include entries only
+        # attach the runner to each system -- an include whose keys are all
+        # new would instead be applied to every combination in turn, leaving
+        # two jobs that both build whichever system was listed last.
+        system: [x86_64-linux, aarch64-linux, aarch64-darwin]
+        attempt: [1, 2]
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-latest
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+          - system: aarch64-darwin
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Build
+        run: nix build .#sajt-unwrapped --print-build-logs
+
+      # The binary carries the commit it was built from (build.rs reads
+      # SAJT_COMMIT, the flake passes its own revision). If that is not the
+      # commit being released, the artifact is not what the tag claims and
+      # nothing further should happen.
+      - name: Built binary must name this commit
+        id: stamp
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          expected="sajt $version ($GITHUB_SHA)"
+          actual="$(./result/bin/sajt --version)"
+          echo "expected: $expected"
+          echo "actual:   $actual"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::built binary reports '$actual', not '$expected'" >&2
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "epoch=$(git log -1 --format=%ct)"
+          } >> "$GITHUB_OUTPUT"
+
+      # A deterministic archive: GNU tar from the flake's own locked nixpkgs
+      # (the runners' tars differ between Linux and macOS), every entry
+      # sorted, owned by uid/gid 0, stamped with the commit's own time, and
+      # given a fixed mode. Files copied out of /nix/store are read-only, so
+      # they are staged and chmod'ed first. gzip -n keeps the source name and
+      # timestamp out of the gzip header.
+      - name: Package
+        env:
+          VERSION: ${{ steps.stamp.outputs.version }}
+          EPOCH: ${{ steps.stamp.outputs.epoch }}
+          SYSTEM: ${{ matrix.system }}
+        run: |
+          mkdir -p stage dist
+          cp result/bin/sajt stage/sajt
+          cp LICENSE-MIT LICENSE-APACHE stage/
+          chmod 0755 stage/sajt
+          chmod 0644 stage/LICENSE-MIT stage/LICENSE-APACHE
+          # The single quotes are deliberate: VERSION, EPOCH and SYSTEM come
+          # from the step's env, and letting the inner shell expand them
+          # keeps their values out of the command string entirely.
+          # shellcheck disable=SC2016
+          nix shell --inputs-from . nixpkgs#gnutar nixpkgs#gzip --command sh -c '
+            tar --sort=name --mtime="@$EPOCH" --owner=0 --group=0 --numeric-owner \
+                --format=gnu -C stage -cf - sajt LICENSE-MIT LICENSE-APACHE \
+              | gzip -n -9 > "dist/sajt-$VERSION-$SYSTEM.tar.gz"
+          '
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum ./sajt-*.tar.gz > SHA256SUMS
+          else
+            shasum -a 256 ./sajt-*.tar.gz > SHA256SUMS
+          fi
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-${{ matrix.system }}-${{ matrix.attempt }}
+          path: dist/
+          if-no-files-found: error
+
+  # The gate. Every target must build to the same bytes twice, and all
+  # differences are reported before the job gives up, so one run tells the
+  # whole story instead of one target at a time.
+  compare:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: dist-*
+
+      - name: Both builds of each target must be identical
+        run: |
+          differed=""
+          for system in x86_64-linux aarch64-linux aarch64-darwin; do
+            one="dist-$system-1"
+            two="dist-$system-2"
+            cat "$one/SHA256SUMS" "$two/SHA256SUMS"
+            if cmp "$one"/sajt-*.tar.gz "$two"/sajt-*.tar.gz; then
+              echo "$system: the two builds are identical"
+            else
+              echo "::error::$system: the two builds differ; the build is not reproducible" >&2
+              differed="$differed $system"
+            fi
+          done
+          if [ -n "$differed" ]; then
+            echo "::error::not reproducible on:$differed -- nothing is released" >&2
+            exit 1
+          fi
+
+      # One directory, one checksum file covering all three archives, with
+      # relative names so `shasum -a 256 -c SHA256SUMS` works wherever a user
+      # unpacks them.
+      - name: Assemble the release directory
+        run: |
+          mkdir -p dist
+          cp dist-x86_64-linux-1/sajt-*.tar.gz dist/
+          cp dist-aarch64-linux-1/sajt-*.tar.gz dist/
+          cp dist-aarch64-darwin-1/sajt-*.tar.gz dist/
+          cd dist
+          sha256sum ./sajt-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [test, compare]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+      id-token: write # sign the attestation
+      attestations: write # store it
+    steps:
+      # gh reads the annotated tag's message from the local repository to
+      # write the release notes, so the tag object has to be here. A shallow
+      # checkout of a tag ref carries it, but fetching it by name costs
+      # nothing and removes the doubt. Nothing pushes, so no credentials stay
+      # behind in the checkout.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Make sure the tag object is present
+        run: |
+          git fetch --no-tags origin tag "$GITHUB_REF_NAME" || true
+          git cat-file -t "$GITHUB_REF_NAME"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+
+      # Fails closed on a private repository: no attestation, no release.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.tar.gz
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag --notes-from-tag \
+            --title "$GITHUB_REF_NAME" dist/*
+
+  # crates.io, by trusted publishing: no long-lived secret anywhere. The job
+  # asks GitHub for a short-lived OIDC identity token, exchanges it at
+  # crates.io for a temporary registry token, publishes with it, and the
+  # action revokes that token when the job ends. Provenance for the packaged
+  # crate is attested the same way the archives are.
+  #
+  # Bootstrap, once and by hand: crates.io can only be told to trust a
+  # workflow for a crate that already exists, so the first version is
+  # published from a workstation with a personal API token. After that, in
+  # the crate's crates.io settings, add a Trusted Publisher with owner
+  # jooize, repository Sajt, workflow release.yml, environment release.
+  # Create the matching "release" environment under the repository's
+  # Settings > Environments; adding a required reviewer there puts a human
+  # gate in front of every publish.
+  #
+  # Until [package].publish is flipped to true, the gate step below reports
+  # that and the job ends green. A run that is red on every tag by design
+  # teaches people to ignore red; the gate in Cargo.toml is what prevents an
+  # accidental publish, and this says so out loud instead.
+  publish:
+    if: github.ref_type == 'tag'
+    needs: release
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write # the OIDC token crates.io exchanges for a registry token
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Is the crate publishable?
+        id: gate
+        run: |
+          publish="$(nix develop --command cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].publish')"
+          if [ "$publish" = "null" ]; then
+            echo "publishable=true" >> "$GITHUB_OUTPUT"
+            echo "the crate is publishable; continuing to crates.io"
+          else
+            echo "publishable=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::crates.io publishing is gated off (publish = false in Cargo.toml); the binary release above is complete"
+          fi
+
       - name: Authenticate with crates.io (trusted publishing)
         id: auth
+        if: steps.gate.outputs.publishable == 'true'
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
       # cargo packages the crate, verifies it builds from its own .crate, and
       # uploads it. The .crate file it leaves in target/package holds the
       # exact bytes crates.io received, so that is what gets attested.
       - name: Publish
+        if: steps.gate.outputs.publishable == 'true'
         run: nix develop --command cargo publish --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
       - name: Attest build provenance of the published crate
+        if: steps.gate.outputs.publishable == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: target/package/*.crate

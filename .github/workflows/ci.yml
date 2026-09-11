@@ -4,6 +4,8 @@
 # core (xattr tag mapping, inotify watcher, bwrap transcode sandbox) cannot
 # silently rot. Both jobs run inside the flake devshell so CI exercises the
 # same reproducible environment as `nix develop` on a workstation or server.
+# The package job builds the release derivation on every push, so the lane
+# release.yml depends on cannot rot between releases either.
 name: CI
 
 on:
@@ -26,3 +28,21 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
       - name: cargo test
         run: nix develop --command cargo test
+
+  # The release binary, built the way a release builds it: statically linked
+  # on Linux, system libraries only on macOS. The flake's portability check
+  # fails the build if either stops being true, so a change that would break
+  # a release is caught on the push that makes it, not at tag time.
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: nix build
+        run: nix build .#sajt-unwrapped --print-build-logs
+      - name: The binary runs
+        run: ./result/bin/sajt --version
