@@ -399,6 +399,7 @@ fn build_bare_post(item: &TopItem, claim: Option<&str>, versions: Vec<Version>) 
         lang,
         versions,
         version: None,
+        snapshot: false,
     }
 }
 
@@ -501,6 +502,7 @@ fn build_folder_post(item: &TopItem, claim: Option<&str>) -> Entry {
         lang: scan.lang,
         versions: scan.versions,
         version: None,
+        snapshot: false,
     }
 }
 
@@ -559,6 +561,7 @@ fn build_listing_post(
         lang: None,
         versions: Vec::new(),
         version: None,
+        snapshot: false,
     }
 }
 
@@ -589,6 +592,7 @@ fn errored_folder(item: &TopItem, label: &str, tags: Vec<Tag>, error: PostError)
         lang: None,
         versions: Vec::new(),
         version: None,
+        snapshot: false,
     }
 }
 

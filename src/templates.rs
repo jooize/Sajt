@@ -1,4 +1,5 @@
 use crate::entry::{Entry, ListItem, Listing, PostError, Revision};
+use crate::postdate::PostDate;
 use crate::slug::{is_reserved_slug, slug};
 use crate::stats::{compute_cloud, CloudStats, TagStat, ViewFilter};
 
@@ -2308,12 +2309,41 @@ fn name_shares<'a>(entry: &Entry, all_entries: &[&'a Entry]) -> Vec<&'a Entry> {
 /// trailing "extension", `/label.sv`, `/2026/03/12/label.sv` (its bytes then
 /// at `/label.sv.md`, see [`canonical_raw_href`]). Nothing below `/label/`
 /// (assets, nested folders) is touched.
+/// A value rendering an archived revision (`entry.snapshot`) is addressed at
+/// its own date, to the second, plus the name it is a snapshot of — never at
+/// the bare name, which belongs to the current file. Its bytes are at that
+/// address plus the copy's extension ([`canonical_raw_href`]).
 pub fn canonical(entry: &Entry, all_entries: &[&Entry]) -> Canonical {
+    if entry.snapshot {
+        if let Some(slug) = entry.slug.as_deref() {
+            // The tag is part of the snapshot's name, so `version_path` must
+            // not append it a second time below.
+            return Canonical {
+                path: snapshot_path(&entry.timestamp, slug, entry.version.as_deref()),
+            };
+        }
+        // An unlabeled post has no name to carry; its snapshot is addressed by
+        // its own date alone, which `canonical_post` already spells out.
+    }
     let mut canonical = canonical_post(entry, all_entries);
     if let Some(tag) = &entry.version {
         canonical.path = version_path(&canonical.path, tag);
     }
     canonical
+}
+
+/// The decoded address of one archived snapshot: its own date down to the
+/// second, then the name it snapshots (with the language tag when it is a
+/// version's file, exactly as that version's own address carries it). The one
+/// place this shape lives — [`canonical`] and [`revision_href`] both build it
+/// here, so a snapshot's page, its revision link and its raw address can never
+/// disagree.
+fn snapshot_path(date: &PostDate, slug: &str, tag: Option<&str>) -> String {
+    let name = match tag {
+        Some(tag) => version_path(slug, tag),
+        None => slug.to_string(),
+    };
+    format!("{}/{}/{}", date.date_path(), date.hms(), name)
 }
 
 /// The decoded address of a post's version in `tag`, off the post's own
@@ -2978,12 +3008,7 @@ fn continue_nav(next: Option<&Entry>, all_entries: &[&Entry]) -> String {
 /// address then carries the tag as a trailing "extension", as the version's
 /// own address does (`/2026/03/12/091500/brev.sv`).
 pub fn revision_href(slug: &str, tag: Option<&str>, rev: &Revision) -> String {
-    let name = match tag {
-        Some(tag) => version_path(slug, tag),
-        None => slug.to_string(),
-    };
-    let decoded = format!("{}/{}", rev.date.format("/%Y/%m/%d/%H%M%S"), name);
-    compose_href(&decoded, None)
+    compose_href(&snapshot_path(&PostDate::from_mtime(rev.date), slug, tag), None)
 }
 
 /// The dated `<li>` links for a post's archived revisions, newest first. On a
@@ -3983,6 +4008,7 @@ mod tests {
             lang: None,
             versions: Vec::new(),
             version: None,
+            snapshot: false,
         }
     }
 

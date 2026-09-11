@@ -237,6 +237,14 @@ pub struct Entry {
     /// language-suffixed siblings, in the folder or at the top level. Each
     /// lives at `/<post>.<tag>` and links to the others with `hreflang`.
     pub versions: Vec<Version>,
+    /// Set on the value that renders an archived revision — a ` copy [n]` file
+    /// (see `page::revision_view`, the only place that sets it). Such a value
+    /// is one frozen file, not the current post: its address is its own date
+    /// path with the time segment plus the post's name (`/Y/M/D/HHMMSS/hej`,
+    /// the language tag appended when it is a version's snapshot), never the
+    /// bare name, and its bytes are served at that address plus the file's
+    /// extension. `false` on every scanned post.
+    pub snapshot: bool,
     /// Set on the value that renders one of `versions` (see [`Entry::show_version`]):
     /// the version's tag. The address then gains a `.<tag>` suffix, `path`,
     /// `extension`, `lang` and `display_label` are the version's, and the rest

@@ -211,8 +211,10 @@ where symlinks and xattrs do not.
   collapses to **one current post + a revision stack, keyed by the base name —
   not by whether the base file exists** (SHIPPED 2026-07-08, `post-model.md`
   §5). Base present → it is current, the copies are archived snapshots dated by
-  their own mtime (reachable from the entry's revision nav and their date-path
-  URLs). **Base absent → the newest-by-mtime orphan copy is promoted to be the
+  their own mtime, each owning its address: its page at `/Y/M/D/HHMMSS/name`
+  (the language tag appended for a version's snapshot) and its bytes at that
+  address plus the copy's extension (`/2026/03/12/091500/brev.sv.md`), served
+  under the copy's own `public` tag. **Base absent → the newest-by-mtime orphan copy is promoted to be the
   post** (claiming the base name and slug, so `/X` keeps resolving after the
   base is deleted — a recovery property), the rest its revisions. This ends the
   old *silent drop* of orphan copies; deleting a copy — or the base — never
@@ -444,8 +446,10 @@ Content-tree bytes leave the server through exactly two functions:
 `serve_raw_bytes` (a bare-file / folder primary) and `try_asset` (an in-folder
 gallery/attachment asset). Both run `classify()` and match its `Disposition`
 enum **exhaustively** — adding a class forces both call sites to handle it at
-compile time. There is no third path: archived revisions render the current
-entry's stripped URL, not raw revision bytes; the grader's `/_raw` route is a
+compile time. There is no third path: an archived revision's bytes are its own
+file's, served through `serve_raw_bytes` at the snapshot's own raw address
+(`/Y/M/D/HHMMSS/name[.tag].ext`) under the copy's own `public` tag, decided at
+scan time like every other file's; the grader's `/_raw` route is a
 separate localhost-only authoring tool showing authors their own bytes;
 `serve_embed_asset` is the out-of-tree remote embed cache (residual below);
 `serve_static` serves operator-owned assets.
@@ -734,9 +738,9 @@ registry via the `language-tags` crate, canonical form `pt-BR`; autonyms via
   two axes are orthogonal, and a copy snapshots the file whose name it
   carries, subtag included — so **a version's copies are that version's
   revisions**. `brev.sv copy.md` is the Swedish version's history, addressed
-  as a revision address plus the tag: `/2026/03/12/091500/brev.sv`, dated by
-  the copy's own mtime, listed in the revision nav of `/brev.sv` and never in
-  `/brev`'s. Everything the family model does applies per file: the copy is
+  as a revision address plus the tag: `/2026/03/12/091500/brev.sv`, its bytes
+  at `/2026/03/12/091500/brev.sv.md`, dated by the copy's own mtime, listed in
+  the revision nav of `/brev.sv` and never in `/brev`'s. Everything the family model does applies per file: the copy is
   served only with its own `public` tag, snapshots sort newest first, and a
   deleted version file is recovered at the top level by promoting the newest
   copy to be that version of the paired post (so `/brev.sv` keeps resolving —

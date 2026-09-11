@@ -390,16 +390,25 @@ async fn resolve(store: &ContentStore, path: &str, flags: &RequestFlags) -> Repl
     // href (renditions stripped) anchors rendition links and redirects.
     if let Some(ref raw_ext) = query.raw_extension {
         let base_href = strip_rendition_suffix(&templates::encode_path(&requested), &query);
-        return serve_raw_file(
-            &matching,
-            raw_ext,
-            &store.cache_dir,
-            embed,
-            query.rendition_jpeg,
-            query.rendition_thumb,
-            &base_href,
-        )
-        .await;
+        if let Some(entry) = raw_current(&matching, raw_ext) {
+            return serve_raw_bytes(
+                entry,
+                embed,
+                query.rendition_jpeg,
+                query.rendition_thumb,
+                &base_href,
+                &store.cache_dir,
+            )
+            .await;
+        }
+        // No current file answers this address; a date path may still name one
+        // of a post's archived snapshots, whose bytes are its own.
+        if let Some(reply) =
+            serve_snapshot_bytes(&all_entries, &query, raw_ext, &requested, embed, store).await
+        {
+            return reply;
+        }
+        return not_found();
     }
 
     // Listing: a trailing slash, or a date / tag / view filter with no label
@@ -448,7 +457,10 @@ async fn resolve(store: &ContentStore, path: &str, flags: &RequestFlags) -> Repl
 
     // An archived revision addressed at its date path (+ time segment).
     if let Some((parent, rev)) = find_revision(&all_entries, &query) {
-        return serve_revision(parent, rev, &store).await;
+        // A coarser date can name a snapshot uniquely (`/2026/09/hej`); like
+        // every other spelling it converges on the snapshot's one address.
+        let view = revision_view(parent, rev);
+        return serve_resolved(&view, &all_entries, &store, &requested, false).await;
     }
 
     // A label-free date+time deeplink with no exact match lands on the day view,
@@ -548,16 +560,33 @@ async fn try_version(
         // (`/2026/03/12/091500/brev.sv`) — the version's own history, served
         // exactly as the site-language file's is.
         None => {
-            if ext.is_some() {
-                return None; // a snapshot serves its page, not raw bytes
-            }
             let (entry, version, rev) = find_version_revision(all_entries, &head, &tag)?;
-            let shown = entry.show_version(version);
-            let canon = templates::revision_href(shown.slug.as_deref()?, Some(&tag), rev);
-            if requested != crate::url::percent_decode(&canon) {
-                return Some(Reply::redirect(&canon));
+            let view = revision_view(&entry.show_version(version), rev);
+            // The snapshot's bytes are its own, at its own raw address.
+            if let Some(e) = ext {
+                if !e.eq_ignore_ascii_case(&view.extension) {
+                    return None;
+                }
+                let base_href = templates::canonical_raw_href(&view, all_entries);
+                let mut canon = crate::url::percent_decode(&base_href);
+                if as_jpeg {
+                    canon.push_str("/jpeg");
+                }
+                if thumb {
+                    canon.push_str("/thumb");
+                }
+                if requested != canon {
+                    return Some(Reply::redirect(&templates::encode_path(&canon)));
+                }
+                return Some(
+                    serve_raw_bytes(&view, flags.embed, as_jpeg, thumb, &base_href, &store.cache_dir)
+                        .await,
+                );
             }
-            let view = revision_view(&shown, rev);
+            let canon = templates::canonical(&view, all_entries);
+            if requested != canon.path {
+                return Some(Reply::redirect(&templates::canonical_location(&view, all_entries)));
+            }
             return Some(serve_entry(&view, store, false).await);
         }
     };
@@ -1138,11 +1167,13 @@ fn revision_is_at(rev: &Revision, date_prefix: &str, time: Option<&str>) -> bool
 /// file, so it carries no history of its own (`revisions`), no extra addresses
 /// (`aliases`), no listing, and no counterpart in another language — it is
 /// what that one file was at that moment, and nothing says another language's
-/// file was in the same state then. Reachable only at its date path.
+/// file was in the same state then. `snapshot` marks it, which is what puts
+/// its page and its bytes at its own date address (`templates::canonical`).
 fn revision_view(entry: &Entry, rev: &Revision) -> Entry {
     let mut e = entry.clone();
     e.path = rev.path.clone();
     e.timestamp = crate::postdate::PostDate::from_mtime(rev.date);
+    e.snapshot = true;
     e.edited = None;
     e.revisions = Vec::new();
     e.aliases = Vec::new();
@@ -1155,11 +1186,6 @@ fn revision_view(entry: &Entry, rev: &Revision) -> Entry {
         .unwrap_or("")
         .to_string();
     e
-}
-
-/// Serve an archived revision of the site-language file at its date path.
-async fn serve_revision(parent: &Entry, rev: &Revision, store: &ContentStore) -> Reply {
-    serve_entry(&revision_view(parent, rev), store, false).await
 }
 
 /// Render a filtered timeline listing: apply the view filter, build the shared
@@ -1418,27 +1444,58 @@ async fn serve_entry(entry: &Entry, store: &ContentStore, fullscreen: bool) -> R
     }
 }
 
-/// Serve raw file bytes with correct MIME type and Content-Disposition.
-/// With duplicate labels, the oldest entry carrying the extension wins,
-/// mirroring the page URL's oldest-claim-wins rule.
-async fn serve_raw_file(
-    matching: &[&Entry],
-    requested_ext: &str,
-    cache_dir: &std::path::Path,
-    embed: bool,
-    as_jpeg: bool,
-    thumb: bool,
-    base_href: &str,
-) -> Reply {
-    let entry = matching
+/// The current post whose bytes a raw request addresses: the one carrying the
+/// requested extension, the oldest on a duplicate label — mirroring the page
+/// URL's oldest-claim-wins rule. `None` when no current file answers.
+fn raw_current<'a>(matching: &[&'a Entry], requested_ext: &str) -> Option<&'a Entry> {
+    matching
         .iter()
+        .copied()
         .filter(|e| e.extension.eq_ignore_ascii_case(requested_ext))
-        .min_by_key(|e| e.timestamp);
+        .min_by_key(|e| e.timestamp)
+}
 
-    match entry {
-        Some(entry) => serve_raw_bytes(entry, embed, as_jpeg, thumb, base_href, cache_dir).await,
-        None => not_found(),
+/// Serve an archived snapshot's own bytes at its own raw address
+/// (`/Y/M/D/HHMMSS/name.ext`, the copy's date to the second). A snapshot is
+/// one frozen file, so its bytes leave through `serve_raw_bytes` like any
+/// other file's — the same privacy gate, the same `public` tag on the copy
+/// itself, decided at scan time. `None` when the date path names no single
+/// snapshot or the extension is not the copy's, so the caller 404s.
+async fn serve_snapshot_bytes(
+    all_entries: &[&Entry],
+    query: &ContentQuery,
+    requested_ext: &str,
+    requested: &str,
+    embed: bool,
+    store: &ContentStore,
+) -> Option<Reply> {
+    let (parent, rev) = find_revision(all_entries, query)?;
+    let view = revision_view(parent, rev);
+    if !requested_ext.eq_ignore_ascii_case(&view.extension) {
+        return None; // `/…/hej.txt` for a `.md` snapshot names nothing
     }
+    let base_href = templates::canonical_raw_href(&view, all_entries);
+    let mut canon = crate::url::percent_decode(&base_href);
+    if query.rendition_jpeg {
+        canon.push_str("/jpeg");
+    }
+    if query.rendition_thumb {
+        canon.push_str("/thumb");
+    }
+    if requested != canon {
+        return Some(Reply::redirect(&templates::encode_path(&canon)));
+    }
+    Some(
+        serve_raw_bytes(
+            &view,
+            embed,
+            query.rendition_jpeg,
+            query.rendition_thumb,
+            &base_href,
+            &store.cache_dir,
+        )
+        .await,
+    )
 }
 
 /// The save-name stem for an entry's bytes: its label, or the timestamp stamp
@@ -2220,6 +2277,47 @@ mod tests {
         assert_eq!(get(&store, "/2026/03/12.sv").await.status, 404);
     }
 
+    /// An archived snapshot owns its address and its bytes: its page at its
+    /// own date path, its source at that address plus the copy's extension.
+    /// The source link used to point at the CURRENT file's bytes, and no raw
+    /// address served a snapshot at all — which made `sajt build` report a
+    /// broken link on any site holding a ` copy` file.
+    #[tokio::test]
+    async fn a_snapshot_serves_its_own_bytes_at_its_own_address() {
+        let t = TmpDir::new();
+        // A date marker fixes the post's own date, so the copy's mtime (now)
+        // can never be mistaken for the current post's address.
+        touch(t.path(), "hej/hej.md", "# Hej\n\nNu.");
+        touch(t.path(), "hej/hej copy.md", "# Hej\n\nTidigare.");
+        mkdir(t.path(), "hej/2026-03-03T1430");
+        let store = match store_of(t.path(), &["hej", "hej/hej.md", "hej/hej copy.md"]) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+        let post = &store.entries[0];
+        assert_eq!(post.revisions.len(), 1);
+        let at = post.revisions[0].date.format("/%Y/%m/%d/%H%M%S").to_string();
+
+        let page = get(&store, &format!("{at}/hej")).await;
+        assert_eq!(page.status, 200, "the snapshot's own address");
+        let html = String::from_utf8_lossy(&page.body).into_owned();
+        assert!(html.contains("Tidigare"), "the copy's own words");
+        assert!(html.contains(&format!("{at}/hej.md")), "its source link is its own bytes");
+
+        let raw = get(&store, &format!("{at}/hej.md")).await;
+        assert_eq!(raw.status, 200);
+        assert_eq!(raw.body, b"# Hej\n\nTidigare.");
+        // The current file keeps its own address and bytes.
+        assert_eq!(get(&store, "/hej.md").await.body, b"# Hej\n\nNu.");
+
+        // A coarser spelling that still names one snapshot converges on the
+        // full address.
+        let month = post.revisions[0].date.format("/%Y/%m").to_string();
+        let coarse = get(&store, &format!("{month}/hej")).await;
+        assert_eq!(coarse.status, 301);
+        assert_eq!(header(&coarse, "location"), Some(format!("{at}/hej").as_str()));
+    }
+
     /// A version's archived snapshot is served at the version's date-path
     /// address (`/Y/M/D/HHMMSS/brev.sv`), exactly as the site-language file's
     /// snapshot is at its own — and, being one frozen file, it carries no
@@ -2248,9 +2346,12 @@ mod tests {
         assert_eq!(page.status, 200, "the snapshot's own address");
         assert!(String::from_utf8_lossy(&page.body).contains("Svenska tidigare"));
         assert_eq!(header(&page, "link"), None, "a snapshot has no counterpart in another language");
-        // Raw bytes are not an address for a snapshot — as for the
-        // site-language file's snapshots, which have no raw address either.
-        assert_eq!(get(&store, &format!("{at}/brev.sv.md")).await.status, 404);
+        // The snapshot's bytes are its own, at its own raw address.
+        let raw = get(&store, &format!("{at}/brev.sv.md")).await;
+        assert_eq!(raw.status, 200);
+        assert_eq!(raw.body, b"# Brev\n\nSvenska tidigare.");
+        // The extension must be the copy's; another one names nothing.
+        assert_eq!(get(&store, &format!("{at}/brev.sv.txt")).await.status, 404);
 
         // A date that names no snapshot, and a head that is not a post
         // address, both name nothing.
