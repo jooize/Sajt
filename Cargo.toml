@@ -1,6 +1,6 @@
 [package]
 name = "sajt"
-version = "0.43.1"
+version = "0.43.2"
 edition = "2024"
 # Minimum supported toolchain. rust-toolchain.toml pins the exact version
 # every build uses; this is the floor crates.io advertises.
