@@ -1406,16 +1406,18 @@ compromise of any of these could hide; it does not remove them.
   quarantine. Developer ID plus notarization would slot in after the build
   step without changing anything else.
 - **Attestations need a public repository.** A private repository on the
-  Free plan cannot store them. Until the repository is public the release
-  job fails at the attest step, which is the intended behaviour: nothing
-  ships without the thing that makes it checkable.
+  Free plan cannot store them, so the release job fails at the attest step
+  on one, which is the intended behaviour: nothing ships without the thing
+  that makes it checkable. The repository has been public since 2026-09-11;
+  v0.44.0 was the first release through the attested lane.
 - **crates.io publishing stays gated** by `publish = false` in `Cargo.toml`.
   The publish job reports the gate and ends green rather than failing every
   tag by design, since a run that is always red teaches people to ignore red.
-- **Tag and branch rulesets** are applied when the repository goes public
-  (`.github/rulesets/README.md`). A tag protected against being moved cannot
-  be re-pointed at a fixed workflow, which is why `workflow_dispatch` runs
-  the whole build-and-compare path as a dry run.
+- **Tag and branch rulesets** (`.github/rulesets/README.md`) are active
+  since 2026-09-11, applied once the first release was green. A tag
+  protected against being moved cannot be re-pointed at a fixed workflow,
+  which is why `workflow_dispatch` runs the whole build-and-compare path as
+  a dry run, and why a broken release costs a patch version.
 
 ## Roadmap to publishable v0.1
 
