@@ -2519,4 +2519,31 @@ mod tests {
         assert!(String::from_utf8_lossy(&version_page.body).contains(&format!("{at}/brev.sv")));
         assert!(!String::from_utf8_lossy(&get(&store, "/brev").await.body).contains("earlier revision"));
     }
+
+    /// A store opened through a symlinked root still serves what is under it.
+    ///
+    /// The store's root is canonical, so every fail-closed gate that strips it
+    /// off a canonicalized file path compares like with like. This used to
+    /// 404: the asset route canonicalized the file, the root kept the symlink
+    /// it was opened through, and the visibility gate refused the mismatch.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_store_opened_through_a_symlinked_root_serves_its_assets() {
+        let t = TmpDir::new();
+        touch(t.path(), "real/brev/brev.md", "# Brev\n\nEnglish.");
+        touch(t.path(), "real/brev/photo.txt", "the asset bytes");
+        std::os::unix::fs::symlink(t.path().join("real"), t.path().join("link")).unwrap();
+
+        // Scan through the symlink, exactly as a library caller may.
+        let root = t.path().join("link");
+        let store = match store_of(&root, &["brev", "brev/brev.md", "brev/photo.txt"]) {
+            Some(s) => s,
+            None => return, // xattr unsupported, skip
+        };
+
+        let asset = get(&store, "/brev/photo.txt").await;
+        assert_eq!(asset.status, 200, "a folder asset is served under a symlinked root");
+        assert_eq!(asset.body, b"the asset bytes");
+        assert_eq!(get(&store, "/brev").await.status, 200, "the post itself is served");
+    }
 }

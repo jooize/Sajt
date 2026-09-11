@@ -10,6 +10,15 @@ use std::path::{Path, PathBuf};
 #[derive(Debug)]
 pub struct ContentStore {
     pub entries: Vec<Entry>,
+    /// The content root, always canonical (symlinks resolved, no `.`/`..`).
+    ///
+    /// `scan` establishes that invariant so the store owns it rather than
+    /// every caller. The fail-closed guards strip this root off a file path
+    /// they have canonicalized themselves (`tags::path_visible`, called from
+    /// the folder-asset and nested-listing routes in `page.rs`), and a
+    /// non-canonical root made that comparison fail for every file below it:
+    /// the strip failed, the guard fell closed, and the whole tree 404'd.
+    /// Canonical on both sides means the guard compares like with like.
     pub content_dir: PathBuf,
     /// Root for disposable derived caches (embeds, etc.), always OUTSIDE the
     /// content tree so the server never writes into content. See `entry-model.md`.
@@ -29,8 +38,15 @@ impl ContentStore {
     /// its empty date-marker subfolder, else the primary file's mtime). The scan
     /// never writes; a malformed post becomes an errored `Entry` rather than
     /// aborting the whole scan or serving the wrong bytes. See `entry-model.md`.
+    ///
+    /// The root is canonicalized here, once, so every guard downstream can
+    /// strip it off a canonicalized file path (see the `content_dir` field).
+    /// A root that cannot be resolved is an `io::Error`: a site directory that
+    /// does not exist cannot be scanned, and guessing would serve the wrong
+    /// tree.
     pub fn scan(content_dir: &Path, cache_dir: &Path) -> std::io::Result<Self> {
-        let mut entries = scan_entries(content_dir)?;
+        let content_dir = std::fs::canonicalize(content_dir)?;
+        let mut entries = scan_entries(&content_dir)?;
 
         // Fail-closed visibility gate (post-model.md §6): a post is served only
         // when its top level (the folder, or the bare file) is tagged `public`
@@ -80,7 +96,7 @@ impl ContentStore {
 
         Ok(ContentStore {
             entries,
-            content_dir: content_dir.to_path_buf(),
+            content_dir,
             cache_dir: cache_dir.to_path_buf(),
             embed_cache: HashMap::new(),
             next_future,

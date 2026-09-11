@@ -107,8 +107,10 @@ fn default_cache_dir() -> PathBuf {
 /// the site is or how it renders. Exits the process on a configuration error:
 /// a typo silently reverting a site to defaults would be a trap.
 pub fn open_site(args: &SiteArgs) -> OpenedSite {
-    // Canonicalize the site dir (or use it as-is if it doesn't exist yet): the
-    // real name matters, since an unnamed site is named after its directory.
+    // Canonicalize the site dir (or use it as-is if it doesn't exist yet) for
+    // the site name: an unnamed site is named after its directory, so the real
+    // name matters. The store canonicalizes again at scan time for its own
+    // fail-closed guards, which is where that invariant belongs.
     let content_dir = args
         .site
         .canonicalize()
