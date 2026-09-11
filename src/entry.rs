@@ -73,6 +73,13 @@ pub enum PostError {
     /// The folder post has no file that can serve as primary content (it is empty
     /// of regular files, with no `index/` listing marker either).
     NoPrimary,
+    /// The post's only address is a listing, so it has no page of its own: a
+    /// post that claims no name (a whole-date or `<date> <text>` name, a
+    /// year-shaped name) and whose date is coarser than a second is addressed
+    /// at `/2026` or `/2026/03/25`, which is the year or day view. Carries
+    /// that address, decoded, for the row and the log. The fix is the
+    /// author's: give the post a name, or a date with a time.
+    NoAddress { address: String },
 }
 
 /// One entry in a folder listing: a public file (`post-model.md` §6). Ordered by

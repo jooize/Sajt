@@ -73,6 +73,9 @@ impl ContentStore {
         }
         let next_future = future_wakes.into_iter().min();
 
+        // Every served post must have an address of its own (see below).
+        mark_addressless(&mut entries);
+
         tracing::info!("Scanned {} entries from {}", entries.len(), content_dir.display());
 
         Ok(ContentStore {
@@ -181,6 +184,60 @@ fn scan_entries(content_dir: &Path) -> std::io::Result<Vec<Entry>> {
     entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     assign_grades(&mut entries, content_dir);
     Ok(entries)
+}
+
+/// Mark every post whose only address is a listing as an error.
+///
+/// A post is reachable when its canonical address names *it*: the name it
+/// claims, or a date narrowed to the second for a post with no name. A post
+/// with neither — a whole-date or `<date> <text>` name, or a year-shaped name
+/// the router owns — is addressed at its bare date, and a date coarser than a
+/// second is the year, month or day **view**. The listing answers there, the
+/// post's page is unreachable, and until now nothing said so. It becomes an
+/// error row instead: loud, never hidden, with the address it collides with
+/// and the fix.
+///
+/// Every verdict is computed against the pre-pass entries before any is
+/// applied: an errored post stops claiming its name, which would otherwise
+/// move the addresses of the posts judged after it and make the result depend
+/// on scan order.
+fn mark_addressless(entries: &mut [Entry]) {
+    let addresses: Vec<Option<String>> = {
+        let all: Vec<&Entry> = entries.iter().collect();
+        all.iter()
+            .map(|e| {
+                if e.error.is_some() {
+                    return None; // already errored: one failure is enough
+                }
+                let address = crate::templates::canonical(e, &all).path;
+                let query = crate::url::parse_url_path(&address);
+                let names_it = match (&query.label, &query.time) {
+                    // The name must be this post's own: a listing path whose
+                    // last segment happens to parse as a label is no address.
+                    (Some(label), _) => slug(label) == e.slug,
+                    (None, Some(_)) => true, // a date narrowed to the second
+                    (None, None) => false,   // a year / month / day view
+                };
+                let addressable = !query.malformed && !query.is_listing && names_it;
+                (!addressable).then_some(address)
+            })
+            .collect()
+    };
+
+    for (e, address) in entries.iter_mut().zip(addresses) {
+        let address = match address {
+            Some(a) => a,
+            None => continue,
+        };
+        tracing::error!(
+            "Post {} has no address of its own: '{}' is a listing (the year, month or day view), \
+             so the post's page is unreachable. Give the post a name, or a date with a time \
+             (a marker folder or a name like '2026-03-25T1200').",
+            e.id.display(),
+            address
+        );
+        e.error = Some(PostError::NoAddress { address });
+    }
 }
 
 /// Derive each post's `grade` from the pairwise-judgement ledger and assign it.
@@ -3003,6 +3060,79 @@ mod tests {
         let store = ContentStore::scan(t.path(), &std::env::temp_dir()).unwrap();
         assert!(store.entries.is_empty(), "a future-dated post is withheld until its date");
         assert!(store.next_future.is_some(), "and a wake is scheduled for it");
+    }
+
+    // ── addressability (a post must have an address of its own) ──
+
+    /// A post that claims no name and is dated coarser than a second is
+    /// addressed at a listing, so it has no page: that is an error row now,
+    /// naming the address and the fix. A date with a time is fine.
+    #[test]
+    fn a_post_whose_only_address_is_a_listing_is_an_error() {
+        let t = TmpDir::new();
+        touch(t.path(), "2026.md", "a year-named post");
+        touch(t.path(), "2026-03-25 Trip/index.md", "# Trip\n\nDay precision.");
+        touch(t.path(), "2026-03-25T1915 Walk/index.md", "# Walk\n\nMinute precision.");
+        for rel in [
+            "2026.md",
+            "2026-03-25 Trip",
+            "2026-03-25 Trip/index.md",
+            "2026-03-25T1915 Walk",
+            "2026-03-25T1915 Walk/index.md",
+        ] {
+            if !set_tags(&t.path().join(rel), &["public"]) {
+                return; // xattr unsupported — skip
+            }
+        }
+        let store = ContentStore::scan(t.path(), &std::env::temp_dir()).unwrap();
+        let error_of = |name: &str| -> Option<PostError> {
+            store
+                .entries
+                .iter()
+                .find(|e| e.id.file_name().and_then(|n| n.to_str()) == Some(name))
+                .expect("the post is served")
+                .error
+                .clone()
+        };
+        assert_eq!(
+            error_of("2026.md"),
+            Some(PostError::NoAddress { address: "/2026".to_string() }),
+        );
+        assert_eq!(
+            error_of("2026-03-25 Trip"),
+            Some(PostError::NoAddress { address: "/2026/03/25".to_string() }),
+        );
+        assert_eq!(error_of("2026-03-25T1915 Walk"), None, "a time is an address");
+    }
+
+    /// The verdict is about the post's own address: the newer claimant of a
+    /// name, dated only to the month, lands on the day view and is an error;
+    /// the oldest claim keeps the bare name and is fine.
+    #[test]
+    fn a_newer_claimant_with_a_coarse_date_has_no_address() {
+        let t = TmpDir::new();
+        touch(t.path(), "12/12.md", "# 12\n\nThe newer claim.");
+        mkdir(t.path(), "12/2026-03");
+        touch(t.path(), "(12)/12.md", "# 12\n\nThe oldest claim.");
+        mkdir(t.path(), "(12)/2020-01-01");
+        for rel in ["12", "12/12.md", "(12)", "(12)/12.md"] {
+            if !set_tags(&t.path().join(rel), &["public"]) {
+                return; // xattr unsupported — skip
+            }
+        }
+        let store = ContentStore::scan(t.path(), &std::env::temp_dir()).unwrap();
+        let find = |name: &str| {
+            store
+                .entries
+                .iter()
+                .find(|e| e.id.file_name().and_then(|n| n.to_str()) == Some(name))
+                .expect("the post is served")
+        };
+        assert_eq!(
+            find("12").error,
+            Some(PostError::NoAddress { address: "/2026/03/12".to_string() }),
+        );
+        assert_eq!(find("(12)").error, None, "the oldest claim owns /12");
     }
 
     // ── visibility gate (fail-closed) ──

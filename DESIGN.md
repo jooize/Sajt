@@ -248,9 +248,15 @@ where symlinks and xattrs do not.
   level (fail-closed AND, deny-wins): once a request is scoped into a folder post
   it resolves to an asset, a nested listing, or a clean 404 — a hidden nested path
   404s identically to a missing one (no existence oracle), never falling through.
-- The **only** remaining fail-closed *error* is **multiple date markers** — a
-  genuinely no-right-answer case (an unknown publish date), shown as an errored
-  row and an HTTP 500 page naming the conflict.
+- The remaining fail-closed *errors* are the no-right-answer cases: **multiple
+  date markers** (an unknown publish date), a folder with **no primary**, and
+  (2026-09-11, v0.43.0) a post with **no address of its own** — one that claims
+  no name and is dated coarser than a second, so its address is the year, month
+  or day **view**. Each is an errored row, and the first two an HTTP 500 page
+  naming the conflict; the address-less post has no page to serve, so its row
+  carries the reason and the fix inline and links nowhere. Every verdict is
+  computed against the pre-pass posts before any is applied, so an errored post
+  dropping its name claim cannot make the result depend on scan order.
 
 The server's **index and caches are disposable and live outside the content
 tree** (see cache location below); the content folder is the source of truth,

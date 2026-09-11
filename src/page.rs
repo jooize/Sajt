@@ -2277,6 +2277,30 @@ mod tests {
         assert_eq!(get(&store, "/2026/03/12.sv").await.status, 404);
     }
 
+    /// A post with no address of its own is a row that states the problem
+    /// where a reader will see it — on the timeline and in the listing its
+    /// address collides with — and links nowhere, because there is no page.
+    #[tokio::test]
+    async fn a_post_with_no_address_is_an_error_row() {
+        let t = TmpDir::new();
+        touch(t.path(), "2026-03-25 Trip/index.md", "# Trip\n\nDay precision.");
+        let store = match store_of(t.path(), &["2026-03-25 Trip", "2026-03-25 Trip/index.md"]) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+
+        for at in ["/", "/2026/03/25"] {
+            let body = String::from_utf8_lossy(&get(&store, at).await.body).into_owned();
+            let row = body
+                .split("<article")
+                .find(|part| part.contains("needs attention"))
+                .unwrap_or_else(|| panic!("{at} shows the errored post"));
+            assert!(row.contains("data-error"), "{at} marks the row as an error");
+            assert!(row.contains("<code>/2026/03/25</code>"), "{at} names the address");
+            assert!(!row.contains("<a href"), "{at} links nowhere — there is no page");
+        }
+    }
+
     /// An archived snapshot owns its address and its bytes: its page at its
     /// own date path, its source at that address plus the copy's extension.
     /// The source link used to point at the CURRENT file's bytes, and no raw

@@ -2711,22 +2711,58 @@ fn render_row(entry: &Entry, all_entries: &[&Entry]) -> String {
     let key = canonical_key(&canon);
 
     // A post that scanned wrong still shows — loud, never hidden — as an errored
-    // row that links to its error page.
-    if entry.error.is_some() {
-        let label = entry.label.as_deref().unwrap_or("(unnamed)");
+    // row that links to its error page. A post with no address of its own has
+    // no page to link: its canonical path is the listing this row sits in, so
+    // the row states the problem and the fix in place.
+    if let Some(error) = &entry.error {
+        let item_name = || {
+            // The top-level item the post was scanned from (the folder of a
+            // folder post), not its primary file inside.
+            entry
+                .id
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("(unnamed)")
+                .to_string()
+        };
+        let label = entry
+            .display_label
+            .as_deref()
+            .or(entry.label.as_deref())
+            .map(str::to_string)
+            .unwrap_or_else(item_name);
+        let note = error_row_note(error);
+        let heading = if note.is_empty() {
+            format!(
+                r#"<h3><a href="{href}">{label} <small>needs attention</small></a></h3>"#,
+                href = html_escape(&href),
+                label = html_escape(&label),
+            )
+        } else {
+            format!(
+                r#"<h3>{label} <small>needs attention</small></h3>{note}"#,
+                label = html_escape(&label),
+                note = note,
+            )
+        };
+        // An errored post claims no name, so its canonical path is no longer
+        // its own; key the row by the address it would have had instead.
+        let key = match error {
+            PostError::NoAddress { address } => address.trim_start_matches('/').to_string(),
+            _ => key,
+        };
         return format!(
             r#"<li><article data-key="{key}" data-error>
 <aside>
 <time datetime="{datetime}">{date}</time>
 <b title="This post needs attention">&#9888;</b>
 </aside>
-<div><h3><a href="{href}">{label} <small>needs attention</small></a></h3></div>
+<div>{heading}</div>
 </article></li>"#,
             key = html_escape(&key),
             datetime = html_escape(&datetime),
             date = html_escape(&date),
-            href = html_escape(&href),
-            label = html_escape(label),
+            heading = heading,
         );
     }
 
@@ -3175,6 +3211,30 @@ fn error_message(e: &PostError) -> (String, String) {
             "This post folder has no content file.".to_string(),
             "<p>Add a primary file named the folder name or <code>index</code>.</p>".to_string(),
         ),
+        PostError::NoAddress { address } => (
+            "This post has no address of its own.".to_string(),
+            format!(
+                "<p>It claims no name, so its address is its date, <code>{address}</code>. \
+                 That address is a listing: it shows every post of that year, month or day. \
+                 Give the post a name, or a date with a time, such as \
+                 <code>2026-03-25T1200</code>.</p>",
+                address = html_escape(address),
+            ),
+        ),
+    }
+}
+
+/// The one-line reason and fix shown inline on an errored row, for the errors
+/// whose page the reader cannot reach. Empty for the others: their row links
+/// to the full error page.
+fn error_row_note(e: &PostError) -> String {
+    match e {
+        PostError::NoAddress { address } => format!(
+            "<p>Its address, <code>{address}</code>, is a listing of that date, so this post has \
+             no page. Give it a name, or a date with a time.</p>",
+            address = html_escape(address),
+        ),
+        _ => String::new(),
     }
 }
 
