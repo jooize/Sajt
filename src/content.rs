@@ -402,9 +402,9 @@ fn build_bare_post(item: &TopItem, claim: Option<&str>, versions: Vec<Version>) 
     }
 }
 
-/// Derive a post's slug and loudly log a reserved one. A slug that is `saved` or
-/// purely numeric never claims its bare URL (the router owns those segments), so
-/// the post lives at its date path instead; the log makes that non-silent.
+/// Derive a post's slug and loudly log a reserved one. A slug that is `saved`
+/// or year-shaped never claims its bare URL (the router owns those segments),
+/// so the post lives at its date path instead; the log makes that non-silent.
 fn derive_slug(name: &str) -> Option<String> {
     let s = slug(name);
     if let Some(ref slug) = s {

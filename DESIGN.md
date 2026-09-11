@@ -194,7 +194,7 @@ where symlinks and xattrs do not.
   Japanese). A punctuation-only name (`!!!`) has no slug and is date-addressed.
   **Collisions key on the slug**, so `Fog Over The Bay`, `fog-over-the-bay`, and a
   mixed-case URL all fold to one address (mixed case 301s to it). Reserved slugs
-  (`saved`, purely-numeric) never claim the bare URL — the router owns those — so
+  (`saved`, year-shaped) never claim the bare URL — the router owns those — so
   the post is date-addressed and carries a persistent reserved-name notice.
 - **One flat namespace; the oldest claim wins the bare URL.** When a name is
   claimed by more than one post/file/alias, the oldest claim keeps `/name` —
@@ -578,6 +578,22 @@ forgotten check cannot resolve one) and answered with the plain 404 every
 missing path gets: no redirect onto the name it happens to end with, no
 suggestions page, no existence oracle. Folder assets and nested listings are
 resolved before this and keep their full paths.
+
+**Names may be numbers (SHIPPED 2026-09-11, v0.43.0).** The date hierarchy owns
+only the segments it can actually read: a four-digit year, a month in 1–12, a
+day in 1–31, and a time of exactly six digits after a full day. Every other
+number is an ordinary name — `/42` is the post named 42, `/2026/13` the post
+named 13 dated 2026 — so a post called `42` or `007` keeps the bare address its
+name asks for. Only two slugs stay reserved: `saved` (a route) and a
+**year-shaped** name, four digits, which the year view owns (`/2026`, `/0042`);
+those posts are date-addressed and carry the reserved-name notice, as before.
+The time segment is matched exactly, never as a left-anchored prefix: a coarser
+number after a day names a post, not a set of them. And because a date coarser
+than a second is a **listing**, a post whose only address would be that listing
+(a whole-date name like `2026.md`, a `2026-03-25 Trip/` folder, a newer
+claimant whose date marker stops at the month) has no page of its own: it is an
+**error row** on the timeline, naming the address it collides with and the fix
+— give the post a name, or a date with a time (`2026-03-25T1200`).
 
 ## Authoring formats
 

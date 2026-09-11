@@ -7,9 +7,11 @@ pub struct ContentQuery {
     /// "2026-03-25" (year / year-month / year-month-day). Assembled from the
     /// slash-separated path segments; matched as a prefix of the timestamp.
     pub date_prefix: Option<String>,
-    /// Time-of-day disambiguator (`HHMMSS`, or any left-anchored prefix like
-    /// `14` or `1430`). A URL **path segment** now (`/2026/07/04/191430`), after
-    /// a full day — only same-day slug collisions and unlabeled entries need it.
+    /// Time-of-day disambiguator, exactly `HHMMSS`. A URL **path segment**
+    /// (`/2026/07/04/191430`), after a full day — only same-day slug collisions
+    /// and unlabeled entries need it. Six digits and no other length: a shorter
+    /// number there is a post's name, so the time is matched exactly, never as
+    /// a prefix.
     pub time: Option<String>,
     /// Tags combined with AND (from `+tag1+tag2`)
     pub and_tags: Vec<String>,
@@ -35,11 +37,12 @@ pub struct ContentQuery {
     /// The path is not an address of this site at all: a segment that fits no
     /// part of the grammar. A post address is `/name`, or the date form
     /// `/[Y[/M[/D[/HHMMSS]]]]/name`, with tag segments and view words in any
-    /// order — nothing else. A second name (`/x/brev`), a numeric segment
-    /// that is no valid date rung (`/2026/99/brev`), or anything trailing a
-    /// raw file but its rendition rungs (`/photo.tif/thumb/jpeg`) sets this,
-    /// and the router answers a plain 404: the same reply as any missing
-    /// path, so a malformed URL is no existence oracle either.
+    /// order — nothing else. A second name (`/x/brev`, `/2026/99/brev`: `99`
+    /// is no month, so it is already the name), a BCE-shaped segment that is
+    /// no year (`/-99`), or anything trailing a raw file but its rendition
+    /// rungs (`/photo.tif/thumb/jpeg`) sets this, and the router answers a
+    /// plain 404: the same reply as any missing path, so a malformed URL is
+    /// no existence oracle either.
     ///
     /// [`ContentQuery::matches`] refuses everything while it is set, so a
     /// caller that forgets to check still cannot resolve a malformed path.
@@ -63,9 +66,9 @@ impl ContentQuery {
             }
         }
 
-        // Time-of-day disambiguator (left-anchored prefix of HHMMSS).
+        // Time-of-day disambiguator: the whole `HHMMSS`, matched exactly.
         if let Some(ref time) = self.time {
-            if !timestamp.hms().starts_with(time.as_str()) {
+            if timestamp.hms() != *time {
                 return false;
             }
         }
@@ -194,10 +197,13 @@ fn push_segment(path: &mut String, segment: &str) {
 /// - `notable` / `favorites` (whole segment) → view flags. Reserved words: a
 ///   post with that name stays reachable at its date address.
 /// - `+…` → tag segment (`+a+b` AND, `+a,b` OR).
-/// - Date rungs by a state machine (year, then month, then day, then a
-///   numeric time-of-day disambiguator), wherever they appear.
-/// - Anything else → the label. A trailing `.ext` on a date rung or label
-///   records a raw-file request.
+/// - Date rungs by a state machine (year, then month, then day, then the
+///   six-digit time-of-day disambiguator), wherever they appear.
+/// - Anything else → the label, numbers included: a digit segment that fits
+///   no rung is an ordinary name (`/42`, `/2026/13` is the post `13` dated
+///   2026), because only a four-digit year, a valid month/day, and a
+///   six-digit time belong to the hierarchy. A second name is no address.
+/// - A trailing `.ext` on a date rung or label records a raw-file request.
 ///
 /// Examples:
 ///   `/`                       → timeline (all entries)
@@ -272,12 +278,13 @@ pub fn parse_url_path(path: &str) -> ContentQuery {
                 }
                 continue;
             }
-            // After a full Y/M/D, a purely-numeric segment is the time-of-day
-            // disambiguator (`/2026/07/04/191430`, or a left-anchored prefix).
+            // After a full Y/M/D, a six-digit segment is the time-of-day
+            // disambiguator (`/2026/07/04/191430`). Exactly six: a shorter
+            // number there is a post's name, and a coarser time would name a
+            // set of posts rather than one address.
             if day.is_some()
                 && query.time.is_none()
-                && !name.is_empty()
-                && name.len() <= 6
+                && name.len() == 6
                 && name.bytes().all(|b| b.is_ascii_digit())
             {
                 query.time = Some(name.to_string());
@@ -287,10 +294,11 @@ pub fn parse_url_path(path: &str) -> ContentQuery {
                 }
                 continue;
             }
-            // A numeric segment inside the date hierarchy that fits no rung is
-            // not a name — the router owns those segments (a numeric slug never
-            // claims a bare URL). `/2026/99` and `/25` name nothing.
-            if is_numeric(name) {
+            // A BCE-shaped segment (`-99`) is a year or it is nothing: the
+            // sign belongs to the hierarchy, never to a name. Every other
+            // number that fits no rung falls through to the label below, so a
+            // post may simply be named `42`.
+            if is_numeric(name) && name.starts_with('-') {
                 query.malformed = true;
                 continue;
             }
@@ -489,9 +497,44 @@ mod tests {
         assert_eq!(q.time.as_deref(), Some("191430"));
         assert_eq!(q.label.as_deref(), Some("fog-over-the-bay"));
 
-        // A left-anchored prefix works as a coarse disambiguator.
+        // Exactly six digits: a shorter number after the day is a name.
         let q = parse_url_path("/2026/07/04/1914");
-        assert_eq!(q.time.as_deref(), Some("1914"));
+        assert!(q.time.is_none());
+        assert_eq!(q.label.as_deref(), Some("1914"));
+    }
+
+    #[test]
+    fn a_number_that_fits_no_rung_is_a_name() {
+        // Numbers are ordinary names; only the rungs of the hierarchy (a
+        // four-digit year, a valid month/day, a six-digit time) are the
+        // router's. `/42` is the post named 42.
+        let q = parse_url_path("/42");
+        assert!(!q.malformed);
+        assert!(q.date_prefix.is_none());
+        assert_eq!(q.label.as_deref(), Some("42"));
+        assert!(q.matches(&ts("2026-03-12T120000"), &Some("42".to_string()), &[]));
+
+        // `13` is no month, so it is the name of a post dated 2026.
+        let q = parse_url_path("/2026/13");
+        assert!(!q.malformed);
+        assert_eq!(q.date_prefix.as_deref(), Some("2026"));
+        assert_eq!(q.label.as_deref(), Some("13"));
+
+        // The same at every depth, including after a full day.
+        let q = parse_url_path("/2026/03/25/42");
+        assert_eq!(q.date_prefix.as_deref(), Some("2026-03-25"));
+        assert_eq!(q.label.as_deref(), Some("42"));
+        assert!(q.time.is_none());
+
+        // A name is still exactly one: a second one is no address, and a
+        // BCE-shaped segment that is no year belongs to the hierarchy.
+        assert!(parse_url_path("/2026/99/brev").malformed, "99 is the name, brev a second one");
+        assert!(parse_url_path("/-99").malformed);
+        assert!(parse_url_path("/2026/-99").malformed);
+        // The valid rungs are untouched, at every depth.
+        assert!(!parse_url_path("/2026/brev").malformed);
+        assert!(!parse_url_path("/2026/03/12/191430/brev").malformed);
+        assert!(!parse_url_path("/-3000/brev").malformed);
     }
 
     #[test]
@@ -499,21 +542,6 @@ mod tests {
         let q = parse_url_path("/-3000");
         assert_eq!(q.date_prefix.as_deref(), Some("-3000"));
         assert!(q.label.is_none());
-    }
-
-    #[test]
-    fn an_invalid_date_rung_is_no_address() {
-        // A number in the date hierarchy is a rung or it is nothing: `13` is
-        // no month, and it is not a post's name either.
-        let q = parse_url_path("/2026/13");
-        assert!(q.malformed);
-        assert!(!q.matches(&ts("2026-01-13T120000"), &Some("13".to_string()), &[]));
-        assert!(parse_url_path("/2026/99/brev").malformed);
-        assert!(parse_url_path("/25").malformed, "a bare number names no post");
-        // The valid rungs are untouched, at every depth.
-        assert!(!parse_url_path("/2026/brev").malformed);
-        assert!(!parse_url_path("/2026/03/12/191430/brev").malformed);
-        assert!(!parse_url_path("/-3000/brev").malformed);
     }
 
     #[test]

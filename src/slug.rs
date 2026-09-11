@@ -72,11 +72,14 @@ pub fn slug(stem: &str) -> Option<String> {
 }
 
 /// Whether a slug is reserved by the URL grammar and so never claims the bare
-/// `/slug` address: `saved` (a route) or any purely-numeric slug (year/date
-/// filtering — `/2026` must stay the year view). A post with a reserved slug is
-/// still reachable at its date path and carries the reserved-name notice.
+/// `/slug` address: `saved` (a route) or a year-shaped slug — exactly four
+/// ASCII digits, the segment the year view owns (`/2026`, `/0042`). Every
+/// other number is an ordinary name: `/42`, `/100` and `/191430` are no rung
+/// of the date hierarchy, so the parser reads them as the post's name (see
+/// `url.rs`). A post with a reserved slug is still reachable at its date path
+/// and carries the reserved-name notice.
 pub fn is_reserved_slug(s: &str) -> bool {
-    s == "saved" || (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+    s == "saved" || (s.len() == 4 && s.bytes().all(|b| b.is_ascii_digit()))
 }
 
 #[cfg(test)]
@@ -140,8 +143,13 @@ mod tests {
     #[test]
     fn reserved_slugs() {
         assert!(is_reserved_slug("saved"));
+        // Year-shaped: the year view owns that segment.
         assert!(is_reserved_slug("2026"));
-        assert!(is_reserved_slug("100"));
+        assert!(is_reserved_slug("0042"));
+        // Every other number is a name the parser can read.
+        assert!(!is_reserved_slug("42"));
+        assert!(!is_reserved_slug("100"));
+        assert!(!is_reserved_slug("191430"));
         assert!(!is_reserved_slug("fog-over-the-bay"));
         assert!(!is_reserved_slug("2026-review"));
         assert!(!is_reserved_slug(""));

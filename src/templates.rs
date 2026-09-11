@@ -3083,7 +3083,7 @@ fn reserved_name_notice(entry: &Entry) -> String {
     let why = if slug == "saved" {
         "a site route"
     } else {
-        "the year / date view"
+        "the year view"
     };
     format!(
         r#"<aside id="nameshare"><p>The name <code>{label}</code> reduces to <code>/{slug}</code>, which the site reserves for {why}. This post keeps its date-path address above and does not claim the bare name.</p></aside>"#,
