@@ -659,6 +659,12 @@ fn resolve_one<'a>(all_entries: &[&'a Entry], head: &str) -> Option<&'a Entry> {
     {
         return None;
     }
+    // A scope names no post: `/2026` is the year view even when exactly one
+    // post is dated then, and `/2026/03/25` the day view. Only a name, or a
+    // date narrowed to the second, addresses one post.
+    if query.label.is_none() && query.time.is_none() {
+        return None;
+    }
     if is_bare_label(&query) {
         if let Some(owner) = templates::name_owner(query.label.as_deref()?, all_entries) {
             return Some(owner);
@@ -677,6 +683,71 @@ fn resolve_one<'a>(all_entries: &[&'a Entry], head: &str) -> Option<&'a Entry> {
         None
     };
     target.filter(|e| e.error.is_none())
+}
+
+/// What a multi-segment path resolves to: the folder post that owns it, or the
+/// canonical spelling of that address when the request came in another one.
+enum FolderPath<'a, 'p> {
+    /// The owning post, the canonical head (decoded, no leading slash) every
+    /// crumb and item href under it hangs off, and the tail below it.
+    Owner(&'a Entry, String, Vec<&'p str>),
+    /// The head named the post by another spelling: 301 to this encoded
+    /// location, the canonical head with the tail verbatim.
+    Elsewhere(String),
+}
+
+/// Split a multi-segment path into the folder post that owns it and the tail
+/// below it: the shortest leading run of segments that is a post's own address
+/// (`hej`, `2026/09/10/hej`, `2026/03/25/191500` for an unlabeled one) owns
+/// everything under it, exactly as the folder on disk does. The first such
+/// head wins and the search stops there — a post's namespace is its own, and
+/// nothing below it is read as another post's address.
+///
+/// A folder's namespace hangs off the post's **one canonical address**. Every
+/// other spelling of the head converges on it exactly as the post's page does:
+/// a differently-cased name, an `alias <name>/` marker, a dated form of a name
+/// the post owns — each 301s to the canonical head with the tail verbatim (and
+/// the trailing slash a nested-listing request carried). The redirect is
+/// decided from the address alone, before the tail is looked for on disk, so a
+/// hidden file and a missing one still answer alike in the canonical scope.
+///
+/// One spelling is not the folder's root at all: a date form of a *named*
+/// post's address (`/2026/03/12/191430` for a post that owns `/brev`) names no
+/// folder, so such a head is skipped and the whole path falls through to the
+/// normal resolution that 301s the page.
+///
+/// `None` when no head is a post's address, or when the one that is belongs to
+/// a bare file: a file has no namespace, so `/notes.md/anything` is not an
+/// asset path.
+fn folder_head<'a, 'p>(all_entries: &[&'a Entry], path: &'p str) -> Option<FolderPath<'a, 'p>> {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.len() < 2 {
+        return None; // the post's own address, served as the post
+    }
+    for i in 1..segments.len() {
+        let head = segments[..i].join("/");
+        let owner = match resolve_one(all_entries, &head) {
+            Some(owner) => owner,
+            None => continue,
+        };
+        let requested = format!("/{}", head);
+        let canonical = templates::canonical(owner, all_entries).path;
+        if canonical != requested && parse_url_path(&requested).label.is_none() {
+            continue; // a date form of a named post: not this folder's root
+        }
+        owner.dir.as_ref()?; // a bare-file post carries no assets
+        let tail = segments[i..].to_vec();
+        if canonical != requested {
+            let mut location =
+                templates::encode_path(&format!("{}/{}", canonical, tail.join("/")));
+            if path.ends_with('/') {
+                location.push('/'); // a nested listing keeps its trailing slash
+            }
+            return Some(FolderPath::Elsewhere(location));
+        }
+        return Some(FolderPath::Owner(owner, head, tail));
+    }
+    None
 }
 
 /// Add the `Link` header naming every language version of a post (RFC 8288
@@ -794,17 +865,14 @@ async fn try_asset(
     cache_dir: &std::path::Path,
     embed: bool,
 ) -> Option<Reply> {
-    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    if segments.len() < 2 {
-        return None;
-    }
-    let first = segments[0];
-    // Never shadow the date hierarchy (`/2026/03/12/…`) with a same-named post.
-    if first.len() == 4 && first.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-
-    let owner = templates::name_owner(first, all_entries)?;
+    // The post that owns this path is the shortest head that is a post
+    // address — its bare name, or its date form when a newer claimant or an
+    // unlabeled post lives there. Everything after that head is the folder's,
+    // and any other spelling of the head 301s onto the canonical one first.
+    let (owner, head, tail) = match folder_head(all_entries, path)? {
+        FolderPath::Owner(owner, head, tail) => (owner, head, tail),
+        FolderPath::Elsewhere(location) => return Some(Reply::redirect(&location)),
+    };
     let dir = owner.dir.as_ref()?; // only folder posts carry assets
     let canon_dir = std::fs::canonicalize(dir).ok()?;
 
@@ -812,7 +880,7 @@ async fn try_asset(
     // canonical rendition tail (`thumb` then `jpeg`) and retry.
     let mut thumb = false;
     let mut as_jpeg = false;
-    let mut file_segments: &[&str] = &segments[1..];
+    let mut file_segments: &[&str] = &tail;
     let mut canon_file = std::fs::canonicalize(dir.join(file_segments.join("/"))).ok();
     if canon_file.is_none() {
         let mut trimmed = file_segments;
@@ -853,13 +921,11 @@ async fn try_asset(
     // demotes an untagged primary to a withheld listing), so this redirect never
     // routes around the per-file gate below.
     if std::fs::canonicalize(&owner.path).ok().as_deref() == Some(canon_file.as_path()) {
-        let label = owner.label.as_deref().unwrap_or(first);
-        let decoded = if owner.extension.is_empty() {
-            format!("/{}", label)
-        } else {
-            format!("/{}.{}", label, owner.extension)
-        };
-        return Some(Reply::redirect(&templates::encode_path(&decoded)));
+        // The post's own canonical raw address — which is its page address for
+        // a primary with no extension. Built from the post, never from the
+        // requested head: a newer claimant's file must land on ITS address,
+        // not on the bare name the oldest claim owns.
+        return Some(Reply::redirect(&templates::canonical_raw_href(owner, all_entries)));
     }
     // A language version's file is canonical at `/label.<tag>.<ext>` likewise.
     if let Some(version) = owner
@@ -909,9 +975,10 @@ async fn try_asset(
     match crate::media::classify(ext, &bytes) {
         crate::media::Disposition::Image => {
             let is_original = file_serves_original(&canon_file);
-            // The asset's own address with the rendition rungs stripped.
+            // The asset's own address with the rendition rungs stripped: the
+            // head that resolved, then the path inside the folder.
             let base_href =
-                templates::encode_path(&format!("/{}/{}", first, file_segments.join("/")));
+                templates::encode_path(&format!("/{}/{}", head, file_segments.join("/")));
             return Some(
                 serve_image(ImageRequest {
                     bytes,
@@ -971,28 +1038,21 @@ fn try_folder_listing(
     path: &str,
     content_dir: &std::path::Path,
 ) -> Option<Reply> {
-    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    if segments.len() < 2 {
-        return None; // the top-level `/label` listing is served as its own post
-    }
-    let first = segments[0];
-    // Never shadow the date hierarchy (`/2026/03/12/…`) with a same-named post.
-    if first.len() == 4 && first.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-
-    let owner = templates::name_owner(first, all_entries)?;
-    let dir = match owner.dir.as_ref() {
-        Some(d) => d,
-        None => return None, // a bare-file post has no subfolders — fall through
+    // Same ownership rule as `try_asset`: the shortest post-shaped head owns
+    // every path under it, whether that head is a bare name or a date form,
+    // and any other spelling of it 301s onto the canonical one.
+    let (owner, head, tail) = match folder_head(all_entries, path)? {
+        FolderPath::Owner(owner, head, tail) => (owner, head, tail),
+        FolderPath::Elsewhere(location) => return Some(Reply::redirect(&location)),
     };
+    let dir = owner.dir.as_ref()?; // a bare-file post has no subfolders
 
     // Past this point the request is scoped *into* a real folder post, so it
     // resolves here or 404s — it never falls through to the timeline. Visible
     // files were already served by `try_asset`; a hidden or missing path 404s
     // identically (no existence oracle), and so does a hidden nested listing.
     let resolve = || -> Option<Reply> {
-        let candidate = dir.join(segments[1..].join("/"));
+        let candidate = dir.join(tail.join("/"));
         let canon_dir = std::fs::canonicalize(dir).ok()?;
         let canon_target = std::fs::canonicalize(&candidate).ok()?;
         if !canon_target.starts_with(&canon_dir) {
@@ -1005,28 +1065,31 @@ fn try_folder_listing(
         if !crate::tags::path_visible(content_dir, &canon_target) {
             return None;
         }
-        Some(render_nested_listing(&canon_target, first, &segments, all_entries))
+        // The post's own address, then the path inside its folder: the base
+        // every crumb and item href hangs off.
+        let base = format!("/{}/{}", head, tail.join("/"));
+        Some(render_nested_listing(&canon_target, &base, all_entries))
     };
     Some(resolve().unwrap_or_else(not_found))
 }
 
-/// Render a resolved, visible nested subfolder as a listing page.
+/// Render a resolved, visible nested subfolder as a listing page. `base` is the
+/// decoded address of the subfolder (the owning post's address plus the path
+/// inside its folder, no trailing slash): it IS the canonical URL and the base
+/// each item href hangs off — mirroring the filesystem verbatim.
 fn render_nested_listing(
     canon_target: &std::path::Path,
-    first: &str,
-    segments: &[&str],
+    base: &str,
     all_entries: &[&Entry],
 ) -> Reply {
     let listing = crate::content::build_dir_listing(canon_target);
     let title = canon_target
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or(first)
+        .or_else(|| base.rsplit('/').next())
+        .unwrap_or("files")
         .to_string();
-    // The request path (no trailing slash) IS the canonical URL and the base each
-    // item href hangs off — mirroring the filesystem verbatim.
-    let base = format!("/{}", segments.join("/"));
-    Reply::html(templates::nested_listing_page(&base, &title, &listing, all_entries))
+    Reply::html(templates::nested_listing_page(base, &title, &listing, all_entries))
 }
 
 /// Find the one archived revision a date-path request addresses, or None when
@@ -1976,6 +2039,185 @@ mod tests {
             assert_eq!(reply.status, 404, "{miss} names nothing");
             assert!(reply.location().is_none(), "{miss} redirects nowhere");
         }
+    }
+
+    /// A folder post's namespace hangs off its own address, whatever that is:
+    /// the newer claimant of a name is addressed at its date path, so its
+    /// assets, its primary redirect and its nested listings live there too.
+    /// They used to 404 — the folder routes only ever read a bare first
+    /// segment, and refused a four-digit one outright.
+    #[tokio::test]
+    async fn a_dated_post_owns_its_assets() {
+        let t = TmpDir::new();
+        // Two folders whose names slug alike: the oldest claim owns `/hej`.
+        touch(t.path(), "hej/hej.md", "# Hej\n\nThe old one.");
+        touch(t.path(), "hej/photo.txt", "the old one's asset");
+        mkdir(t.path(), "hej/2026-03-10T1200");
+        touch(t.path(), "Hej!/hej.md", "# Hej\n\nThe new one.");
+        touch(t.path(), "Hej!/photo.txt", "the new one's asset");
+        touch(t.path(), "Hej!/sub/file.txt", "nested");
+        mkdir(t.path(), "Hej!/2026-09-10T1200");
+        let store = match store_of(
+            t.path(),
+            &[
+                "hej", "hej/hej.md", "hej/photo.txt",
+                "Hej!", "Hej!/hej.md", "Hej!/photo.txt", "Hej!/sub", "Hej!/sub/file.txt",
+            ],
+        ) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+
+        assert_eq!(get(&store, "/hej").await.status, 200, "the oldest claim owns the name");
+        let old_asset = get(&store, "/hej/photo.txt").await;
+        assert_eq!(old_asset.body, b"the old one's asset");
+
+        // The newer claimant lives at its date path, and so does everything
+        // under its folder.
+        assert_eq!(get(&store, "/2026/09/10/hej").await.status, 200);
+        let asset = get(&store, "/2026/09/10/hej/photo.txt").await;
+        assert_eq!(asset.status, 200);
+        assert_eq!(asset.body, b"the new one's asset");
+
+        // Its primary is canonical at its own raw address — never at the bare
+        // name, which is the OLDER post's bytes.
+        let primary = get(&store, "/2026/09/10/hej/hej.md").await;
+        assert_eq!(primary.status, 301);
+        assert_eq!(header(&primary, "location"), Some("/2026/09/10/hej.md"));
+        assert_eq!(get(&store, "/hej.md").await.body, b"# Hej\n\nThe old one.");
+
+        // A nested listing under the dated head lists items under that head.
+        let nested = get(&store, "/2026/09/10/hej/sub/").await;
+        assert_eq!(nested.status, 200);
+        let html = String::from_utf8_lossy(&nested.body).into_owned();
+        assert!(html.contains("/2026/09/10/hej/sub/file.txt"), "item hrefs hang off the head");
+        assert_eq!(get(&store, "/2026/09/10/hej/sub/file.txt").await.body, b"nested");
+    }
+
+    /// A folder's namespace hangs off the post's ONE canonical address: every
+    /// other spelling of the head — a differently-cased name, an alias marker,
+    /// a dated form of a name the post owns, the folder's own on-disk name
+    /// when another post owns that address — 301s onto it with the tail
+    /// verbatim, exactly as the post's page does. They used to serve the bytes
+    /// in place, giving one file several addresses.
+    #[tokio::test]
+    async fn a_non_canonical_head_redirects_to_the_canonical_one() {
+        let t = TmpDir::new();
+        touch(t.path(), "hej/hej.md", "# Hej\n\nThe old one.");
+        touch(t.path(), "hej/photo.txt", "the old one's asset");
+        touch(t.path(), "hej/sub/file.txt", "nested");
+        mkdir(t.path(), "hej/2026-03-12T1914");
+        mkdir(t.path(), "hej/alias gammal");
+        touch(t.path(), "Hej!/hej.md", "# Hej\n\nThe new one.");
+        touch(t.path(), "Hej!/photo.txt", "the new one's asset");
+        mkdir(t.path(), "Hej!/2026-09-10T1200");
+        let store = match store_of(
+            t.path(),
+            &[
+                "hej", "hej/hej.md", "hej/photo.txt", "hej/sub", "hej/sub/file.txt",
+                "Hej!", "Hej!/hej.md", "Hej!/photo.txt",
+            ],
+        ) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+        let all: Vec<&Entry> = store.entries.iter().collect();
+        let owner = templates::name_owner("Hej!", &all).expect("the name resolves");
+        assert_eq!(
+            owner.id.file_name().and_then(|n| n.to_str()),
+            Some("hej"),
+            "both folders slug to `hej`, and the oldest claim owns it",
+        );
+
+        for (requested, canonical) in [
+            ("/HEJ/photo.txt", "/hej/photo.txt"),
+            ("/2026/03/12/hej/photo.txt", "/hej/photo.txt"),
+            ("/gammal/photo.txt", "/hej/photo.txt"),
+            ("/Hej!/photo.txt", "/hej/photo.txt"),
+            ("/HEJ/sub/", "/hej/sub/"),
+            // Decided from the address alone, so a missing file redirects too
+            // and 404s in the canonical scope like any other missing path.
+            ("/HEJ/missing.txt", "/hej/missing.txt"),
+        ] {
+            let reply = get(&store, requested).await;
+            assert_eq!(reply.status, 301, "{requested} converges on one address");
+            assert_eq!(header(&reply, "location"), Some(canonical), "{requested}");
+        }
+        assert_eq!(get(&store, "/hej/missing.txt").await.status, 404);
+
+        // The canonical spellings serve in place, each post its own files.
+        assert_eq!(get(&store, "/hej/photo.txt").await.body, b"the old one's asset");
+        assert_eq!(
+            get(&store, "/2026/09/10/hej/photo.txt").await.body,
+            b"the new one's asset"
+        );
+        assert_eq!(get(&store, "/hej/sub/").await.status, 200);
+    }
+
+    /// An unlabeled post is addressed at its date and time, and its folder's
+    /// namespace hangs off that address like any other post's.
+    #[tokio::test]
+    async fn an_unlabeled_post_owns_its_assets() {
+        let t = TmpDir::new();
+        touch(t.path(), "2026-03-25T1915 Trip/index.md", "# Trip\n\nWhere we went.");
+        touch(t.path(), "2026-03-25T1915 Trip/notes.txt", "what happened");
+        let store = match store_of(
+            t.path(),
+            &[
+                "2026-03-25T1915 Trip",
+                "2026-03-25T1915 Trip/index.md",
+                "2026-03-25T1915 Trip/notes.txt",
+            ],
+        ) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+        assert_eq!(store.entries[0].slug, None, "a date-named post claims no name");
+
+        assert_eq!(get(&store, "/2026/03/25/191500").await.status, 200);
+        let asset = get(&store, "/2026/03/25/191500/notes.txt").await;
+        assert_eq!(asset.status, 200);
+        assert_eq!(asset.body, b"what happened");
+    }
+
+    /// A post may simply be named `42`: it owns the bare address, its assets
+    /// hang off it, and the date form of the address 301s there.
+    #[tokio::test]
+    async fn a_numeric_name_is_an_ordinary_name() {
+        let t = TmpDir::new();
+        touch(t.path(), "42/42.md", "# 42\n\nThe answer.");
+        touch(t.path(), "42/notes.txt", "the question");
+        mkdir(t.path(), "42/2026-03-25");
+        let store = match store_of(t.path(), &["42", "42/42.md", "42/notes.txt"]) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+
+        assert_eq!(get(&store, "/42").await.status, 200);
+        let dated = get(&store, "/2026/03/25/42").await;
+        assert_eq!(dated.status, 301, "the date form of the address");
+        assert_eq!(header(&dated, "location"), Some("/42"));
+        assert_eq!(get(&store, "/42/notes.txt").await.body, b"the question");
+        // A four-digit name stays the year view's, and is date-addressed.
+        assert_eq!(get(&store, "/2026").await.status, 200, "the year view");
+    }
+
+    /// A scope names no post: `/2026` is the year view even when exactly one
+    /// post is dated then, so a version address built on it resolves nothing.
+    #[tokio::test]
+    async fn a_scope_never_resolves_to_a_post() {
+        let t = TmpDir::new();
+        touch(t.path(), "brev/brev.md", "# Brev\n\nEnglish.");
+        touch(t.path(), "brev/brev.sv.md", "# Brev\n\nSvenska.");
+        mkdir(t.path(), "brev/2026-03-12T1914");
+        let store = match store_of(t.path(), &["brev", "brev/brev.md", "brev/brev.sv.md"]) {
+            Some(s) => s,
+            None => return, // xattr unsupported — skip
+        };
+
+        assert_eq!(get(&store, "/brev.sv").await.status, 200);
+        assert_eq!(get(&store, "/2026.sv").await.status, 404, "a year is no post");
+        assert_eq!(get(&store, "/2026/03/12.sv").await.status, 404);
     }
 
     /// A version's archived snapshot is served at the version's date-path

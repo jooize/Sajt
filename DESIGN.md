@@ -593,7 +593,11 @@ than a second is a **listing**, a post whose only address would be that listing
 (a whole-date name like `2026.md`, a `2026-03-25 Trip/` folder, a newer
 claimant whose date marker stops at the month) has no page of its own: it is an
 **error row** on the timeline, naming the address it collides with and the fix
-— give the post a name, or a date with a time (`2026-03-25T1200`).
+— give the post a name, or a date with a time (`2026-03-25T1200`). A folder's
+assets and nested listings live under the post's **one canonical address** and
+nowhere else: every other spelling of the head — a differently-cased name, an
+`alias <name>/` marker, a dated form of a name the post owns — 301s onto it
+with the rest of the path verbatim, exactly as the post's page does.
 
 ## Authoring formats
 
