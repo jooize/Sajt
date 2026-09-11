@@ -128,10 +128,20 @@
           # become a real dependency the load command stays, and the
           # portability check below turns that into a failed build rather
           # than a broken download.
+          #
+          # ld64 also derives LC_UUID from a hash of the whole link output,
+          # including the debug stabs that name every object file by path
+          # under the build directory. Nix strips those stabs afterwards, so
+          # two binaries can be identical in every byte except the UUID: the
+          # hash excludes the string table itself but covers its size, and
+          # the build directory is a different length on a different
+          # machine. -S keeps debug information out of the link output
+          # entirely, so the UUID is a function of the code alone. Nothing
+          # shipped changes; the strip already removed what -S withholds.
           preBuild = ''
             export RUSTFLAGS="''${RUSTFLAGS-} --remap-path-prefix $NIX_BUILD_TOP=/build"
           '' + lib.optionalString pkgs.stdenv.isDarwin ''
-            export RUSTFLAGS="$RUSTFLAGS -C link-arg=-Wl,-dead_strip_dylibs"
+            export RUSTFLAGS="$RUSTFLAGS -C link-arg=-Wl,-dead_strip_dylibs -C link-arg=-Wl,-S"
           '';
 
           # A binary that only runs inside a Nix store is not a release.
