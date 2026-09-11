@@ -1325,13 +1325,23 @@ compile time; `src/assets.rs` generates its CSS and JS from consts.
 - **Linux** builds against musl through `pkgsStatic` and is statically
   linked: one file, no glibc version to match, no loader to find. Nothing
   in the dependency tree is a C library, so nothing had to be taught to
-  link that way.
+  link that way. The toolchain is the same `rust-toolchain.toml` resolved
+  inside the static scope's `buildPackages`, rust-overlay's form for a
+  cross build: it carries the standard library for the build platform
+  (build scripts and proc macros run there) as well as for musl. The
+  native toolchain with a musl target added left build scripts linked
+  against the wrong C library, and they crashed on start.
 - **Apple silicon** gets the ordinary build and links only system libraries.
   The Darwin stdenv ad-hoc signs it during fixup. The toolchain hands the
   linker nixpkgs' libiconv and libintl for the Darwin standard library even
   though the binary references no symbol from either, so the build passes
-  `-Wl,-dead_strip_dylibs` and ld64 drops the load commands. There is no
-  Intel Mac target.
+  `-Wl,-dead_strip_dylibs` and ld64 drops the load commands. The link also
+  passes `-S`: ld64 derives `LC_UUID` from a hash that covers the size of the
+  debug stabs naming every object file under the build directory, which is
+  a different length on a different machine, so two runners produced
+  binaries identical in every byte except the UUID. With no debug
+  information in the link output the UUID follows the code alone. There is
+  no Intel Mac target.
 - **A fail-closed portability check** runs inside the derivation, after
   fixup, on the bytes that actually ship: on Linux the binary must have no
   `PT_INTERP` and no `DT_NEEDED`, on macOS `otool -L` must show only
