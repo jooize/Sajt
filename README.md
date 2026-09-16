@@ -137,7 +137,6 @@ though the ledger does name posts that may be unpublished.
   listings, the outbound-scheme guard, media privacy.
 - [`sajt.md`](sajt.md) — the static-publish design: build
   locally, ship bytes; closure model, manifest, host adapters.
-- [`PLAN.md`](PLAN.md) — working plan and history.
 
 ## License
 

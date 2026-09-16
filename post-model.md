@@ -7,8 +7,15 @@ date-marker and `alias <name>/` markers, oldest-claim-wins, and the strictly
 read-only server all stand — this refines identity, timestamps, kinds, links,
 listings, and image privacy on top of them.
 
-Nothing here is shipped yet; it is the spec to build from. No backward
-compatibility is owed (pre-1.0).
+**Status: shipped.** This was the spec to build from, and §1 through §8 were
+built between 2026-07-08 and 2026-07-15; DESIGN.md ("Entries") lists which
+version carried which section. The text below is preserved as written, so
+every "today" in it describes the code of 2026-07-07 rather than the code
+now, and the `static/*.html` mockups it points at left the tree on
+2026-09-08 (they are in history at commit `8bc77c8`). One decision was
+reversed while building: the destination favicon fetch of §4 was dropped for
+a CSS-only letter tile, so a link row makes zero third-party requests. No
+backward compatibility is owed (pre-1.0).
 
 ---
 
@@ -491,8 +498,17 @@ source. (A CSS-only `:target` confirm is *possible* if ever wanted, but isn't.)
 
 ## 8. Images and EXIF
 
-Not built yet — the `image` crate is absent from `Cargo.toml`; images serve
-**raw/exact today**. The model to build:
+**Shipped 2026-07-09 to 2026-07-15 (v0.13.0 through v0.22.0), then rebuilt
+around a clean store (v0.25.0, 2026-08-24).** A served image is written to a
+quarantine file, verified there by an independent reader (`kamadak-exif`
+plus an `imagesize` container check), and only then promoted into the clean
+store that is the sole source of served bytes; strips and libvips transcodes
+are cached the same way, and the transcode runs under Seatbelt or bubblewrap,
+fail-closed. There is still no `image` crate: the strip is a metadata-only
+rewrite, as the model below asked, and the exact-bytes opt-in became the
+`public-original` tag rather than a bare `original`. DESIGN.md ("The
+file-privacy boundary") is canonical for what was built, including its
+honest residuals. The model it was built from:
 
 - **Strip metadata by default, on every served path** (rendered *and* raw). GPS,
   camera, and timestamps are a real privacy leak; fail closed. Stripping only the

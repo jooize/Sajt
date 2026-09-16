@@ -1,7 +1,8 @@
 # Sajt — Design
 
-The single summary of the site's design. Detail files live in `.claude-memory/`
-and are referenced at the bottom. Items are marked **DECIDED** (with date),
+The single summary of the site's design. The companion specs are
+`entry-model.md`, `post-model.md`, and `sajt.md`; they are referenced at the
+bottom. Items are marked **DECIDED** (with date),
 **PROPOSED** (a recommendation awaiting a decision), or **OPEN**.
 
 ## Philosophy
@@ -47,16 +48,6 @@ An entry is a file **or a folder** in the single content directory.
 **SHIPPED 2026-07-06 — full spec in `entry-model.md` (canonical).** The scanner
 rewrite, folder-post serving, and the one-shot flat→folder migration are all
 live; the live `content/` is now folder posts served at clean URLs
-
-**IN DESIGN 2026-07-07 — `post-model.md` (spec, not yet built).** Extends the
-above: natural-spaces titles with derived URL slugs, mtime-only timestamps +
-date-named unlabeled posts, `kind` as *medium* (`note`→`text`, dotless files,
-`.html` distinct), the `link_url` axis (`.webloc`/`.url`/single-URL text +
-`link.*` sidecars, direct-out rows, retires `.link`), families keyed by base
-name (orphan promotion), slug-collision dropdowns, folder **listings** via an
-`index/` marker with allowlist-by-`public`-tag membership, a tiered outbound
-scheme guard, and the file-privacy boundary (allowlist classification, metadata
-stripping, the `<visibility>[-original]` exact-bytes escape).
 (`/hello-world`). This supersedes the timestamp-prefix filename convention,
 birthtime dates, and the `.id`/UUID identity plan:
 
@@ -91,6 +82,26 @@ birthtime dates, and the `.id`/UUID identity plan:
   neither (auto gallery/listing of its contents). Files inside a bundle
   inherit the folder's identity and need no timestamps. Assets inside are
   addressable as `example.org/<name>/<asset>`.
+
+**SHIPPED 2026-07-08 to 2026-07-15 — `post-model.md` (canonical for this
+layer).** Designed 2026-07-07, built out over the week that followed. It
+extends the entry model with natural-spaces titles and derived URL slugs,
+collisions folding on the slug and made discoverable (a name-share notice on
+the post, a `<details>` disclosure on the row) in v0.2.0; precision-aware
+timestamps, date-named unlabeled posts, and date-time deeplinks in v0.4.0;
+`kind` as *medium* (`note`→`text`, dotless files, `.html` distinct) in
+v0.5.0; revision families keyed by base name, with orphan promotion, in
+v0.6.0; folder **listings** via an `index/` marker, attachments beside a
+primary, and nested public subfolders — all with allowlist-by-`public`-tag
+membership — in v0.7.0; the tiered outbound scheme guard and the
+SSRF-hardened destination fetcher in v0.10.0; the `link_url` axis
+(`.webloc`/`.url`/single-URL text + `link.*` sidecars, direct-out rows,
+retiring `.link`) in v0.11.0; and the file-privacy boundary — allowlist
+classification, metadata stripping, the `<visibility>[-original]` exact-bytes
+escape — across v0.13.0 to v0.22.0, with the clean store following in
+v0.25.0. One piece of that spec was deliberately not built: the destination
+favicon fetch, dropped for a CSS-only letter tile so a link row makes zero
+third-party requests (see "The `link_url` axis + outbound cites").
 
 ### Visibility — tags are the only gate
 
@@ -828,9 +839,10 @@ follow:
   own medium and words, and a `<cite>` source line renders beneath the body
   (a `#source` section on its page, an inline cite in its row).
 The cite is a semantic `<cite>` (favicon tile · title · domain, external `↗`,
-`rel="noreferrer"`; `http://` flagged in pure CSS) per `static/link-rows-mockup
-.html`. Title comes from the embed cache (`link_title`), degrading to the bare
-domain on a fetch miss, and is dropped when it merely repeats our own heading.
+`rel="noreferrer"`; `http://` flagged in pure CSS) per the link-rows mockup
+(`static/link-rows-mockup.html`, in history at `8bc77c8`). Title comes from
+the embed cache (`link_title`), degrading to the bare domain on a fetch miss,
+and is dropped when it merely repeats our own heading.
 The **favicon is a CSS-only letter tile** (a hashed color via `data-tile`, no
 inline style) — a real favicon fetch is deferred precisely so a link row makes
 **zero third-party requests**, never leaking a reader's IP to the destination.
@@ -977,14 +989,15 @@ mode is never a security decision. What shipped:
 ## Presentation
 
 **DECIDED 2026-07-05: the "rows" glass variant** (supersedes the 2026-07-03
-"no glass, anywhere"). After comparing plain / rows / full in
-`static/timeline-glass-mockup.html`, *rows* won: on the timeline every
-entry floats as a glass card, and the segmented level control and the help
+"no glass, anywhere"). After comparing plain / rows / full in the glass mockup
+(`static/timeline-glass-mockup.html`, in history at `8bc77c8`), *rows* won:
+on the timeline every entry floats as a glass card, and the segmented level
+control and the help
 dialog pick up the same glass material. The tag-cloud header and the entry-post
 body stay plain — the "full" variant that also glasses the cloud header was
 passed over. The glass sits directly on the plain background (no tinted wall).
-Reference realizations: `static/timeline-glass-mockup.html` (rows) and
-`static/entry-page-mockup.html`.
+Reference realizations were `static/timeline-glass-mockup.html` (rows) and
+`static/entry-page-mockup.html`, both in history at `8bc77c8`.
 
 - **Entry pages** — the *post body* stays pure typography on the page
   background: no card, no material, no backdrop filter. Only the timeline rows
@@ -1063,10 +1076,10 @@ Reference realizations: `static/timeline-glass-mockup.html` (rows) and
   filters. **A row's hover zone extends into the left margin** its marks
   hang in, so the bookmark appears when the pointer is anywhere that
   belongs to the entry. Rows otherwise carry over from v3.
-  Reference: `static/timeline-mockup.html`;
-  `static/filter-control-mockup.html` keeps the live shape comparison
-  that led here (words ± icon, hairline slider, segmented, stepped bars,
-  native range).
+  Reference: the timeline mockup (`static/timeline-mockup.html`, in
+  history at `8bc77c8`); `static/filter-control-mockup.html`, in the same
+  commit, keeps the live shape comparison that led here (words ± icon,
+  hairline slider, segmented, stepped bars, native range).
   - **Uniform rows, quality as a hairline meter** (v3, kept): every title
     the same size (v2's graded-density sizes rejected); quality is a 2px
     hairline under the date whose fill is the pairwise-grade percentile,
@@ -1113,17 +1126,18 @@ Reference realizations: `static/timeline-glass-mockup.html` (rows) and
   2026-07-05: flat, left-aligned, alphabetical** (case-insensitive) — a
   stable, predictable order so a topic never moves or reshapes between
   visits. This supersedes the briefly-shipped center-out ordering (a cloud
-  that rearranges was judged disorienting); `static/cloud-mockup.html` keeps
+  that rearranges was judged disorienting); the cloud mockup
+  (`static/cloud-mockup.html`, in history at `8bc77c8`) keeps
   the compared, rejected alternatives (by-count, center-out, a centered
   "diamond mass", a literal-3D depth version). Scatter clouds read terribly;
   legibility beats cleverness. The cloud is deliberately narrow so it wraps
   into a few lines; the block sits at the left edge of the content column,
   its lines left-aligned within it (revised 2026-07-05 from the earlier
   centered cloud shape). Since v4 it lives at the top of the timeline as the site
-  header (`static/timeline-mockup.html`). **The standalone `/topics` page
-  is removed** (DECIDED 2026-07-04) — the cloud on the timeline replaced
-  it; its by-latest-activity list goes with it (git history is the
-  archive).
+  header (`static/timeline-mockup.html`, in history at `8bc77c8`).
+  **The standalone `/topics` page is removed** (DECIDED 2026-07-04) — the
+  cloud on the timeline replaced it; its by-latest-activity list goes with
+  it (git history is the archive).
   - **Selected topic wears a Finder-grey pill** (DECIDED 2026-07-04,
     after two rejected takes the same day: an underline, a soft violet
     tint, then a solid-violet two-tone capsule — like Finder, a quiet
@@ -1421,9 +1435,13 @@ compromise of any of these could hide; it does not remove them.
 
 ## Roadmap to publishable v0.1
 
-1. **Publish gate** — only `public`-tagged entries are served; everything
-   else 404s (410 once the was-public ledger exists). Fail-closed tests.
-   (The one blocker for going live.)
+1. **Publish gate** — **DONE 2026-07-08, amended 2026-07-15 (v0.22.0)**
+   (see "Visibility"): only `public`-tagged entries are served, dropped once
+   in the scanner so the timeline, name resolution, listings, and embeds are
+   fail-closed together; `private` wins over `public` and hides its subtree;
+   assets are gated per file and per path, and a file's own tag is the only
+   thing that serves its content. A hidden path 404s identically to a
+   missing one — 410 still waits on the was-public ledger.
 2. **Folders as entries** — **DONE 2026-07-06** (`entry-model.md`): folder
    posts with clean names, publish dates from empty date markers (mtime
    fallback), primary-file resolution, and asset URLs all serve. Remaining
@@ -1432,12 +1450,18 @@ compromise of any of these could hide; it does not remove them.
 3. **AsciiDoc via Asciidoctor** — **DONE 2026-09-09** (v0.38.0, with the
    comrak port of Markdown and the shared syntect highlighter; see
    "Authoring formats").
-4. **Port the plain design** — entry pages from `entry-page-mockup.html`
-   (plain body, way back to root, sidenotes filter, anchors, reader width,
-   quote/code actions, continue-reading) and the timeline from
-   `timeline-mockup.html` (cloud header, filter row, bookmarks, quality
-   meter, ★ favorites). Replaces the interim glass cards in templates.
-5. **Metadata stripping** — before anything with photos goes public.
+4. **Port the plain design** — **DONE 2026-07-05** (the two "Done
+   2026-07-05" paragraphs below are the account of it): entry pages from
+   `entry-page-mockup.html` (plain body, way back to root, sidenotes filter,
+   anchors, reader width, quote/code actions, continue-reading) and the
+   timeline from `timeline-mockup.html` (cloud header, filter row,
+   bookmarks, quality meter, ★ favorites). Replaced the interim glass cards
+   in templates.
+5. **Metadata stripping** — **DONE 2026-07-15** (v0.21.0 closed the series
+   that began with v0.13.0; see "The file-privacy boundary"): an allowlist
+   that withholds by default, EXIF/PDF/SVG strips behind independent verify
+   gates, the OS-sandboxed libvips transcode with a megapixel cap, and the
+   `public-original` exact-bytes escape.
 6. **Feeds + sitemap + OG meta + security headers**, then go live.
    (Deployment redesigned 2026-08-30: static build shipped to object
    storage/CDN, never content rsynced to a live server — `sajt.md`.)
@@ -1480,58 +1504,47 @@ Later: grading flow in production (author-written
 `Sajt-Grade-Judgements.jsonl` + Bradley-Terry derivation), visitor
 favorites + infinite-scroll continue, Share Extension, passkey auth for
 `private`, expiring share links, `.prompt` generation polish, 404 suggestions,
-dark-variant images, related entries, mini-TOC, print stylesheet.
+dark-variant images, related entries, mini-TOC, print stylesheet,
+previous-post crumb (judged too busy).
 
 ## Design files
 
-- The design mockups that lived in `static/` (timeline, entry page, listings,
-  filter controls, marks, cloud, link rows) were removed on 2026-09-08; they
-  are in history at commit `8bc77c8` and earlier. New mockups showing the
-  settled design are planned.
-- `sajt.md` — **static-publish architecture + macOS app (DESIGNED
-  2026-08-30, not yet built; canonical for deployment)**: build local,
-  ship bytes; closure model; manifest + adapters; the Sajt name.
-- `post-model.md` — **post-model refinement spec (2026-07-07, not yet built)**:
-  slugs, timestamps, kinds, link posts, revisions/families, listings, scheme
-  guard, EXIF. Extends `entry-model.md`.
-- `static/link-rows-mockup.html` — link-row layout reference (label→our page,
-  cited source→destination ↗; bare-link, commentary, photo-credit, unsafe cases)
-- `.claude-memory/design.md` — original full design (URL grammar, prompt
-  files, hashing, action tags, sky variants history)
-- `.claude-memory/entry-list-design.md` — timeline layout exploration,
-  grading model, visibility tags
-- `.claude-memory/design-inspiration.md` — external references
-- `.claude-memory/glass-effects.md`, `ux-laws.md` — technique research
-- `.claude-memory/snowfall-*.md`, `rain-*.md` — retired effects research
-- `static/entries-site.html` — timeline interaction reference (visuals
-  obsolete: predates the no-glass decision; kept for the grading dialog)
-- `static/entry-page-mockup.html` — entry page reference (plain, top nav,
-  sidenotes, anchors, quote/link/code actions, adjustable width, star,
-  continue-reading flow)
-- `static/timeline-mockup.html` — timeline reference v4.5 (tag cloud as
-  header, middle-grouped, with in-place topic filtering and a Finder-grey
-  pill on the selected topic; no site nav, margin-hung bookmark count,
-  stepped bars + segmented control for everything/notable/best with an
-  independent ★ favorites toggle, a × between the bookmark mark and its
-  count, search on its own line with the field
-  width-matched to the segmented control so it sits centered under the
-  choices, sentence-case month headings; v3 rows kept: uniform titles,
-  hairline quality meter with threshold ticks, ISO-date rail with
-  vertical tags, hanging ★/bookmark marks, `?` help dialog. Marks changed:
-  the bookmark is now a dim-always outline that brightens only by pointer
-  proximity, in two stages: within ~50px it lifts to full opacity but
-  stays grey, and landing directly on the icon turns it violet — never on
-  plain row hover — so nothing appears or vanishes and it stays
-  discoverable in compact mode where there is no hover margin. The
-  non-favorite rows carry no empty star (an empty ☆ was tried and rejected
-  as clutter — DECIDED 2026-07-04). A reading-width edge grip drives
-  `--content-w` and shares the entry page's `mock-width` store, so a width
-  set on either page is the site's width on both)
-- `static/filter-control-mockup.html` — the live shape comparison behind
-  the stepped-bars + segmented decision (words ± icon, hairline slider,
-  segmented, stepped bars, native range)
-- `static/marks-mockup.html` — the live comparison behind two mark
-  questions, now RESOLVED (2026-07-04): saved-count separator → × chosen;
-  empty ☆ on non-favorite rows → rejected as clutter (kept off)
+- The design mockups that lived in `static/` were removed on 2026-09-08;
+  they are in history at commit `8bc77c8` and earlier. What each one
+  settled: `timeline-mockup.html` (v4.5) is the timeline — tag cloud as
+  header, filter row, uniform rows with the hairline quality meter, hanging
+  bookmark and ★ marks, the reading-width grip; `entry-page-mockup.html` is
+  the entry page — plain body, way back to root, anchors, sidenotes,
+  quote/code pills, adjustable width, continue-reading;
+  `timeline-glass-mockup.html` is the plain / rows / full comparison that
+  chose rows; `filter-control-mockup.html`, `cloud-mockup.html`, and
+  `marks-mockup.html` keep the rejected alternatives behind the stepped-bars
+  and segmented control, the flat alphabetical cloud, and the two mark
+  decisions of 2026-07-04 (× as the saved-count separator, no empty ☆ on
+  non-favorite rows); `listing-mockup.html` is the folder listing (gallery,
+  file list, timeline row) and `link-rows-mockup.html` the link row
+  (label → our page, cited source → destination ↗, with the bare-link,
+  commentary, photo-credit, and unsafe cases). `entries-site.html` predates
+  the no-glass decision and was kept only for its grading dialog. New
+  mockups showing the settled design are planned.
+- `sajt.md` — **static-publish architecture + macOS app** (designed
+  2026-08-30, canonical for deployment): build local, ship bytes; closure
+  model; manifest + adapters; the Sajt name. The build lane shipped
+  2026-08-30 in v0.36.0 — `sajt build` walks the closure and emits the tree
+  plus a manifest carrying per-file CSP, `sajt caddyfile` renders the first
+  adapter from it, and `sajt verify` checks a built tree against it (the
+  engine was renamed to Sajt on 2026-09-08, v0.37.0). Not built: `sajt push`,
+  the object-storage/CDN adapter it uploads to, and the `Sajt.app` shell with
+  its Share Extension.
+- `post-model.md` — **post-model refinement spec (2026-07-07), shipped
+  2026-07-08 to 2026-07-15**: slugs, timestamps, kinds, link posts,
+  revisions/families, listings, scheme guard, EXIF. Extends
+  `entry-model.md`; "Entries" above gives the version-by-version account,
+  and the one part deliberately left unbuilt (the destination favicon
+  fetch).
+- The design research notes — the original long-form design, the timeline
+  layout exploration, the running inspiration list, the UX-law and
+  glass-effect technique notes, and the retired weather-effect research —
+  are kept outside the repository. This document is the consolidated record.
 - Topics page mockup removed 2026-07-04 (cloud lives on the timeline; git
-  history is the archive)
+  history is the archive).

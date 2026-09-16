@@ -1,10 +1,18 @@
 # Sajt — build local, ship bytes
 
-**DESIGNED 2026-08-29/30, not yet implemented.** This document is canonical
-for the static-publish architecture and the macOS app. It extends
-`entry-model.md`, `post-model.md`, and DESIGN.md ("Platform portability",
-"The file-privacy boundary"); where the deployment story here conflicts with
-older text (rsync content to a dynamic Linux server), this document wins.
+**DESIGNED 2026-08-29/30; the build lane shipped 2026-08-30 in v0.36.0.**
+`sajt build` walks the closure and emits the tree plus the host-neutral
+manifest (per-file CSP included), `sajt caddyfile` renders the first adapter
+from that manifest, and `sajt verify` checks a built tree against it. Steps 4
+and 5 of the implementation order below are not built: `sajt push` with the
+object-storage/CDN target it uploads to, and the `Sajt.app` shell with its
+Share Extension.
+
+This document is canonical for the static-publish architecture and the macOS
+app. It extends `entry-model.md`, `post-model.md`, and DESIGN.md ("Platform
+portability", "The file-privacy boundary"); where the deployment story here
+conflicts with older text (rsync content to a dynamic Linux server), this
+document wins.
 
 Sajt is the engine's name; `esko.bar` is its first instance. Crate
 `sajt`, app `Sajt.app`, bundle `bar.esko.Sajt`, client
@@ -255,13 +263,17 @@ question stays open until ~1.0, as already recorded in DESIGN.md.
 ## Implementation order
 
 1. Workspace split (`core`/`serve`/`build`/`push`) — pure refactor, no
-   behavior change; `serve` keeps working throughout.
+   behavior change; `serve` keeps working throughout. **DONE 2026-08-30**
+   (v0.31.0; folded back into one package and one binary on 2026-09-08).
 2. Closure builder: URL-space walk, page emission, manifest with
-   provenance, build report.
+   provenance, build report. **DONE 2026-08-30** (v0.32.0–v0.34.0).
 3. Adapters: Caddyfile first (local verification against `serve` as the
-   reference implementation), then one CDN target.
-4. Push: ordered upload + manifest verification.
-5. App shell last; the CLI is fully usable without it.
+   reference implementation), then one CDN target. **Caddyfile adapter and
+   manifest verifier DONE 2026-08-30** (v0.35.0), verified byte-exact
+   against `serve` on every URL in the manifest; the CDN target is not
+   built.
+4. Push: ordered upload + manifest verification. Not built.
+5. App shell last; the CLI is fully usable without it. Not built.
 
 Open besides the order: icon (the parachute-canopy concepts belonged to the
 StaticDrop name and are retired; not yet redesigned for Sajt), registering
